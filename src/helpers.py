@@ -1,6 +1,5 @@
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import BinaryIO
 
 import requests
 from tqdm import tqdm
@@ -25,36 +24,42 @@ def better_downloader(
     with open(dest_path, "wb") as f:
         f.truncate(content_length)
 
-        with (
-            tqdm(
-                total=content_length,
-                unit="B",
-                unit_scale=True,
-                desc=f"downloading {url}",
-            ) as pbar,
-            ThreadPoolExecutor(max_workers=num_workers) as pool,
-        ):
+    with (
+        tqdm(
+            total=content_length,
+            unit="B",
+            unit_scale=True,
+            desc=f"downloading {url}",
+        ) as pbar,
+        ThreadPoolExecutor(max_workers=num_workers) as pool,
+    ):
 
-            def _download_chunk(url: str, start: int, end: int, f: BinaryIO) -> None:
-                with requests.get(
-                    url, headers={"Range": f"bytes={start}-{end}"}, stream=True
-                ) as r:
-                    r.raise_for_status()
-                    f.seek(start)
-                    for chunk in r.iter_content(chunk_size):
-                        f.write(chunk)
-                        pbar.update(len(chunk))
+        def _download_chunk(start: int, end: int) -> None:
+            with (
+                open(dest_path, "r+b") as f,
+                requests.get(
+                    url,
+                    headers={"Range": f"bytes={start}-{end}"},
+                    stream=True,
+                    timeout=60,
+                ) as r,
+            ):
+                r.raise_for_status()
+                f.seek(start)
+                for chunk in r.iter_content(chunk_size):
+                    f.write(chunk)
+                    pbar.update(len(chunk))
 
-            futures: list[Future[None]] = []
-            for i in range(num_workers):
-                start = i * worker_chunk_size
-                end = start + worker_chunk_size - 1
-                if i == num_workers - 1:
-                    end = content_length - 1
-                futures.append(pool.submit(_download_chunk, url, start, end, f))
+        futures: list[Future[None]] = []
+        for i in range(num_workers):
+            start = i * worker_chunk_size
+            end = start + worker_chunk_size - 1
+            if i == num_workers - 1:
+                end = content_length - 1
+            futures.append(pool.submit(_download_chunk, start, end))
 
-            for future in as_completed(futures):
-                future.result()
+        for future in as_completed(futures):
+            future.result()
 
 
 def simple_file_download(url: str, dest_path: Path, chunk_size: int) -> None:
