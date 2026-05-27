@@ -1,3 +1,4 @@
+import ctypes
 import os
 import re
 import sqlite3
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+from tqdm import tqdm
 
 from helpers import better_downloader
 from ingest.ingest_config import IngestionConfig
@@ -31,12 +33,15 @@ def ingest_sra(cfg: IngestionConfig):
         cursor.executescript(create_sra_tables_query)
 
     sra_file_dumps = _extract_sra_file_dumps_in_range(cfg.start_date, cfg.end_date)
-    _download_accessions_tab_file(
+    tab_path = _download_accessions_tab_file(
         output_dir,
         cfg.sra_accessions_ttl,
         cfg.num_download_workers,
         cfg.download_chunk_size,
     )
+
+    if tab_path:
+        accessions_csv_path = _convert_tab_to_csv(output_dir, tab_path)
 
 
 def _extract_sra_file_dumps_in_range(
@@ -63,7 +68,7 @@ def _extract_sra_file_dumps_in_range(
 
 def _download_accessions_tab_file(
     output_dir: Path, accessions_ttl: int, num_workers: int, download_chunk_size: int
-) -> None:
+) -> Path | None:
     tab_file = os.path.join(output_dir, _SRA_ACCESSIONS_TAB_FILE_NAME)
     to_download = False
 
@@ -78,7 +83,7 @@ def _download_accessions_tab_file(
 
     if not to_download:
         print("skipping download for sra accessions tab file as it is within ttl range")
-        return
+        return None
 
     better_downloader(
         f"{_SRA_REPORTS_BASE_URL}/{_SRA_ACCESSIONS_TAB_FILE_NAME}",
@@ -86,3 +91,50 @@ def _download_accessions_tab_file(
         num_workers,
         download_chunk_size,
     )
+
+    return Path(tab_file)
+
+
+def _convert_tab_to_csv(output_dir: Path, tab_file_path: Path) -> Path:
+    libc = ctypes.CDLL("libc.so.6")
+    accessions_csv_path = Path(output_dir, "sra_accessions.csv")
+
+    with (
+        open(tab_file_path, "rb", buffering=0) as inf,
+        open(accessions_csv_path, "wb") as outf,
+        tqdm(
+            total=tab_file_path.stat().st_size,
+            unit="B",
+            unit_scale=True,
+            mininterval=2.0,
+        ) as pbar,
+    ):
+        outf.write(b"Accession,Updated,Published\n")
+        offset = 0
+        leftover = b""
+
+        # at a time only 5 MiB is present in memory
+        while chunk := inf.read(5 * 1024 * 1024):
+            # a hack to maintain the memory consumed around 100 MiB
+            # for converting .tab to .csv
+            # after reading a page from memory, it is immediately evicted from page cache to not OOM
+            dontneed = 4
+            libc.posix_fadvise(inf.fileno(), offset, len(chunk), dontneed)
+            offset += len(chunk)
+            pbar.update(len(chunk))
+
+            for line in (leftover + chunk).split(b"\n")[:-1]:
+                f = line.split(b"\t", 7)
+                if len(f) > 6 and f[6] == b"SUBMISSION":
+                    outf.write(
+                        f[1] + b"," + f[3] + b"," + f[4] + b"\n"
+                    )  # manually constructing the csv format to avoid csv.Writer/textmode overhead
+
+            leftover = chunk[chunk.rfind(b"\n") + 1 :]
+
+        if leftover:
+            f = leftover.split(b"\t", 7)
+            if len(f) > 6 and f[6] == b"SUBMISSION":
+                outf.write(f[1] + b"," + f[3] + b"," + f[4] + b"\n")
+
+    return accessions_csv_path
