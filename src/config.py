@@ -11,21 +11,21 @@ def parse_config() -> argparse.Namespace:
         "--stage",
         type=str,
         required=True,
-        choices=["ingest", "all"],
+        choices=["ingest"],
         help="stage of the pipeline to run",
+    )
+    parser.add_argument(
+        "--datasource",
+        type=str,
+        required=True,
+        choices=["geo", "sra", "ena", "ae"],
+        help="name of the datasources from where to pull data for ingest stage",
     )
     parser.add_argument(
         "--output-dir",
         type=str,
         default="/NAS/pysraweb",
         help="directory where all the dump files would be stored",
-    )
-    parser.add_argument(
-        "--datasource",
-        type=str,
-        default="all",
-        choices=["geo", "sra", "ena", "ae", "all"],
-        help="name of the datasources from where to pull data for ingest stage",
     )
     parser.add_argument(
         "--start-date",
@@ -40,22 +40,22 @@ def parse_config() -> argparse.Namespace:
         help="end date of data dump range for ingest stage",
     )
     parser.add_argument(
-        "--sra-accessions-ttl",
-        type=humanfriendly.parse_timespan,
-        default=2 * 24 * 60 * 60,  # 2 days
-        help="TTL for SRA_Accessions.tab file for SRA ingest stage",
-    )
-    parser.add_argument(
-        "--download-workers",
+        "--workers",
         type=int,
         required=True,
-        help="number of parallel workers which would be running during any download phase. need to be manually finetuned based on rate limits",
+        help="total worker budget for the stage. the stage distributes these across various tasks automatically",
     )
     parser.add_argument(
-        "--download-chunk-size",
-        type=int,
-        default=20 * 1024,  # 20 KiB
-        help="size of the chunk which sits in RAM at once while writing to output content",
+        "--chunk-size",
+        type=humanfriendly.parse_size,
+        default="20 MiB",
+        help="amount of data which is to be held in RAM per worker at once during any read/write phase",
+    )
+    parser.add_argument(
+        "--sra-accessions-ttl",
+        type=humanfriendly.parse_timespan,
+        default=2 * 24 * 60 * 60,
+        help="time-to-live for SRA_Accessions.tab file for SRA ingest stage",
     )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])

@@ -7,9 +7,9 @@ from tqdm import tqdm
 
 
 def better_downloader(
-    url: str, dest_path: str, num_workers: int, download_chunk_size: int
+    url: str, dest_path: Path, num_workers: int, chunk_size: int
 ) -> None:
-    Path(dest_path).parent.mkdir(exist_ok=True)
+    dest_path.parent.mkdir(exist_ok=True)
 
     with requests.head(url) as r:
         r.raise_for_status()
@@ -17,7 +17,7 @@ def better_downloader(
         accepts_range = r.headers.get("Accept-Ranges", "")
 
     if content_length == -1 or accepts_range == "":
-        simple_file_download(url, dest_path, download_chunk_size)
+        simple_file_download(url, dest_path, chunk_size)
         return
 
     worker_chunk_size = content_length // num_workers
@@ -41,7 +41,7 @@ def better_downloader(
                 ) as r:
                     r.raise_for_status()
                     f.seek(start)
-                    for chunk in r.iter_content(chunk_size=download_chunk_size):
+                    for chunk in r.iter_content(chunk_size):
                         f.write(chunk)
                         pbar.update(len(chunk))
 
@@ -57,7 +57,7 @@ def better_downloader(
                 future.result()
 
 
-def simple_file_download(url: str, dest_path: str, download_chunk_size: int) -> None:
+def simple_file_download(url: str, dest_path: Path, chunk_size: int) -> None:
     with requests.get(url, stream=True) as r:
         r.raise_for_status()
         content_length = int(r.headers.get("Content-Length", -1))
@@ -75,6 +75,6 @@ def simple_file_download(url: str, dest_path: str, download_chunk_size: int) -> 
                 desc=f"downloading {url}",
             ) as pbar,
         ):
-            for chunk in r.iter_content(download_chunk_size):
+            for chunk in r.iter_content(chunk_size):
                 f.write(chunk)
                 pbar.update(len(chunk))
