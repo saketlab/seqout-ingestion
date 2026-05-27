@@ -30,7 +30,16 @@ func BetterDownloader(url string, destPath string, numWorkers int) error {
 	}
 
 	chunkSize := fileSize / int64(numWorkers)
-	chunks := make([]FileChunk, numWorkers)
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to create dest path: %w", err)
+	}
+	defer out.Close()
+
+	if err := out.Truncate(fileSize); err != nil {
+		return fmt.Errorf("failed to pre-allocate file: %w", err)
+	}
 
 	var g errgroup.Group
 	bar := progressbar.DefaultBytes(fileSize, fmt.Sprintf("downloading %s...", url))
@@ -43,36 +52,11 @@ func BetterDownloader(url string, destPath string, numWorkers int) error {
 				end = fileSize - 1
 			}
 
-			data, err := downloadChunk(url, start, end, bar)
-			if err != nil {
-				return err
-			}
-
-			chunks[i] = FileChunk{
-				Index: i,
-				Data:  data,
-			}
-			return nil
+			return downloadChunk(url, start, end, out, bar)
 		})
 	}
 
-	if err := g.Wait(); err != nil {
-		return fmt.Errorf("failed to download file in chunks: %w", err)
-	}
-
-	out, err := os.Create(destPath)
-	if err != nil {
-		return fmt.Errorf("failed to create dest path: %w", err)
-	}
-	defer out.Close()
-
-	for i, c := range chunks {
-		if _, err := out.Write(c.Data); err != nil {
-			return fmt.Errorf("failed to write data into dest path for chunk #%d: %w", i+1, err)
-		}
-	}
-
-	return nil
+	return g.Wait()
 }
 
 func SimpleFileDownload(url string, destPath string) error {
@@ -98,20 +82,21 @@ func SimpleFileDownload(url string, destPath string) error {
 	return err
 }
 
-func downloadChunk(url string, start, end int64, bar *progressbar.ProgressBar) ([]byte, error) {
+func downloadChunk(url string, start, end int64, out *os.File, bar *progressbar.ProgressBar) error {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send req: %w", err)
+		return fmt.Errorf("failed to send req: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusPartialContent {
-		return nil, fmt.Errorf("unexpected status: %s (%d)", resp.Status, resp.StatusCode)
+		return fmt.Errorf("unexpected status: %s (%d)", resp.Status, resp.StatusCode)
 	}
 
-	reader := io.TeeReader(resp.Body, bar)
-	return io.ReadAll(reader)
+	writer := io.NewOffsetWriter(out, start)
+	_, err = io.Copy(io.MultiWriter(writer, bar), resp.Body)
+	return err
 }

@@ -27,9 +27,10 @@ const SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
 
 func ingestSra(cfg IngestionConfig) error {
 	dateStr := utils.FromTimeToDateStr(time.Now())
-	sqliteFilePath := filepath.Join(cfg.OutputDir, fmt.Sprintf("sra_metadata_%s.db", dateStr))
+	outputDir := filepath.Join(cfg.OutputDir, "sra_metadata")
+	sqliteFilePath := filepath.Join(outputDir, fmt.Sprintf("sra_metadata_%s.db", dateStr))
 
-	if err := os.MkdirAll(cfg.OutputDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create all parent dirs: %w", err)
 	}
 
@@ -48,7 +49,7 @@ func ingestSra(cfg IngestionConfig) error {
 		return fmt.Errorf("failed to extract file dumps in specified range: %w", err)
 	}
 
-	if err := downloadAccessionsTabFile(cfg.OutputDir, cfg.SRAAccessionsTabFileTTL, cfg.NumWorkers); err != nil {
+	if err := downloadAccessionsTabFile(outputDir, cfg.SRAAccessionsTabFileTTL, cfg.NumWorkers); err != nil {
 		return fmt.Errorf("failed to download sra accessions tab file: %w", err)
 	}
 
@@ -113,7 +114,7 @@ func extractSraFileDumpsInRange(startDate, endDate time.Time) ([]string, error) 
 }
 
 func downloadAccessionsTabFile(outputDir string, ttl time.Duration, numWorkers int) error {
-	accessionsTabFilePath := filepath.Join(outputDir, SRA_METADATA_FOLDER, SRA_ACCESSIONS_TAB_FILE_NAME)
+	accessionsTabFilePath := filepath.Join(outputDir, SRA_ACCESSIONS_TAB_FILE_NAME)
 	info, err := os.Stat(accessionsTabFilePath)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to fetch file info for sra accessions tab file: %w", err)
