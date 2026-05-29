@@ -8,6 +8,6 @@ class IngestionConfig:
     output_dir: str
     start_date: datetime.date
     end_date: datetime.date
-    num_workers: int
+    n_workers: int
     chunk_size: int
     sra_accessions_ttl: int

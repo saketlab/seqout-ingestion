@@ -14,7 +14,7 @@ def main() -> None:
                 output_dir=args.output_dir,
                 start_date=datetime(*args.start_date).date(),
                 end_date=datetime(*args.end_date).date(),
-                num_workers=args.workers,
+                n_workers=args.workers,
                 chunk_size=args.chunk_size,
                 sra_accessions_ttl=args.sra_accessions_ttl,
             )

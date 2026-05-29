@@ -1,13 +1,19 @@
 import csv
 import ctypes
 import datetime
+import enum
 import os
 import pickle
+import queue
 import re
+import shutil
 import sqlite3
+import subprocess
 import sys
 import tarfile
+import threading
 import time
+import xml.parsers.expat as expat
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from importlib.resources import files
 from math import isqrt
@@ -25,13 +31,24 @@ _SRA_METADATA_FOLDER = "sra_metadata"
 _SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
 _SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
 _SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
+_STOP = object()
+
+
+class FileType(enum.StrEnum):
+    Submission = "submission"
+    Sample = "sample"
+    Study = "study"
+    Experiment = "experiment"
+    Run = "run"
 
 
 def ingest_sra(cfg: IngestionConfig):
     output_dir = Path(cfg.output_dir, _SRA_METADATA_FOLDER)
     output_dir.mkdir(parents=True, exist_ok=True)
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    db_file = os.path.join(output_dir, f"sra_metadata_{date_str}.db")
+    db_dir = output_dir / "db" / date_str
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_file = os.path.join(db_dir, f"sra_metadata_{date_str}.db")
 
     sra_file_dumps = _extract_sra_file_dumps_in_range(cfg.start_date, cfg.end_date)
     assert len(sra_file_dumps) > 0, (
@@ -41,7 +58,7 @@ def ingest_sra(cfg: IngestionConfig):
     tab_path, to_reprocess_csv = _download_accessions_tab_file(
         output_dir,
         cfg.sra_accessions_ttl,
-        cfg.num_workers,
+        cfg.n_workers,
         cfg.chunk_size,
     )
 
@@ -50,21 +67,20 @@ def ingest_sra(cfg: IngestionConfig):
         _convert_tab_to_csv(accessions_csv_path, output_dir, tab_path, cfg.chunk_size)
 
     dumps_dir = _download_sra_file_dumps(
-        sra_file_dumps, output_dir, cfg.num_workers, cfg.chunk_size
+        sra_file_dumps, output_dir, cfg.n_workers, cfg.chunk_size
     )
-
-    with sqlite3.connect(db_file) as conn:
-        cursor = conn.cursor()
-        create_sra_tables_query = files("sql").joinpath("sra_tables.sql").read_text()
-        cursor.executescript(create_sra_tables_query)
 
     accessions_idx = _build_accessions_index(
         accessions_csv_path, to_reprocess_csv, output_dir
     )
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
 
-    for tarball in tarballs:
-        _process_tarball(tarball)
+    with sqlite3.connect(db_file) as conn:
+        cursor = conn.cursor()
+        create_sra_tables_query = files("sql").joinpath("sra_tables.sql").read_text()
+        cursor.executescript(create_sra_tables_query)
+
+    _process_tarballs(tarballs, accessions_idx, db_file, cfg.n_workers, cfg.chunk_size)
 
 
 def _extract_sra_file_dumps_in_range(
@@ -211,8 +227,8 @@ def _build_accessions_index(
             data = pickle.load(f)
         return {k: sys.intern(v) for k, v in data.items()}
 
-    # NOTE: neither polars nor duckdb are supported on python free threaded version, so going with building the accessions map manually while trying to reduce the memory consumed using sys.intern for dedup
     print("building accessions index...")
+    # NOTE: neither polars nor duckdb are supported on python free threaded version, so going with building the accessions map manually while trying to reduce the memory consumed using sys.intern for dedup
     with open(accessions_csv_path, "r", newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
@@ -228,11 +244,246 @@ def _build_accessions_index(
     return accessions_idx
 
 
-def _process_tarball(tarball_path: Path):
-    print(tarball_path)
-    with tarfile.open(tarball_path, "r:*") as f:
-        for member in f:
-            if not member.isfile():
-                continue
+def _reader_worker(
+    tarball: Path,
+    transform_queue: queue.Queue[list[tuple[str, FileType, bytes]]],
+    pbar: tqdm,
+    n_readers: int,
+    chunk_size: int,
+    batch_size: int,
+):
+    proc = subprocess.Popen(
+        ["pigz", "-dc", "-p", str(n_readers), str(tarball)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        bufsize=chunk_size,
+    )
 
-            print(f"{tarball_path}: {member.name}")
+    batch: list[tuple[str, FileType, bytes]] = []
+
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
+            for member in tar:
+                if not member.isfile():
+                    continue
+
+                name = member.name
+
+                try:
+                    if name.endswith(".submission.xml"):
+                        file_type = FileType.Submission
+                    else:
+                        continue
+
+                    accession = name.split("/")[0]
+                    if not accession:
+                        continue
+
+                    f = tar.extractfile(member)
+                    if f is None:
+                        continue
+                    content = f.read()
+
+                    batch.append((accession, file_type, content))
+                    if len(batch) >= batch_size:
+                        transform_queue.put(batch)
+                        pbar.update(len(batch))
+                        batch.clear()
+
+                except Exception as e:
+                    print(f"[reader] failed to read {tarball}: {e}")
+
+        if batch:
+            transform_queue.put(batch)
+            pbar.update(len(batch))
+            batch.clear()
+    finally:
+        if proc:
+            proc.wait()
+
+
+def _transform_worker(
+    transform_queue: queue.Queue[list[tuple[str, FileType, bytes]]],
+    write_queue: queue.Queue[list[tuple[FileType, list]] | object],
+    accessions_idx: dict[str, str],
+    batch_size: int,
+):
+    batch: list[tuple[FileType, list]] = []
+
+    while True:
+        try:
+            record = transform_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+
+        if record is _STOP:
+            if batch:
+                write_queue.put(batch)
+                batch.clear()
+            write_queue.put(_STOP)
+            break
+
+        for accession, file_type, content in record:
+            try:
+                if file_type == FileType.Submission:
+                    result = _process_submission(accession, content, accessions_idx)
+                    if result:
+                        batch.append((file_type, result))
+            except Exception as e:
+                print(f"[processor] failed to process {accession}: {e}")
+
+        if len(batch) >= batch_size:
+            write_queue.put(batch)
+            batch.clear()
+
+
+def _process_submission(accession: str, content: bytes, accessions_idx: dict[str, str]):
+    attrs_found = {}
+
+    def _start_element(tag: str, attrs: dict):
+        if tag == "SUBMISSION":
+            attrs_found.update(attrs)
+            # early exit once submission root element tag is found
+            raise expat.ExpatError
+
+    p = expat.ParserCreate()
+    p.StartElementHandler = _start_element
+
+    try:
+        p.Parse(content)
+    except expat.ExpatError:
+        pass
+
+    if not attrs_found:
+        return None
+
+    dates = accessions_idx.get(accession)
+    updated_at, published_at = dates.split("|") if dates else (None, None)
+
+    return (
+        accession,
+        attrs_found.get("alias"),
+        attrs_found.get("center_name"),
+        attrs_found.get("lab_name"),
+        attrs_found.get("broker_name"),
+        updated_at,
+        published_at,
+    )
+
+
+def _writer_worker(
+    write_queue: queue.Queue[list[tuple[FileType, list]]],
+    db_file: str,
+    sentinels_to_receive: int,
+    batch_size: int,
+):
+    conn = sqlite3.connect(db_file)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    cursor = conn.cursor()
+
+    sentinels_received = 0
+
+    sql_statements: dict[FileType, str] = {
+        FileType.Submission: "INSERT OR IGNORE INTO sra_submissions (accession, alias, center_name, lab_name, broker_name, updated_at, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    }
+
+    batches: dict[FileType, list] = {
+        FileType.Submission: [],
+    }
+
+    while True:
+        try:
+            record = write_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+
+        if record is _STOP:
+            sentinels_received += 1
+            if sentinels_received == sentinels_to_receive:
+                break
+            continue
+
+        for file_type, row in record:
+            batches[file_type].append(row)
+            if len(batches[file_type]) >= batch_size:
+                cursor.executemany(sql_statements[file_type], batches[file_type])
+                batches[file_type] = []
+
+    for file_type, rows in batches.items():
+        if rows:
+            cursor.executemany(sql_statements[file_type], rows)
+
+    conn.commit()
+    conn.close()
+
+
+def _process_tarballs(
+    tarballs: list[Path],
+    accessions_idx: dict[str, str],
+    db_file: str,
+    n_workers: int,
+    chunk_size: int,
+):
+    if not shutil.which("pigz"):
+        raise ValueError(
+            "pigz is not found. please install it for parallel decompression"
+        )
+
+    cpu = os.cpu_count() or 4
+
+    max_concurrent_readers = max(1, cpu // 4)
+    pigz_cores_per_reader = max(1, cpu // max_concurrent_readers)
+    n_writer = 1
+    n_transform = max(1, n_workers - max_concurrent_readers - n_writer)
+    batch_size = max(100, n_transform * 50)
+
+    transform_queue = queue.Queue(n_transform * 200)
+    write_queue = queue.Queue(n_transform * 200)
+
+    read_sem = threading.Semaphore(max_concurrent_readers)
+    readers_done = threading.Barrier(len(tarballs))
+
+    total_estimate_xml_files = len(accessions_idx) * 5
+    pbar = tqdm(
+        total=total_estimate_xml_files,
+        unit="file",
+        desc="processing submissions",
+        mininterval=2.0,
+    )
+
+    def _reader_with_sem(tarball: Path):
+        with read_sem:
+            _reader_worker(
+                tarball,
+                transform_queue,
+                pbar,
+                pigz_cores_per_reader,
+                chunk_size,
+                batch_size,
+            )
+
+        if readers_done.wait() == 0:
+            for _ in range(n_transform):
+                transform_queue.put(_STOP)
+
+    with ThreadPoolExecutor(n_workers) as pool:
+        reader_futures = [pool.submit(_reader_with_sem, tb) for tb in tarballs]
+        transform_futures = [
+            pool.submit(
+                _transform_worker,
+                transform_queue,
+                write_queue,
+                accessions_idx,
+                batch_size,
+            )
+            for _ in range(n_transform)
+        ]
+        write_future = pool.submit(
+            _writer_worker, write_queue, db_file, n_transform, batch_size
+        )
+
+        for f in [*reader_futures, *transform_futures, write_future]:
+            f.result()
+
+    pbar.close()
