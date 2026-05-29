@@ -2,6 +2,7 @@ import csv
 import ctypes
 import datetime
 import enum
+import io
 import os
 import pickle
 import queue
@@ -13,7 +14,6 @@ import sys
 import tarfile
 import threading
 import time
-import xml.parsers.expat as expat
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from importlib.resources import files
 from math import isqrt
@@ -21,6 +21,7 @@ from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+from lxml import etree
 from tqdm import tqdm
 
 from helpers import better_downloader
@@ -304,11 +305,11 @@ def _reader_worker(
 
 def _transform_worker(
     transform_queue: queue.Queue[list[tuple[str, FileType, bytes]]],
-    write_queue: queue.Queue[list[tuple[FileType, list]] | object],
+    write_queue: queue.Queue[list[tuple[FileType, tuple]] | object],
     accessions_idx: dict[str, str],
     batch_size: int,
 ):
-    batch: list[tuple[FileType, list]] = []
+    batch: list[tuple[FileType, tuple]] = []
 
     while True:
         try:
@@ -338,23 +339,18 @@ def _transform_worker(
 
 
 def _process_submission(accession: str, content: bytes, accessions_idx: dict[str, str]):
-    attrs_found = {}
+    # iterparse with events=('start',) streams the document and lets us break as soon
+    # as the root <SUBMISSION> element is seen — same early-exit behaviour as the old
+    # expat hack, but without having to raise an exception to abort parsing.
+    # recover=True silently tolerates malformed XML rather than raising.
+    ctx = etree.iterparse(io.BytesIO(content), events=("start",), recover=True)
+    attrs: dict[str, str] = {}
+    for _event, elem in ctx:
+        if elem.tag == "SUBMISSION":
+            attrs = dict(elem.attrib)
+            break
 
-    def _start_element(tag: str, attrs: dict):
-        if tag == "SUBMISSION":
-            attrs_found.update(attrs)
-            # early exit once submission root element tag is found
-            raise expat.ExpatError
-
-    p = expat.ParserCreate()
-    p.StartElementHandler = _start_element
-
-    try:
-        p.Parse(content)
-    except expat.ExpatError:
-        pass
-
-    if not attrs_found:
+    if not attrs:
         return None
 
     dates = accessions_idx.get(accession)
@@ -362,17 +358,17 @@ def _process_submission(accession: str, content: bytes, accessions_idx: dict[str
 
     return (
         accession,
-        attrs_found.get("alias"),
-        attrs_found.get("center_name"),
-        attrs_found.get("lab_name"),
-        attrs_found.get("broker_name"),
+        attrs.get("alias"),
+        attrs.get("center_name"),
+        attrs.get("lab_name"),
+        attrs.get("broker_name"),
         updated_at,
         published_at,
     )
 
 
 def _writer_worker(
-    write_queue: queue.Queue[list[tuple[FileType, list]]],
+    write_queue: queue.Queue[list[tuple[FileType, tuple]]],
     db_file: str,
     sentinels_to_receive: int,
     batch_size: int,
@@ -444,7 +440,7 @@ def _process_tarballs(
     read_sem = threading.Semaphore(max_concurrent_readers)
     readers_done = threading.Barrier(len(tarballs))
 
-    total_estimate_xml_files = len(accessions_idx) * 5
+    total_estimate_xml_files = len(accessions_idx)
     pbar = tqdm(
         total=total_estimate_xml_files,
         unit="file",
