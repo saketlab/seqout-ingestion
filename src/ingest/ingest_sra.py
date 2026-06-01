@@ -53,7 +53,7 @@ def ingest_sra(cfg: IngestionConfig):
     db_file = db_dir / f"sra_metadata_{date_str}.db"
 
     logging.debug("extracting sra file dumps in range")
-    file_dumps = _extract_sra_file_dumps_inum_range(cfg.start_date, cfg.end_date)
+    file_dumps = _extract_sra_file_dumps_in_range(cfg.start_date, cfg.end_date)
     assert len(file_dumps) > 0, (
         f"no sra file dumps found in {cfg.start_date} to {cfg.end_date} range"
     )
@@ -92,7 +92,7 @@ def ingest_sra(cfg: IngestionConfig):
     _process_tarballs(tarballs, accessions_idx, db_file, cfg.num_workers)
 
 
-def _extract_sra_file_dumps_inum_range(start_date: date, end_date: date) -> list[str]:
+def _extract_sra_file_dumps_in_range(start_date: date, end_date: date) -> list[str]:
     file_dumps: list[str] = []
 
     with requests.get(_SRA_FTP_BASE_URL, timeout=30) as r:
@@ -163,21 +163,14 @@ def _convert_tab_to_csv(
         offset = 0
         leftover = b""
 
-        # at a time only 5 MiB is present in memory
         while chunk := inf.read(chunk_size):
-            # a hack to maintain the memory consumed to be around 100 MiB while converting .tab to .csv
-            # the main idea is that after reading a page from the memory, it is immediately evicted from page cache
-            # REF: https://www.man7.org/linux/man-pages/man2/posix_fadvise.2.html
             libc.posix_fadvise(inf.fileno(), offset, len(chunk), 4)
             offset += len(chunk)
             pbar.update(len(chunk))
 
-            # as the chunk boundaries are "random" in a way, it is not guaranteed whether it'll split "cleanly" or not
-            # so to overcome those problems, leftover chunking strategy is used over here
             for line in (leftover + chunk).split(b"\n")[:-1]:
                 f = line.split(b"\t", 7)
                 if len(f) > 6 and f[6] == b"SUBMISSION":
-                    # manually constructing the csv format to avoid csv.Writer/textmod overhead
                     outf.write(f[1] + b"," + f[3] + b"," + f[4] + b"\n")
 
             leftover = chunk[chunk.rfind(b"\n") + 1 :]
@@ -246,11 +239,59 @@ def _build_accessions_index(
 
     with open(accessions_idx_pkl_path, "wb") as f:
         pickle.dump(accessions_idx, f, protocol=pickle.HIGHEST_PROTOCOL)
+
     return accessions_idx
 
 
-def _process_submission(accession: str, content: bytes, accessions_idx: dict[str, str]):
-    ctx = ET.iterparse(io.BytesIO(content), events=("start", "end"))
+def _parse_external_ids(external_ids: list) -> str | None:
+    if not external_ids:
+        return None
+    return json.dumps({el.get("namespace"): el.text for el in external_ids})
+
+
+def _parse_attributes(sample_attrs: list) -> str | None:
+    if not sample_attrs:
+        return None
+    return json.dumps(
+        {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs}
+    )
+
+
+def _parse_links(sample_links: list) -> str | None:
+    if not sample_links:
+        return None
+    results = {}
+
+    for link in sample_links:
+        url = link.find("URL_LINK")
+        if url is not None:
+            label = url.findtext("LABEL")
+            results[label] = url.findtext("URL")
+        else:
+            for child in link:
+                results[child.tag] = {el.tag: el.text for el in child}
+
+    return json.dumps(results)
+
+
+def _xml_elem_to_dict(elem) -> dict:
+    if elem is None:
+        return {}
+
+    result = {}
+    for child in elem:
+        if len(child) == 0:
+            result[child.tag] = child.attrib if child.attrib else child.text
+        else:
+            result[child.tag] = _xml_elem_to_dict(child)
+
+    return result
+
+
+def _process_submission(
+    submission_accession: str, content: bytes, accessions_idx: dict[str, str]
+):
+    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
     attrs: dict[str, str] = {}
 
     try:
@@ -264,7 +305,8 @@ def _process_submission(accession: str, content: bytes, accessions_idx: dict[str
     except ET.ParseError:
         return None
 
-    if not attrs:
+    accession = attrs.get("accession", submission_accession)
+    if not accession:
         return None
 
     dates = accessions_idx.get(accession)
@@ -281,63 +323,200 @@ def _process_submission(accession: str, content: bytes, accessions_idx: dict[str
     )
 
 
-def _process_samples(accession: str, content: bytes, accessions_idx: dict[str, str]):
+def _process_samples(submission_accession: str, content: bytes):
     ctx = ET.iterparse(io.BytesIO(content), events=("end",))
     results = []
-
-    def _parse_external_ids(external_ids: list) -> str | None:
-        if not external_ids:
-            return None
-        return json.dumps({el.get("namespace"): el.text for el in external_ids})
-
-    def _parse_attributes(sample_attrs: list) -> str | None:
-        if not sample_attrs:
-            return None
-        return json.dumps(
-            {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs}
-        )
-
-    def _parse_links(sample_links: list) -> str | None:
-        if not sample_links:
-            return None
-        results = {}
-        for link in sample_links:
-            url = link.find("URL_LINK")
-            if url is not None:
-                label = url.findtext("LABEL")
-                results[label] = url.findtext("URL")
-            else:
-                for child in link:
-                    results[child.tag] = {el.tag: el.text for el in child}
-        return json.dumps(results)
 
     try:
         for _, elem in ctx:
             if elem.tag != "SAMPLE":
                 continue
 
+            accession = elem.get("accession")
             identifiers = elem.find("IDENTIFIERS")
             external_ids = (
                 identifiers.findall("EXTERNAL_ID") if identifiers is not None else []
             )
 
-            sample_attrs = elem.findall("SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
-            sample_links = elem.findall("SAMPLE_LINKS/SAMPLE_LINK")
+            attrs = elem.findall("SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
+            links = elem.findall("SAMPLE_LINKS/SAMPLE_LINK")
 
             record = (
-                elem.get("accession"),
+                accession,
                 elem.get("alias"),
                 elem.findtext("DESCRIPTION"),
                 elem.findtext("TITLE"),
                 elem.findtext("SAMPLE_NAME/SCIENTIFIC_NAME"),
                 elem.findtext("SAMPLE_NAME/TAXON_ID"),
                 _parse_external_ids(external_ids),
-                _parse_attributes(sample_attrs),
-                accession,
-                _parse_links(sample_links),
+                _parse_attributes(attrs),
+                submission_accession,
+                _parse_links(links),
             )
+
             results.append(record)
             elem.clear()
+    except ET.ParseError:
+        return None
+
+    return results
+
+
+def _process_studies(
+    submission_accession: str, content: bytes, accessions_idx: dict[str, str]
+):
+    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+    results = []
+
+    try:
+        for _, elem in ctx:
+            if elem.tag != "STUDY_SET":
+                continue
+
+            items = elem.findall("STUDY")
+
+            for study in items:
+                accession = study.get("accession")
+                descriptor = _xml_elem_to_dict(study.find("DESCRIPTOR"))
+
+                # FIX: was incorrectly looking on elem (STUDY_SET) for all three
+                identifiers = study.find("IDENTIFIERS")
+                external_ids = (
+                    identifiers.findall("EXTERNAL_ID")
+                    if identifiers is not None
+                    else []
+                )
+                attrs = study.findall("STUDY_ATTRIBUTES/STUDY_ATTRIBUTE")
+                links = study.findall("STUDY_LINKS/STUDY_LINK")
+
+                dates = accessions_idx.get(accession)
+                updated_at, published_at = dates.split("|") if dates else (None, None)
+
+                record = (
+                    accession,
+                    study.get("alias"),
+                    study.get("center_name"),
+                    descriptor.get("STUDY_ABSTRACT"),
+                    descriptor.get("STUDY_TITLE"),
+                    _parse_external_ids(external_ids),
+                    descriptor.get("STUDY_TYPE", {}).get("existing_study_type"),
+                    _parse_attributes(attrs),
+                    _parse_links(links),
+                    descriptor.get("CENTER_PROJECT_NAME"),
+                    submission_accession,
+                    published_at,
+                    updated_at,
+                )
+
+                results.append(record)
+                study.clear()
+            break
+    except ET.ParseError:
+        return None
+
+    return results
+
+
+def _process_experiments(submission_accession: str, content: bytes):
+    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+    results = []
+
+    try:
+        for _, elem in ctx:
+            if elem.tag != "EXPERIMENT_SET":
+                continue
+
+            items = elem.findall("EXPERIMENT")
+
+            for experiment in items:
+                experiment_accession = experiment.get("accession")
+
+                design_elem = experiment.find("DESIGN")
+                design_dict = _xml_elem_to_dict(design_elem)
+                library_descriptor = design_dict.get("LIBRARY_DESCRIPTOR", {})
+                design_description = design_dict.get("DESIGN_DESCRIPTION")
+
+                library_layout_raw = library_descriptor.get("LIBRARY_LAYOUT", {})
+                library_layout = next(iter(library_layout_raw), None)
+
+                library_name = library_descriptor.get("LIBRARY_NAME")
+                library_selection = library_descriptor.get("LIBRARY_SELECTION")
+                library_source = library_descriptor.get("LIBRARY_SOURCE")
+                library_strategy = library_descriptor.get("LIBRARY_STRATEGY")
+
+                samples = []
+                if design_elem is not None:
+                    for sample in design_elem.findall("SAMPLE_DESCRIPTOR"):
+                        sample_accession = sample.get("accession")
+                        if sample_accession:
+                            samples.append(sample_accession)
+
+                platform_elem = experiment.find("PLATFORM")
+                platform_dict = _xml_elem_to_dict(platform_elem)
+                platform = next(iter(platform_dict), None)
+                instrument_model = (
+                    platform_dict.get(platform, {}).get("INSTRUMENT_MODEL")
+                    if platform
+                    else None
+                )
+
+                study_ref_elem = experiment.find("STUDY_REF")
+                study_ref = (
+                    study_ref_elem.get("accession")
+                    if study_ref_elem is not None
+                    else None
+                )
+
+                title = experiment.findtext("TITLE")
+
+                record = (
+                    experiment_accession,
+                    design_description,
+                    library_layout,
+                    library_name,
+                    library_selection,
+                    library_source,
+                    library_strategy,
+                    json.dumps(samples),
+                    platform,
+                    instrument_model,
+                    study_ref,
+                    title,
+                    submission_accession,
+                )
+
+                results.append(record)
+                experiment.clear()
+            break
+    except ET.ParseError:
+        return None
+
+    return results
+
+
+def _process_runs(submission_accession: str, content: bytes):
+    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+    results = []
+
+    try:
+        for _, elem in ctx:
+            if elem.tag != "RUN_SET":
+                continue
+
+            items = elem.findall("RUN")
+
+            for run in items:
+                experiment_ref_elem = run.find("EXPERIMENT_REF")
+                experiment_ref = (
+                    experiment_ref_elem.get("accession")
+                    if experiment_ref_elem is not None
+                    else None
+                )
+                record = (run.get("accession"), experiment_ref, submission_accession)
+
+                results.append(record)
+                run.clear()
+            break
     except ET.ParseError:
         return None
 
@@ -374,13 +553,9 @@ def _reader_worker(
                     continue
 
                 name = member.name
-                if not name.endswith(".submission.xml") and not name.endswith(
-                    ".sample.xml"
-                ):
-                    continue
 
-                accession = name.split("/")[0]
-                if not accession:
+                submission_accession = name.split("/")[0]
+                if not submission_accession:
                     continue
 
                 file_type = _convert_file_name_to_type(name)
@@ -392,7 +567,7 @@ def _reader_worker(
                     if f is None:
                         continue
 
-                    batch.append((accession, file_type, f.read()))
+                    batch.append((submission_accession, file_type, f.read()))
                     pbar.update(1)
 
                     if len(batch) >= read_batch_size:
@@ -424,23 +599,40 @@ def _transform_worker(
             write_queue.put(_STOP)
             break
 
-        for accession, file_type, content in batch:
+        for submission_accession, file_type, content in batch:
             try:
                 result = None
 
                 if file_type == FileType.Submission:
-                    result = _process_submission(accession, content, accessions_idx)
+                    result = _process_submission(
+                        submission_accession, content, accessions_idx
+                    )
                 elif file_type == FileType.Sample:
-                    result = _process_samples(accession, content, accessions_idx)
+                    result = _process_samples(submission_accession, content)
+                elif file_type == FileType.Study:
+                    result = _process_studies(
+                        submission_accession, content, accessions_idx
+                    )
+                elif file_type == FileType.Experiment:
+                    result = _process_experiments(submission_accession, content)
+                elif file_type == FileType.Run:
+                    result = _process_runs(submission_accession, content)
+                else:
+                    logging.error(
+                        f"[transform] received invalid file type: {file_type}"
+                    )
 
-                if result:
-                    if file_type == FileType.Sample:
-                        for row in result:
-                            write_queue.put((file_type, row))
-                    else:
-                        write_queue.put((file_type, result))
+                if result is None:
+                    continue
+
+                rows = result if isinstance(result, list) else [result]
+                for row in rows:
+                    write_queue.put((file_type, row))
+
             except Exception as e:
-                logging.error(f"[transform] failed to process {accession}: {e}")
+                logging.error(
+                    f"[transform] failed to process {submission_accession}: {e}"
+                )
 
 
 def _writer_worker(
@@ -460,6 +652,9 @@ def _writer_worker(
     sql_statements = {
         FileType.Submission: "INSERT OR IGNORE INTO sra_submissions (accession, alias, center_name, lab_name, broker_name, updated_at, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         FileType.Sample: "INSERT OR IGNORE INTO sra_samples (accession, alias, description, title, scientific_name, taxon_id, external_id, attributes_json, submission, links) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        FileType.Study: "INSERT OR IGNORE INTO sra_studies (accession, alias, center_name, abstract, title, external_id, study_type, attributes_json, links, center_project_name, submission, published_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        FileType.Experiment: "INSERT OR IGNORE INTO sra_experiments (accession, design_description, library_layout, library_name, library_selection, library_source, library_strategy, samples, platform, instrument_model, study, title, submission) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        FileType.Run: "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)",
     }
 
     def _flush(sql: str, batch: list):
@@ -476,7 +671,6 @@ def _writer_worker(
         except queue.Empty:
             continue
 
-        # FIX: check for sentinel before unpacking
         if item is _STOP:
             sentinels_received += 1
             if sentinels_received == sentinels_to_receive:
@@ -506,11 +700,10 @@ def _process_tarballs(
     num_writer = 1
     num_transform = max(1, num_workers - num_readers - num_writer)
 
-    transform_queue: queue.Queue = queue.Queue(num_transform * 64)
-    write_queue: queue.Queue = queue.Queue(num_transform * 64)
+    transform_queue: queue.Queue = queue.Queue()
+    write_queue: queue.Queue = queue.Queue()
 
     read_sem = threading.Semaphore(num_readers)
-    readers_done = threading.Barrier(len(tarballs))
 
     pbar = tqdm(
         total=len(accessions_idx),
@@ -522,9 +715,6 @@ def _process_tarballs(
     def _reader_with_sem(tarball: Path):
         with read_sem:
             _reader_worker(tarball, transform_queue, pbar)
-        if readers_done.wait() == 0:
-            for _ in range(num_transform):
-                transform_queue.put(_STOP)
 
     with (
         ThreadPoolExecutor(len(tarballs)) as reader_pool,
@@ -546,7 +736,14 @@ def _process_tarballs(
         reader_futures = [reader_pool.submit(_reader_with_sem, tb) for tb in tarballs]
 
         for f in reader_futures:
-            f.result()
+            try:
+                f.result()
+            except Exception as e:
+                logging.exception(f"[reader] a reader thread failed: {e}")
+
+        for _ in range(num_transform):
+            transform_queue.put(_STOP)
+
         for f in transform_futures:
             f.result()
         write_future.result()
