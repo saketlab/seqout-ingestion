@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 
 import config
@@ -6,6 +7,19 @@ from ingest.ingest import IngestionConfig, run_ingest
 
 def main() -> None:
     args = config.parse_config()
+    handlers = []
+
+    if args.stream == "stdout":
+        handlers.append(logging.StreamHandler())
+    else:
+        handlers.append(logging.FileHandler(args.stream))
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s | %(levelname)-8s | %(message)s",
+        datefmt="%H:%M:%S",
+        handlers=handlers,
+    )
 
     if args.stage == "ingest":
         run_ingest(
@@ -14,7 +28,7 @@ def main() -> None:
                 output_dir=args.output_dir,
                 start_date=datetime(*args.start_date).date(),
                 end_date=datetime(*args.end_date).date(),
-                n_workers=args.workers,
+                num_workers=args.workers,
                 chunk_size=args.chunk_size,
                 sra_accessions_ttl=args.sra_accessions_ttl,
             )

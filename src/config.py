@@ -57,6 +57,18 @@ def parse_config() -> argparse.Namespace:
         default=2 * 24 * 60 * 60,
         help="time-to-live for SRA_Accessions.tab file for SRA ingest stage",
     )
+    parser.add_argument(
+        "--stream",
+        type=str,
+        default="stdout",
+        help="name of the stream where the logs would be sent out to. it can be either stdout or path of a file",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="info",
+        help="minimum log level above which (and equal to) the logs are streamed",
+    )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
     if not args.start_date < args.end_date:
