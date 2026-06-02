@@ -1,7 +1,6 @@
 import csv
 import ctypes
 import enum
-import io
 import json
 import logging
 import logging.config
@@ -14,6 +13,7 @@ import sys
 import tarfile
 import threading
 import time
+import typing
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
@@ -25,7 +25,7 @@ import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-from helpers import better_downloader
+from helpers import better_downloader, create_tables
 from ingest.ingest_config import IngestionConfig
 
 _SRA_OUTPUT_DIR = "sra"
@@ -52,7 +52,13 @@ def ingest_sra(cfg: IngestionConfig):
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_dir / f"sra_metadata_{date_str}.db"
 
-    logging.debug("extracting sra file dumps in range")
+    logging.debug(
+        "extracting sra file dumps in range",
+        "start_date",
+        cfg.start_date,
+        "end_date",
+        cfg.end_date,
+    )
     file_dumps = _extract_sra_file_dumps_in_range(cfg.start_date, cfg.end_date)
     assert len(file_dumps) > 0, (
         f"no sra file dumps found in {cfg.start_date} to {cfg.end_date} range"
@@ -82,11 +88,7 @@ def ingest_sra(cfg: IngestionConfig):
     )
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
 
-    logging.debug("creating tables")
-    with sqlite3.connect(db_file) as conn:
-        cursor = conn.cursor()
-        create_sra_tables_query = files("sql").joinpath("sra_tables.sql").read_text()
-        cursor.executescript(create_sra_tables_query)
+    create_tables(db_file, "create_sra_tables.sql")
 
     logging.debug("processing tarballs")
     _process_tarballs(tarballs, accessions_idx, db_file, cfg.num_workers)
@@ -289,9 +291,9 @@ def _xml_elem_to_dict(elem) -> dict:
 
 
 def _process_submission(
-    submission_accession: str, content: bytes, accessions_idx: dict[str, str]
+    submission_accession: str, content: typing.BinaryIO, accessions_idx: dict[str, str]
 ):
-    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+    ctx = ET.iterparse(content, events=("end",))
     attrs: dict[str, str] = {}
 
     try:
@@ -323,8 +325,8 @@ def _process_submission(
     )
 
 
-def _process_samples(submission_accession: str, content: bytes):
-    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+def _process_samples(submission_accession: str, content: typing.BinaryIO):
+    ctx = ET.iterparse(content, events=("end",))
     results = []
 
     try:
@@ -363,9 +365,9 @@ def _process_samples(submission_accession: str, content: bytes):
 
 
 def _process_studies(
-    submission_accession: str, content: bytes, accessions_idx: dict[str, str]
+    submission_accession: str, content: typing.BinaryIO, accessions_idx: dict[str, str]
 ):
-    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+    ctx = ET.iterparse(content, events=("end",))
     results = []
 
     try:
@@ -417,8 +419,8 @@ def _process_studies(
     return results
 
 
-def _process_experiments(submission_accession: str, content: bytes):
-    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+def _process_experiments(submission_accession: str, content: typing.BinaryIO):
+    ctx = ET.iterparse(content, events=("end",))
     results = []
 
     try:
@@ -495,8 +497,8 @@ def _process_experiments(submission_accession: str, content: bytes):
     return results
 
 
-def _process_runs(submission_accession: str, content: bytes):
-    ctx = ET.iterparse(io.BytesIO(content), events=("end",))
+def _process_runs(submission_accession: str, content: typing.BinaryIO):
+    ctx = ET.iterparse(content, events=("end",))
     results = []
 
     try:
@@ -569,7 +571,7 @@ def _reader_worker(
                     if f is None:
                         continue
 
-                    batch.append((submission_accession, file_type, f.read()))
+                    batch.append((submission_accession, file_type, f))
                     pbar.update(1)
 
                     if len(batch) >= read_batch_size:

@@ -52,12 +52,6 @@ def parse_config() -> argparse.Namespace:
         help="amount of data which is to be held in RAM per worker at once during any read/write phase",
     )
     parser.add_argument(
-        "--sra-accessions-ttl",
-        type=humanfriendly.parse_timespan,
-        default=2 * 24 * 60 * 60,
-        help="time-to-live for SRA_Accessions.tab file for SRA ingest stage",
-    )
-    parser.add_argument(
         "--stream",
         type=str,
         default="stdout",
@@ -68,6 +62,30 @@ def parse_config() -> argparse.Namespace:
         type=str,
         default="info",
         help="minimum log level above which (and equal to) the logs are streamed",
+    )
+    parser.add_argument(
+        "--sra-accessions-ttl",
+        type=humanfriendly.parse_timespan,
+        default=2 * 24 * 60 * 60,
+        help="time-to-live for `SRA_Accessions.tab` file for sra ingest stage",
+    )
+    parser.add_argument(
+        "--ena-use-last-updated",
+        action="store_true",
+        default=False,
+        help="filter on last_updated instead of first_public while fetching ena accessions",
+    )
+    parser.add_argument(
+        "--ena-skip-experiments",
+        action="store_true",
+        default=False,
+        help="whether to skip download phase for per-study experiments for ena ingest stage",
+    )
+    parser.add_argument(
+        "--ena-skip-samples",
+        action="store_true",
+        default=False,
+        help="whether to skip download phase for per-study samples for ena ingest stage",
     )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])

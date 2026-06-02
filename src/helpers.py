@@ -1,5 +1,7 @@
+import sqlite3
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from importlib.resources import files
 from pathlib import Path
 from threading import Lock
 
@@ -97,3 +99,45 @@ def simple_file_download(
             for chunk in r.iter_content(chunk_size):
                 f.write(chunk)
                 pbar.update(len(chunk))
+
+
+def send_req(
+    method: str,
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict | None = None,
+    json: dict | None = None,
+    timeout: int = 300,
+    num_retries: int = 5,
+    max_wait: int = 60,
+    **kwargs,
+) -> requests.Response | None:
+    for attempt in range(num_retries):
+        try:
+            r = requests.request(
+                method,
+                url,
+                params=params,
+                headers=headers,
+                json=json,
+                timeout=timeout,
+                **kwargs,
+            )
+
+            r.raise_for_status()
+            return r
+        except requests.RequestException:
+            if attempt == num_retries - 1:
+                raise
+            wait = min(2**attempt, max_wait)
+            time.sleep(wait)
+
+    raise RuntimeError(f"failed after {num_retries} retries")
+
+
+def create_tables(db_file: str | Path, query_file: str | Path):
+    with sqlite3.connect(db_file) as conn:
+        cursor = conn.cursor()
+        query = files("sql").joinpath(query_file).read_text()
+        cursor.executescript(query)

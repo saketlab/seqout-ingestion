@@ -31,6 +31,9 @@ def main() -> None:
                 num_workers=args.workers,
                 chunk_size=args.chunk_size,
                 sra_accessions_ttl=args.sra_accessions_ttl,
+                ena_use_last_updated=args.ena_use_last_updated,
+                ena_skip_experiments=args.ena_skip_experiments,
+                ena_skip_samples=args.ena_skip_samples,
             )
         )
     else:
