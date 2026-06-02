@@ -200,14 +200,6 @@ CREATE INDEX IF NOT EXISTS idx_ena_samples_host ON ena_samples(host);
 CREATE INDEX IF NOT EXISTS idx_ena_samples_first_public ON ena_samples(first_public);
 CREATE INDEX IF NOT EXISTS idx_ena_samples_tax_id ON ena_samples(tax_id);
 
--- tracking table: records which study files have been processed per step,
--- so empty files (no experiments/samples) are not re-processed on every run.
-CREATE TABLE IF NOT EXISTS ena_ingestion_log (
-    study_accession TEXT NOT NULL,
-    step            TEXT NOT NULL,
-    PRIMARY KEY (study_accession, step)
-);
-
 CREATE VIRTUAL TABLE IF NOT EXISTS ena_studies_fts
     USING fts5(study_title, study_description, content=ena_studies, content_rowid=rowid);
 

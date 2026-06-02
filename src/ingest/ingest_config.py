@@ -10,6 +10,7 @@ class IngestionConfig:
     end_date: datetime.date
     num_workers: int
     chunk_size: int
+    batch_size: int
     sra_accessions_ttl: int
     ena_use_last_updated: bool
     ena_skip_experiments: bool

@@ -51,6 +51,7 @@ def parse_config() -> argparse.Namespace:
         default="20 MiB",
         help="amount of data which is to be held in RAM per worker at once during any read/write phase",
     )
+    parser.add_argument("--batch-size", type=int, default=2000, help="batch size")
     parser.add_argument(
         "--stream",
         type=str,

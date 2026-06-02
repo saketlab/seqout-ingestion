@@ -30,6 +30,7 @@ def main() -> None:
                 end_date=datetime(*args.end_date).date(),
                 num_workers=args.workers,
                 chunk_size=args.chunk_size,
+                batch_size=args.batch_size,
                 sra_accessions_ttl=args.sra_accessions_ttl,
                 ena_use_last_updated=args.ena_use_last_updated,
                 ena_skip_experiments=args.ena_skip_experiments,

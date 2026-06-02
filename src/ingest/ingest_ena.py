@@ -1,5 +1,6 @@
 import json
 import logging
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from pathlib import Path
@@ -219,7 +220,7 @@ def ingest_ena(cfg: IngestionConfig):
         study_accessions=study_accessions,
         num_workers=cfg.num_workers,
         fields=STUDY_FIELDS,
-        output_dir=output_dir / "studies_subset",
+        output_dir=output_dir / "studies",
         result_type="study",
         desc="downloading per-study metadata",
     )
@@ -245,6 +246,39 @@ def ingest_ena(cfg: IngestionConfig):
         )
 
     create_tables(db_file, "create_ena_tables.sql")
+
+    with sqlite3.connect(db_file) as conn:
+        ingest_data = [
+            (
+                "studies",
+                "study_accession",
+                STUDY_FIELDS,
+                "storing ena studies in sqlite",
+            ),
+            (
+                "experiments",
+                "run_accession",
+                EXPERIMENT_FIELDS,
+                "storing ena experiments in sqlite",
+            ),
+            (
+                "samples",
+                "sample_accession",
+                SAMPLE_FIELDS,
+                "storing ena samples in sqlite",
+            ),
+        ]
+
+        for folder, key_col, fields, desc in ingest_data:
+            _ingest_data_to_sqlite(conn, output_dir / folder, key_col, fields, desc)
+
+        # rebuild fts
+        conn.execute("INSERT INTO ena_studies_fts(ena_studies_fts) VALUES('rebuild')")
+        conn.execute(
+            "INSERT INTO ena_experiments_fts(ena_experiments_fts) VALUES('rebuild')"
+        )
+        conn.execute("INSERT INTO ena_samples_fts(ena_samples_fts) VALUES('rebuild')")
+        conn.commit()
 
 
 def _fetch_accessions(
@@ -332,3 +366,80 @@ def _run_per_study_download(
         for f in as_completed(futures):
             f.result()
             pbar.update(1)
+
+
+def _ingest_data_to_sqlite(
+    conn: sqlite3.Connection,
+    output_dir: Path,
+    key_col: str,
+    fields: list[str],
+    desc: str,
+):
+    key_col_to_table = {
+        "study_accession": "ena_studies",
+        "run_accession": "ena_experiments",
+        "sample_accession": "ena_samples",
+    }
+
+    if key_col not in key_col_to_table:
+        raise ValueError(f"invalid key col: {key_col}")
+
+    seen = set()
+    total = 0
+    for path in output_dir.glob("*.json"):
+        try:
+            with path.open() as f:
+                rows = json.load(f)
+        except Exception:
+            continue
+
+        for row in rows:
+            acc = row.get(key_col)
+            if acc and acc not in seen:
+                seen.add(acc)
+                total += 1
+    seen.clear()
+
+    with tqdm(total=total, unit=" accession", desc=desc) as pbar:
+        cursor = conn.cursor()
+        table = key_col_to_table[key_col]
+        sql = f"INSERT OR IGNORE INTO {table} ({', '.join(fields)}) VALUES ({', '.join('?' * len(fields))})"
+
+        for path in sorted(output_dir.glob("*.json")):
+            try:
+                with path.open() as f:
+                    rows = json.load(f)
+            except Exception:
+                continue
+
+            for row in rows:
+                acc = row.get(key_col)
+                if not acc or acc in seen:
+                    continue
+
+                seen.add(acc)
+                cursor.execute(sql, _record_to_tuple(row, fields))
+                pbar.update(1)
+
+        conn.commit()
+
+
+def _record_to_tuple(record: dict, cols: list[str]) -> tuple:
+    values = []
+    for col in cols:
+        v = record.get(col, None)
+        if v == "":
+            v = None
+        if col in ["tax_id", "base_count", "read_count"]:
+            v = _coerce_int(v)
+        values.append(v)
+    return tuple(values)
+
+
+def _coerce_int(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None

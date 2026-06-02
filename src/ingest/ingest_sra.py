@@ -17,7 +17,6 @@ import typing
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
-from importlib.resources import files
 from math import isqrt
 from pathlib import Path
 
