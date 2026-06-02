@@ -29,7 +29,7 @@ from helpers import better_downloader
 from ingest.ingest_config import IngestionConfig
 
 _SRA_OUTPUT_DIR = "sra"
-_SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata/"
+_SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
 _SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
 _SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
 _SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
@@ -379,7 +379,6 @@ def _process_studies(
                 accession = study.get("accession")
                 descriptor = _xml_elem_to_dict(study.find("DESCRIPTOR"))
 
-                # FIX: was incorrectly looking on elem (STUDY_SET) for all three
                 identifiers = study.find("IDENTIFIERS")
                 external_ids = (
                     identifiers.findall("EXTERNAL_ID")
@@ -410,6 +409,7 @@ def _process_studies(
 
                 results.append(record)
                 study.clear()
+            elem.clear()
             break
     except ET.ParseError:
         return None
@@ -487,6 +487,7 @@ def _process_experiments(submission_accession: str, content: bytes):
 
                 results.append(record)
                 experiment.clear()
+            elem.clear()
             break
     except ET.ParseError:
         return None
@@ -516,6 +517,7 @@ def _process_runs(submission_accession: str, content: bytes):
 
                 results.append(record)
                 run.clear()
+            elem.clear()
             break
     except ET.ParseError:
         return None
