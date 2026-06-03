@@ -3,7 +3,6 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from importlib.resources import files
 from pathlib import Path
-from threading import Lock
 
 import requests
 from tqdm import tqdm
@@ -14,16 +13,20 @@ def better_downloader(
 ) -> None:
     dest_path.parent.mkdir(exist_ok=True)
     timeout = (10, 60)
+
     with requests.head(url, timeout=timeout) as r:
         r.raise_for_status()
         content_length = int(r.headers.get("Content-Length", -1))
         accepts_range = r.headers.get("Accept-Ranges", "")
+
     if content_length == -1 or accepts_range == "":
         simple_file_download(url, dest_path, chunk_size, timeout)
         return
+
     worker_chunk_size = content_length // num_workers
     with open(dest_path, "wb") as f:
         f.truncate(content_length)
+
     with tqdm(
         total=content_length,
         unit="B",
@@ -31,7 +34,6 @@ def better_downloader(
         desc=f"downloading {url}",
         delay=5,
     ) as pbar:
-        pbar_lock = Lock()
 
         def _download_chunk(start: int, end: int, retries: int = 5) -> None:
             bytes_written = 0
@@ -51,16 +53,16 @@ def better_downloader(
                         for data in r.iter_content(chunk_size):
                             if not data:
                                 break
+
                             f.write(data)
                             bytes_written += len(data)
-                            with pbar_lock:
-                                pbar.update(len(data))
+                            pbar.update(len(data))
                     return
                 except Exception as e:
                     if attempt == retries - 1:
                         raise e
-                    with pbar_lock:
-                        pbar.update(-bytes_written)
+
+                    pbar.update(-bytes_written)
                     time.sleep(2**attempt)
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
@@ -72,7 +74,9 @@ def better_downloader(
                     if i < num_workers - 1
                     else content_length - 1
                 )
+
                 futures.append(pool.submit(_download_chunk, start, end))
+
             for future in as_completed(futures):
                 future.result()
 

@@ -1,3 +1,4 @@
+from ingest.ingest_ae import ingest_ae
 from ingest.ingest_config import IngestionConfig
 
 from .ingest_ena import ingest_ena
@@ -9,6 +10,8 @@ def run_ingest(cfg: IngestionConfig):
         ingest_sra(cfg)
     elif cfg.datasource == "ena":
         ingest_ena(cfg)
+    elif cfg.datasource == "ae":
+        ingest_ae(cfg)
     else:
         raise NotImplementedError(
             f"ingest stage is not yet implemented for {cfg.datasource} datasource"

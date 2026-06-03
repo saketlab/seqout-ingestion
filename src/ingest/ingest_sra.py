@@ -46,6 +46,7 @@ class FileType(enum.StrEnum):
 def ingest_sra(cfg: IngestionConfig):
     output_dir = Path(cfg.output_dir) / _SRA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
+
     date_str = datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
