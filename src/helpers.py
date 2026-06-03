@@ -82,7 +82,11 @@ def better_downloader(
 
 
 def simple_file_download(
-    url: str, dest_path: Path, chunk_size: int, timeout: tuple[int, int]
+    url: str,
+    dest_path: Path,
+    chunk_size: int,
+    timeout: tuple[int, int],
+    with_pbar: bool = True,
 ) -> None:
     with requests.get(url, stream=True, timeout=timeout) as r:
         r.raise_for_status()
@@ -91,18 +95,23 @@ def simple_file_download(
             raise ValueError(
                 f"invalid content length while trying to download {url}: {content_length}"
             )
-        with (
-            open(dest_path, "wb") as f,
-            tqdm(
+
+        if with_pbar:
+            pbar = tqdm(
                 total=content_length,
                 unit="B",
                 unit_scale=True,
                 desc=f"downloading {url}",
-            ) as pbar,
-        ):
+            )
+
+        with open(dest_path, "wb") as f:
             for chunk in r.iter_content(chunk_size):
                 f.write(chunk)
-                pbar.update(len(chunk))
+                if with_pbar:
+                    pbar.update(len(chunk))
+
+        if with_pbar:
+            pbar.close()
 
 
 def send_req(

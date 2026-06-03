@@ -300,11 +300,11 @@ def _fetch_accessions(
             "format": "json",
         },
     )
-
     if r is None:
         return None
 
     data = r.json()
+    r.close()
     study_accessions: list[str] = [
         s["study_accession"] for s in data if s.get("study_accession")
     ]
@@ -325,14 +325,14 @@ def _fetch_per_study(
             "format": "json",
         },
     )
-
     if r is None:
         return None
-
     if r.status_code == 204:
         return []
 
-    return r.json()
+    data = r.json()
+    r.close()
+    return data
 
 
 def _run_per_study_download(

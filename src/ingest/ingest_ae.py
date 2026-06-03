@@ -6,19 +6,31 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from helpers import send_req
+from helpers import create_tables, send_req
 from ingest.ingest_config import IngestionConfig
 
 _AE_OUTPUT_DIR = "arrayexpress"
 _BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
+_BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
 
 
 def ingest_ae(cfg: IngestionConfig):
     output_dir = Path(cfg.output_dir) / _AE_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
+    dump_dir = output_dir / "dump"
+    dump_dir.mkdir(exist_ok=True, parents=True)
+
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    db_dir = output_dir / "db" / date_str
+    db_dir.mkdir(exist_ok=True, parents=True)
+    db_file = db_dir / f"ae_metadata_{date_str}.db"
+
     accessions = _fetch_accessions(cfg.start_date, cfg.end_date, cfg.num_workers)
-    _download_study_metadatas(accessions, cfg.num_workers, output_dir / "studies")
+    _download_study_metadatas(accessions, cfg.num_workers, dump_dir)
+    _download_magetab_files(dump_dir, cfg.num_workers)
+
+    create_tables(db_file, "create_ae_tables.sql")
 
 
 def _send_search_req(date: datetime.date) -> list[str] | None:
@@ -35,6 +47,7 @@ def _send_search_req(date: datetime.date) -> list[str] | None:
         return []
 
     data = r.json()
+    r.close()
     hits = data.get("hits")
     if hits is None or not isinstance(hits, list):
         return None
@@ -109,13 +122,16 @@ def _fetch_accessions(
 
 
 def _study_metadata_worker(accession: str, output_dir: Path):
+    output_file = output_dir / f"{accession}.json"
+    if output_file.exists():
+        return
+
     r = send_req(method="GET", url=f"{_BIOSTUDIES_API_BASE_URL}/studies/{accession}")
     if r is None:
         return
 
     data = r.json()
-    output_file = output_dir / f"{accession}.json"
-
+    r.close()
     with open(output_file, "w") as f:
         json.dump(data, f)
 
@@ -137,4 +153,57 @@ def _download_study_metadatas(
 
         for f in as_completed(futures):
             f.result()
+            pbar.update(1)
+
+
+def _download_magetab_files(output_dir: Path, num_workers: int):
+    metadata_json_files = output_dir.glob("*.json")
+    files = []  # store (accession, filename) tuples
+
+    for path in metadata_json_files:
+        accession = str(path.name).split(".")[0]
+
+        with open(path) as f:
+            data = json.load(f)
+            section = data.get("section", {})
+            subsections = section.get("subsections", [])
+
+            for item in subsections:
+                item = item if isinstance(item, list) else [item]
+                for sub in item:
+                    if not isinstance(sub, dict):
+                        continue
+
+                    sub_type = sub.get("type")
+                    if sub_type != "Assays and Data":
+                        continue
+
+                    files.append((accession, f"{accession}.idf.txt"))
+                    files.append((accession, f"{accession}.sdrf.txt"))
+
+    def _download_worker(accession: str, filename: str):
+        dest_path = output_dir / filename
+        if dest_path.exists():
+            return
+
+        url = f"{_BIOSTUDIES_FILES_BASE_URL}/{accession}/{filename}"
+        r = send_req("GET", url)
+        if r is None:
+            return
+
+        with open(dest_path, "wb") as f:
+            f.write(r.content)
+        r.close()
+
+    with (
+        ThreadPoolExecutor(num_workers) as pool,
+        tqdm(total=len(files), unit=" file", desc="downloading magetab files") as pbar,
+    ):
+        futures = [
+            pool.submit(_download_worker, accession, filename)
+            for accession, filename in files
+        ]
+
+        for future in as_completed(futures):
+            future.result()
             pbar.update(1)
