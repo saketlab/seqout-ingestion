@@ -88,7 +88,11 @@ def parse_config() -> argparse.Namespace:
         default=False,
         help="whether to skip download phase for per-study samples for ena ingest stage",
     )
-    parser.add_argument("--ae-")
+    parser.add_argument(
+        "--geo-series-pickle",
+        type=str,
+        help="path to pickle file which contains geo series dict",
+    )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
     if not args.start_date < args.end_date:

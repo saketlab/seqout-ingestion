@@ -1,8 +1,8 @@
 from ingest.ingest_ae import ingest_ae
 from ingest.ingest_config import IngestionConfig
-
-from .ingest_ena import ingest_ena
-from .ingest_sra import ingest_sra
+from ingest.ingest_ena import ingest_ena
+from ingest.ingest_geo import ingest_geo
+from ingest.ingest_sra import ingest_sra
 
 
 def run_ingest(cfg: IngestionConfig):
@@ -12,6 +12,8 @@ def run_ingest(cfg: IngestionConfig):
         ingest_ena(cfg)
     elif cfg.datasource == "ae":
         ingest_ae(cfg)
+    elif cfg.datasource == "geo":
+        ingest_geo(cfg)
     else:
         raise NotImplementedError(
             f"ingest stage is not yet implemented for {cfg.datasource} datasource"

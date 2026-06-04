@@ -85,33 +85,36 @@ def simple_file_download(
     url: str,
     dest_path: Path,
     chunk_size: int,
-    timeout: tuple[int, int],
+    timeout: int | tuple[int, int],
     with_pbar: bool = True,
 ) -> None:
-    with requests.get(url, stream=True, timeout=timeout) as r:
-        r.raise_for_status()
-        content_length = int(r.headers.get("Content-Length", -1))
-        if content_length == -1:
-            raise ValueError(
-                f"invalid content length while trying to download {url}: {content_length}"
-            )
+    r = send_req("GET", url, stream=True, timeout=timeout)
+    if r is None:
+        return
 
-        if with_pbar:
-            pbar = tqdm(
-                total=content_length,
-                unit="B",
-                unit_scale=True,
-                desc=f"downloading {url}",
-            )
+    content_length = int(r.headers.get("Content-Length", -1))
+    if content_length == -1:
+        raise ValueError(
+            f"invalid content length while trying to download {url}: {content_length}"
+        )
 
-        with open(dest_path, "wb") as f:
-            for chunk in r.iter_content(chunk_size):
-                f.write(chunk)
-                if with_pbar:
-                    pbar.update(len(chunk))
+    if with_pbar:
+        pbar = tqdm(
+            total=content_length,
+            unit="B",
+            unit_scale=True,
+            desc=f"downloading {url}",
+        )
 
-        if with_pbar:
-            pbar.close()
+    with open(dest_path, "wb") as f:
+        for chunk in r.iter_content(chunk_size):
+            f.write(chunk)
+            if with_pbar:
+                pbar.update(len(chunk))
+
+    if with_pbar:
+        pbar.close()
+    r.close()
 
 
 def send_req(
@@ -121,9 +124,10 @@ def send_req(
     params: dict | None = None,
     headers: dict | None = None,
     json: dict | None = None,
-    timeout: int = 300,
+    timeout: int | tuple[int, int] = 300,
     num_retries: int = 5,
     max_wait: int = 60,
+    stream: bool = False,
     **kwargs,
 ) -> requests.Response | None:
     for attempt in range(num_retries):
@@ -135,10 +139,11 @@ def send_req(
                 headers=headers,
                 json=json,
                 timeout=timeout,
+                stream=stream,
                 **kwargs,
             )
-
             r.raise_for_status()
+
             return r
         except requests.RequestException:
             if attempt == num_retries - 1:

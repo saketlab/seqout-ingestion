@@ -35,6 +35,7 @@ def main() -> None:
                 ena_use_last_updated=args.ena_use_last_updated,
                 ena_skip_experiments=args.ena_skip_experiments,
                 ena_skip_samples=args.ena_skip_samples,
+                geo_series_pickle=args.geo_series_pickle,
             )
         )
     else:

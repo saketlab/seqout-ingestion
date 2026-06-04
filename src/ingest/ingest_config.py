@@ -15,3 +15,4 @@ class IngestionConfig:
     ena_use_last_updated: bool
     ena_skip_experiments: bool
     ena_skip_samples: bool
+    geo_series_pickle: str
