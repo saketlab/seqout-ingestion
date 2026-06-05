@@ -154,8 +154,17 @@ def send_req(
     raise RuntimeError(f"failed after {num_retries} retries")
 
 
-def create_tables(db_file: str | Path, query_file: str | Path):
-    with sqlite3.connect(db_file) as conn:
-        cursor = conn.cursor()
-        query = files("sql").joinpath(query_file).read_text()
-        cursor.executescript(query)
+def exec_query_from_file(
+    query_file: str | Path,
+    db_file: str | Path | None = None,
+    conn: sqlite3.Connection | None = None,
+):
+    if not conn:
+        if not db_file:
+            raise ValueError("missing db file")
+        conn = sqlite3.connect(db_file)
+
+    cursor = conn.cursor()
+    query = files("sql").joinpath(query_file).read_text()
+    cursor.executescript(query)
+    conn.close()

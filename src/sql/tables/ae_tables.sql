@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS arrayexpress_experiments (
     accession                   TEXT PRIMARY KEY,
     title                       TEXT,
@@ -52,14 +49,6 @@ CREATE TABLE IF NOT EXISTS arrayexpress_samples (
     attributes_json         TEXT CHECK (attributes_json IS NULL OR json_valid(attributes_json))
 );
 
-CREATE INDEX IF NOT EXISTS idx_ae_samples_experiment
-    ON arrayexpress_samples(experiment_accession);
-CREATE INDEX IF NOT EXISTS idx_ae_experiments_organism
-    ON arrayexpress_experiments(organism);
-CREATE INDEX IF NOT EXISTS idx_ae_experiments_release_date
-    ON arrayexpress_experiments(release_date);
+CREATE VIRTUAL TABLE IF NOT EXISTS arrayexpress_experiments_fts USING fts5(title, description, attributes_json, content=arrayexpress_experiments, content_rowid=rowid);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS arrayexpress_experiments_fts
-    USING fts5(title, description, attributes_json, content=arrayexpress_experiments, content_rowid=rowid);
-CREATE VIRTUAL TABLE IF NOT EXISTS arrayexpress_samples_fts
-    USING fts5(attributes_json, content=arrayexpress_samples, content_rowid=id);
+CREATE VIRTUAL TABLE IF NOT EXISTS arrayexpress_samples_fts USING fts5(attributes_json, content=arrayexpress_samples, content_rowid=id);

@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS geo_contributors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     accession TEXT NOT NULL,
@@ -13,8 +10,6 @@ CREATE TABLE IF NOT EXISTS geo_contributors (
     address_zipcode TEXT,
     address_country TEXT
 );
-
-CREATE INDEX IF NOT EXISTS idx_contributors_accession ON geo_contributors(accession);
 
 CREATE TABLE IF NOT EXISTS geo_series (
     accession TEXT PRIMARY KEY,
@@ -29,9 +24,6 @@ CREATE TABLE IF NOT EXISTS geo_series (
     title TEXT,
     series_type TEXT
 );
-
-CREATE INDEX IF NOT EXISTS idx_geo_series_published_at ON geo_series(published_at);
-CREATE INDEX IF NOT EXISTS idx_geo_series_updated_at ON geo_series(updated_at);
 
 CREATE TABLE IF NOT EXISTS geo_samples (
     accession TEXT PRIMARY KEY,
@@ -48,8 +40,6 @@ CREATE TABLE IF NOT EXISTS geo_samples (
     scan_protocol TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_geo_samples_platform_ref ON geo_samples(platform_ref);
-
 CREATE TABLE IF NOT EXISTS geo_platforms (
     accession TEXT PRIMARY KEY,
     description TEXT,
@@ -61,5 +51,3 @@ CREATE TABLE IF NOT EXISTS geo_platforms (
     manufacturer TEXT,
     relation TEXT
 );
-
-CREATE INDEX IF NOT EXISTS idx_geo_platforms_technology ON geo_platforms(technology);

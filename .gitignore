@@ -1,4 +1,5 @@
 .venv/
+.venv-pysradb/
 __pycache__/
 *.egg-info/
 data/

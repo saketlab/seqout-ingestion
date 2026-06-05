@@ -7,7 +7,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from helpers import create_tables, send_req
+from helpers import exec_query_from_file, send_req
 from ingest.ingest_config import IngestionConfig
 
 logging.getLogger("urllib3.connectionpool").setLevel(
@@ -246,7 +246,7 @@ def ingest_ena(cfg: IngestionConfig):
             desc="downloading samples per study",
         )
 
-    create_tables(db_file, "create_ena_tables.sql")
+    exec_query_from_file("tables/ena_tables.sql", db_file)
 
     with sqlite3.connect(db_file) as conn:
         ingest_data = [
@@ -280,6 +280,8 @@ def ingest_ena(cfg: IngestionConfig):
         )
         conn.execute("INSERT INTO ena_samples_fts(ena_samples_fts) VALUES('rebuild')")
         conn.commit()
+
+        exec_query_from_file("indexes/ena_indexes.sql", conn=conn)
 
 
 def _fetch_accessions(

@@ -14,7 +14,7 @@ from typing import IO
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-from helpers import create_tables, send_req, simple_file_download
+from helpers import exec_query_from_file, send_req, simple_file_download
 from ingest.ingest_config import IngestionConfig
 
 _GEO_OUTPUT_DIR = "geo"
@@ -50,10 +50,12 @@ def ingest_geo(cfg: IngestionConfig):
     geo_dict = _build_geo_dict(
         cfg.num_workers, geo_series_pkl_file, cfg.geo_series_limit
     )
-    create_tables(db_file, "create_geo_tables.sql")
+
+    exec_query_from_file("tables/geo_tables.sql", db_file)
     _run_pipeline(
         geo_dict, db_file, data_dir, cfg.num_workers, cfg.batch_size, cfg.chunk_size
     )
+    exec_query_from_file("tables/geo_indexes.sql", db_file)
 
 
 def _build_geo_dict(

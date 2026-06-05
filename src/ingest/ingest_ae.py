@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from helpers import create_tables, send_req
+from helpers import exec_query_from_file, send_req
 from ingest.ingest_config import IngestionConfig
 
 _AE_OUTPUT_DIR = "arrayexpress"
@@ -33,9 +33,9 @@ def ingest_ae(cfg: IngestionConfig):
     _download_study_metadatas(accessions, cfg.num_workers, data_dir)
     _download_magetab_files(data_dir, cfg.num_workers)
 
-    create_tables(db_file, "create_ae_tables.sql")
-
+    exec_query_from_file("tables/ae_tables.sql", db_file)
     _process_accessions(accessions, db_file, data_dir, cfg.num_workers, cfg.batch_size)
+    exec_query_from_file("indexes/ae_indexes.sql", db_file)
 
 
 def _send_search_req(date: datetime.date) -> list[str] | None:

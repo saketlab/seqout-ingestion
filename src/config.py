@@ -11,7 +11,7 @@ def parse_config() -> argparse.Namespace:
         "--stage",
         type=str,
         required=True,
-        choices=["ingest"],
+        choices=["ingest", "sc_enrich"],
         help="stage of the pipeline to run",
     )
     parser.add_argument(

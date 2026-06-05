@@ -23,7 +23,7 @@ import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-from helpers import better_downloader, create_tables
+from helpers import better_downloader, exec_query_from_file
 from ingest.ingest_config import IngestionConfig
 
 _SRA_OUTPUT_DIR = "sra"
@@ -52,10 +52,8 @@ def ingest_sra(cfg: IngestionConfig):
     db_file = db_dir / f"sra_metadata_{date_str}.db"
 
     logging.debug(
-        "extracting sra file dumps in range",
-        "start_date",
+        "extracting sra file dumps in range: start_date=%s, end_date=%s",
         cfg.start_date,
-        "end_date",
         cfg.end_date,
     )
     file_dumps = _extract_sra_file_dumps_in_range(cfg.start_date, cfg.end_date)
@@ -87,10 +85,9 @@ def ingest_sra(cfg: IngestionConfig):
     )
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
 
-    create_tables(db_file, "create_sra_tables.sql")
-
-    logging.debug("processing tarballs")
+    exec_query_from_file("tables/sql_tables.sql", db_file)
     _process_tarballs(tarballs, accessions_idx, db_file, cfg.num_workers)
+    exec_query_from_file("indexes/sql_indexes.sql", db_file)
 
 
 def _extract_sra_file_dumps_in_range(start_date: date, end_date: date) -> list[str]:
