@@ -16,3 +16,4 @@ class IngestionConfig:
     ena_skip_experiments: bool
     ena_skip_samples: bool
     geo_series_pickle: str
+    geo_series_limit: int | None

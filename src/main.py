@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from socket import TIPC_CFG_SRV
 
 import config
 from ingest.ingest import IngestionConfig, run_ingest
@@ -36,6 +37,7 @@ def main() -> None:
                 ena_skip_experiments=args.ena_skip_experiments,
                 ena_skip_samples=args.ena_skip_samples,
                 geo_series_pickle=args.geo_series_pickle,
+                geo_series_limit=args.geo_series_limit,
             )
         )
     else:

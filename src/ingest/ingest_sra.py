@@ -11,7 +11,6 @@ import re
 import sqlite3
 import sys
 import tarfile
-import threading
 import time
 import typing
 import xml.etree.ElementTree as ET
@@ -661,13 +660,13 @@ def _writer_worker(
         FileType.Run: "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)",
     }
 
-    def _flush(sql: str, batch: list):
+    def _flush(batch: list, file_type: FileType):
         nonlocal rows_written
         if batch:
-            cursor.executemany(sql, batch)
+            cursor.executemany(sql_statements[file_type], batch)
             conn.commit()
             rows_written += len(batch)
-            batch.clear()
+            batch_by_type[file_type] = []
 
     while True:
         try:
@@ -679,7 +678,7 @@ def _writer_worker(
             sentinels_received += 1
             if sentinels_received == sentinels_to_receive:
                 for file_type, batch in batch_by_type.items():
-                    _flush(sql_statements[file_type], batch)
+                    _flush(batch, file_type)
                 break
             continue
 
@@ -689,7 +688,7 @@ def _writer_worker(
         batch_by_type[file_type].append(record)
 
         if len(batch_by_type[file_type]) >= write_batch_size:
-            _flush(sql_statements[file_type], batch_by_type[file_type])
+            _flush(batch_by_type[file_type], file_type)
 
     conn.close()
 
@@ -707,8 +706,6 @@ def _process_tarballs(
     transform_queue: queue.Queue = queue.Queue()
     write_queue: queue.Queue = queue.Queue()
 
-    read_sem = threading.Semaphore(num_readers)
-
     pbar = tqdm(
         total=len(accessions_idx),
         unit="file",
@@ -716,12 +713,8 @@ def _process_tarballs(
         mininterval=2.0,
     )
 
-    def _reader_with_sem(tarball: Path):
-        with read_sem:
-            _reader_worker(tarball, transform_queue, pbar)
-
     with (
-        ThreadPoolExecutor(len(tarballs)) as reader_pool,
+        ThreadPoolExecutor(num_readers) as reader_pool,
         ThreadPoolExecutor(num_transform) as transform_pool,
         ThreadPoolExecutor(num_writer) as writer_pool,
     ):
@@ -737,9 +730,12 @@ def _process_tarballs(
             )
             for _ in range(num_transform)
         ]
-        reader_futures = [reader_pool.submit(_reader_with_sem, tb) for tb in tarballs]
+        reader_futures = [
+            reader_pool.submit(_reader_worker, tb, transform_queue, pbar)
+            for tb in tarballs
+        ]
 
-        for f in reader_futures:
+        for f in as_completed(reader_futures):
             try:
                 f.result()
             except Exception as e:
@@ -748,7 +744,7 @@ def _process_tarballs(
         for _ in range(num_transform):
             transform_queue.put(_STOP)
 
-        for f in transform_futures:
+        for f in as_completed(transform_futures):
             f.result()
         write_future.result()
 

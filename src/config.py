@@ -93,6 +93,12 @@ def parse_config() -> argparse.Namespace:
         type=str,
         help="path to pickle file which contains geo series dict",
     )
+    parser.add_argument(
+        "--geo-series-limit",
+        type=int,
+        default=None,
+        help="limit the total number of series groups which would be indexed",
+    )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
     if not args.start_date < args.end_date:
