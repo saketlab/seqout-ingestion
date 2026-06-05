@@ -127,7 +127,8 @@ def _download_accessions_tab_file(
 
     if not to_download:
         logging.info(
-            "skipped download step for sra accessions tab file as it already exists and it is within the ttl range"
+            "skipped download step for sra accessions tab file as it already exists "
+            "and it is within the ttl range"
         )
         return tab_file, False
 
@@ -194,10 +195,12 @@ def _download_sra_file_dumps(
         )
         return dumps_dir
 
-    logging.info(f"""starting download phase for sra file dumps with following configuration:
-- num of file(s) to download: {len(missing_files)}
-- num of concurrent file downloads: {concurrent_files}
-- num workers per file: {workers_per_file}""")
+    logging.info(
+        f"starting download phase for sra file dumps with following configuration:\n"
+        f"- num of file(s) to download: {len(missing_files)}\n"
+        f"- num of concurrent file downloads: {concurrent_files}\n"
+        f"- num workers per file: {workers_per_file}"
+    )
 
     def _process_per_file(file: str):
         dest_path = dumps_dir / file
@@ -553,7 +556,6 @@ def _reader_worker(
                     continue
 
                 name = member.name
-
                 submission_accession = name.split("/")[0]
                 if not submission_accession:
                     continue
@@ -650,11 +652,32 @@ def _writer_worker(
     batch_by_type: dict[FileType, list] = {}
 
     sql_statements = {
-        FileType.Submission: "INSERT OR IGNORE INTO sra_submissions (accession, alias, center_name, lab_name, broker_name, updated_at, published_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        FileType.Sample: "INSERT OR IGNORE INTO sra_samples (accession, alias, description, title, scientific_name, taxon_id, external_id, attributes_json, submission, links) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        FileType.Study: "INSERT OR IGNORE INTO sra_studies (accession, alias, center_name, abstract, title, external_id, study_type, attributes_json, links, center_project_name, submission, published_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        FileType.Experiment: "INSERT OR IGNORE INTO sra_experiments (accession, design_description, library_layout, library_name, library_selection, library_source, library_strategy, samples, platform, instrument_model, study, title, submission) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        FileType.Run: "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)",
+        FileType.Submission: (
+            "INSERT OR IGNORE INTO sra_submissions "
+            "(accession, alias, center_name, lab_name, broker_name, updated_at, published_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ),
+        FileType.Sample: (
+            "INSERT OR IGNORE INTO sra_samples "
+            "(accession, alias, description, title, scientific_name, taxon_id, "
+            "external_id, attributes_json, submission, links) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)"
+        ),
+        FileType.Study: (
+            "INSERT OR IGNORE INTO sra_studies "
+            "(accession, alias, center_name, abstract, title, external_id, study_type, "
+            "attributes_json, links, center_project_name, submission, published_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        ),
+        FileType.Experiment: (
+            "INSERT OR IGNORE INTO sra_experiments "
+            "(accession, design_description, library_layout, library_name, library_selection, "
+            "library_source, library_strategy, samples, platform, instrument_model, study, title, submission) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        ),
+        FileType.Run: (
+            "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)"
+        ),
     }
 
     def _flush(batch: list, file_type: FileType):

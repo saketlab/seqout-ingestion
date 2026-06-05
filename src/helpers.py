@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -7,75 +8,143 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, requests.HTTPError):
+        return (
+            exc.response is not None
+            and exc.response.status_code in _RETRYABLE_STATUS_CODES
+        )
+
+    return isinstance(exc, (requests.ConnectionError, requests.Timeout))
+
+
+def _retry_delay(attempt: int, max_wait: int = 120) -> float:
+    return min(2**attempt, max_wait)
+
 
 def better_downloader(
-    url: str, dest_path: Path, num_workers: int, chunk_size: int
+    url: str,
+    dest_path: Path,
+    num_workers: int,
+    chunk_size: int,
+    retries: int = 10,
 ) -> None:
-    dest_path.parent.mkdir(exist_ok=True)
+    dest_path.parent.mkdir(exist_ok=True, parents=True)
     timeout = (10, 60)
 
-    with requests.head(url, timeout=timeout) as r:
-        r.raise_for_status()
-        content_length = int(r.headers.get("Content-Length", -1))
-        accepts_range = r.headers.get("Accept-Ranges", "")
+    content_length = -1
+    accepts_range = ""
+    for attempt in range(retries):
+        try:
+            with requests.head(url, timeout=timeout) as r:
+                r.raise_for_status()
+                content_length = int(r.headers.get("Content-Length", -1))
+                accepts_range = r.headers.get("Accept-Ranges", "")
+            break
+        except Exception as exc:
+            if not _is_retryable(exc) or attempt == retries - 1:
+                raise
+            wait = _retry_delay(attempt)
+            logging.warning(
+                "HEAD %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                url,
+                attempt + 1,
+                retries,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
 
     if content_length == -1 or accepts_range == "":
-        simple_file_download(url, dest_path, chunk_size, timeout)
+        simple_file_download(url, dest_path, chunk_size, timeout, retries=retries)
         return
 
-    worker_chunk_size = content_length // num_workers
-    with open(dest_path, "wb") as f:
-        f.truncate(content_length)
+    already_downloaded = 0
+    if dest_path.exists():
+        already_downloaded = dest_path.stat().st_size
+        if already_downloaded >= content_length:
+            logging.info("skipping %s — already fully downloaded", dest_path.name)
+            return
+
+    if already_downloaded == 0:
+        with open(dest_path, "wb") as f:
+            f.truncate(content_length)
 
     with tqdm(
         total=content_length,
+        initial=already_downloaded,
         unit="B",
         unit_scale=True,
         desc=f"downloading {url}",
         delay=5,
     ) as pbar:
 
-        def _download_chunk(start: int, end: int, retries: int = 5) -> None:
-            bytes_written = 0
+        def _download_chunk(chunk_start: int, chunk_end: int) -> None:
+            if chunk_start > chunk_end:
+                return
+
+            cursor = chunk_start
+
             for attempt in range(retries):
+                bytes_this_attempt = 0
                 try:
                     with (
                         open(dest_path, "r+b") as f,
                         requests.get(
                             url,
-                            headers={"Range": f"bytes={start + bytes_written}-{end}"},
+                            headers={"Range": f"bytes={cursor}-{chunk_end}"},
                             stream=True,
                             timeout=(10, 60),
                         ) as r,
                     ):
                         r.raise_for_status()
-                        f.seek(start + bytes_written)
+                        f.seek(cursor)
                         for data in r.iter_content(chunk_size):
                             if not data:
                                 break
-
                             f.write(data)
-                            bytes_written += len(data)
-                            pbar.update(len(data))
+                            n = len(data)
+                            cursor += n
+                            bytes_this_attempt += n
+                            pbar.update(n)
                     return
-                except Exception as e:
-                    if attempt == retries - 1:
-                        raise e
 
-                    pbar.update(-bytes_written)
-                    time.sleep(2**attempt)
+                except Exception as exc:
+                    if not _is_retryable(exc) or attempt == retries - 1:
+                        raise
+
+                    pbar.update(-bytes_this_attempt)
+                    cursor -= bytes_this_attempt
+
+                    wait = _retry_delay(attempt)
+                    logging.warning(
+                        "chunk %d-%d failed (attempt %d/%d): %s — retrying in %.0fs",
+                        chunk_start,
+                        chunk_end,
+                        attempt + 1,
+                        retries,
+                        exc,
+                        wait,
+                    )
+                    time.sleep(wait)
+
+        worker_chunk_size = content_length // num_workers
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
             futures: list[Future[None]] = []
             for i in range(num_workers):
-                start = i * worker_chunk_size
-                end = (
-                    (start + worker_chunk_size - 1)
+                c_start = i * worker_chunk_size
+                c_end = (
+                    c_start + worker_chunk_size - 1
                     if i < num_workers - 1
                     else content_length - 1
                 )
 
-                futures.append(pool.submit(_download_chunk, start, end))
+                effective_start = max(c_start, already_downloaded)
+                futures.append(pool.submit(_download_chunk, effective_start, c_end))
 
             for future in as_completed(futures):
                 future.result()
@@ -87,34 +156,79 @@ def simple_file_download(
     chunk_size: int,
     timeout: int | tuple[int, int],
     with_pbar: bool = True,
+    retries: int = 10,
 ) -> None:
-    r = send_req("GET", url, stream=True, timeout=timeout)
-    if r is None:
-        return
+    dest_path.parent.mkdir(exist_ok=True, parents=True)
 
-    content_length = int(r.headers.get("Content-Length", -1))
-    if content_length == -1:
-        raise ValueError(
-            f"invalid content length while trying to download {url}: {content_length}"
-        )
+    already_downloaded = dest_path.stat().st_size if dest_path.exists() else 0
 
-    if with_pbar:
-        pbar = tqdm(
-            total=content_length,
-            unit="B",
-            unit_scale=True,
-            desc=f"downloading {url}",
-        )
+    for attempt in range(retries):
+        bytes_this_attempt = 0
+        try:
+            headers = {}
+            if already_downloaded > 0:
+                headers["Range"] = f"bytes={already_downloaded}-"
 
-    with open(dest_path, "wb") as f:
-        for chunk in r.iter_content(chunk_size):
-            f.write(chunk)
-            if with_pbar:
-                pbar.update(len(chunk))
+            r = requests.get(url, headers=headers, stream=True, timeout=timeout)
+            r.raise_for_status()
 
-    if with_pbar:
-        pbar.close()
-    r.close()
+            if r.status_code == 206:
+                open_mode = "ab"
+                resumed_from = already_downloaded
+            else:
+                open_mode = "wb"
+                resumed_from = 0
+
+            content_length = int(r.headers.get("Content-Length", -1))
+            if content_length == -1:
+                raise ValueError(f"missing Content-Length for {url}")
+
+            total = resumed_from + content_length
+
+            pbar = (
+                tqdm(
+                    total=total,
+                    initial=resumed_from,
+                    unit="B",
+                    unit_scale=True,
+                    desc=f"downloading {url}",
+                )
+                if with_pbar
+                else None
+            )
+
+            with open(dest_path, open_mode) as f:
+                for chunk in r.iter_content(chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    n = len(chunk)
+                    bytes_this_attempt += n
+                    already_downloaded += n
+                    if pbar:
+                        pbar.update(n)
+
+            if pbar:
+                pbar.close()
+            r.close()
+            return  # success
+
+        except Exception as exc:
+            if not _is_retryable(exc) or attempt == retries - 1:
+                raise
+
+            already_downloaded -= bytes_this_attempt
+
+            wait = _retry_delay(attempt)
+            logging.warning(
+                "simple_file_download %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                url,
+                attempt + 1,
+                retries,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
 
 
 def send_req(
@@ -143,12 +257,20 @@ def send_req(
                 **kwargs,
             )
             r.raise_for_status()
-
             return r
-        except requests.RequestException:
+        except requests.RequestException as exc:
             if attempt == num_retries - 1:
                 raise
             wait = min(2**attempt, max_wait)
+            logging.warning(
+                "send_req %s %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                method,
+                url,
+                attempt + 1,
+                num_retries,
+                exc,
+                wait,
+            )
             time.sleep(wait)
 
     raise RuntimeError(f"failed after {num_retries} retries")
