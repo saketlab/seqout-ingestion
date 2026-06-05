@@ -152,6 +152,11 @@ def _wrap_ns(s: str) -> str:
     return f"{{{_MINIML_NAMESPACE}}}{s}"
 
 
+def _findtext(root: ET.Element, s: str) -> str | None:
+    v = root.findtext(_wrap_ns("Title")) or ""
+    return (v or "").strip() or None
+
+
 def _et_to_dict(elem: ET.Element | list[ET.Element]) -> list | dict | str:
     if isinstance(elem, list):
         return [_et_to_dict(v) for v in elem]
@@ -191,10 +196,10 @@ def _get_platforms(root: ET.Element) -> list[tuple] | None:
     platforms = []
     for platform in platform_elems:
         accession = platform.get("iid")
-        title = platform.findtext(_wrap_ns("Title"))
-        description = platform.findtext(_wrap_ns("Description"))
-        technology = platform.findtext(_wrap_ns("Technology"))
-        manufacturer = platform.findtext(_wrap_ns("Manufacturer"))
+        title = _findtext(platform, "Title")
+        description = _findtext(platform, "Description")
+        technology = _findtext(platform, "Technology")
+        manufacturer = _findtext(platform, "Manufacturer")
 
         organisms_list = _et_to_dict(platform.findall(_wrap_ns("Organism")))
         organisms = json.dumps(organisms_list) if organisms_list else None
@@ -247,7 +252,7 @@ def _get_samples(root: ET.Element) -> list[tuple] | None:
         channels_raw = _et_to_dict(sample.findall(_wrap_ns("Channel")))
         channels_list = json.dumps(channels_raw) if channels_raw else None
 
-        description = sample.findtext(_wrap_ns("Description"))
+        description = _findtext(sample, "Description")
         platform_ref_elem = sample.find(_wrap_ns("Platform-Ref"))
         platform_ref = platform_ref_elem.get("ref") if platform_ref_elem else None
 
@@ -256,7 +261,7 @@ def _get_samples(root: ET.Element) -> list[tuple] | None:
             json.dumps(supplementary_raw) if supplementary_raw else None
         )
 
-        title = sample.findtext(_wrap_ns("Title"))
+        title = _findtext(sample, "Title")
         sample_type = sample.findtext(_wrap_ns("Type"))
         hybridization_protocol = sample.findtext(_wrap_ns("Hybridization-Protocol"))
         scan_protocol = sample.findtext(_wrap_ns("Scan-Protocol"))
@@ -301,7 +306,7 @@ def _get_series(root: ET.Element) -> list[tuple] | None:
         return None
 
     accession = series.get("iid")
-    overall_design = series.findtext(_wrap_ns("Overall-Design"))
+    overall_design = _findtext(series, "Overall-Design")
     pubmed_ids_list = [p.text for p in series.findall(_wrap_ns("Pubmed-ID"))]
     pubmed_ids = json.dumps(pubmed_ids_list) if pubmed_ids_list else None
     relations_raw = _et_to_dict(series.findall(_wrap_ns("Relation")))
@@ -309,8 +314,8 @@ def _get_series(root: ET.Element) -> list[tuple] | None:
     sample_refs_raw = _et_to_dict(series.findall(_wrap_ns("Sample-Refs")))
     sample_refs = json.dumps(sample_refs_raw) if sample_refs_raw else None
 
-    title = series.findtext(_wrap_ns("Title"))
-    summary = series.findtext(_wrap_ns("Summary"))
+    title = _findtext(series, "Title")
+    summary = _findtext(series, "Description")
     supplementary_data = json.dumps(
         [
             {"@type": sd.get("type"), "#text": sd.text}
