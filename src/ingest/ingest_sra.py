@@ -1,6 +1,7 @@
 import csv
 import ctypes
 import enum
+import io
 import json
 import logging
 import logging.config
@@ -62,7 +63,7 @@ def ingest_sra(cfg: IngestionConfig):
     )
 
     logging.debug("downloading accessions tab file")
-    tab_path, to_reprocess_csv = _download_accessions_tab_file(
+    tab_path, is_freshly_downloaded = _download_accessions_tab_file(
         output_dir,
         cfg.sra_accessions_ttl,
         cfg.num_workers,
@@ -70,6 +71,10 @@ def ingest_sra(cfg: IngestionConfig):
     )
 
     accessions_csv_path = output_dir / "sra_accessions.csv"
+    to_reprocess_csv = (
+        True if not accessions_csv_path.exists() else is_freshly_downloaded
+    )
+
     if to_reprocess_csv:
         logging.debug("converting accessions tab file into csv")
         _convert_tab_to_csv(accessions_csv_path, output_dir, tab_path, cfg.chunk_size)
@@ -85,9 +90,9 @@ def ingest_sra(cfg: IngestionConfig):
     )
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
 
-    exec_query_from_file("tables/sql_tables.sql", db_file)
+    exec_query_from_file("tables/sra_tables.sql", db_file)
     _process_tarballs(tarballs, accessions_idx, db_file, cfg.num_workers)
-    exec_query_from_file("indexes/sql_indexes.sql", db_file)
+    exec_query_from_file("indexes/sra_indexes.sql", db_file)
 
 
 def _extract_sra_file_dumps_in_range(start_date: date, end_date: date) -> list[str]:
@@ -569,7 +574,8 @@ def _reader_worker(
                     if f is None:
                         continue
 
-                    batch.append((submission_accession, file_type, f))
+                    content = io.BytesIO(f.read())
+                    batch.append((submission_accession, file_type, content))
                     pbar.update(1)
 
                     if len(batch) >= read_batch_size:

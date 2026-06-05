@@ -18,7 +18,14 @@ def _is_retryable(exc: Exception) -> bool:
             and exc.response.status_code in _RETRYABLE_STATUS_CODES
         )
 
-    return isinstance(exc, (requests.ConnectionError, requests.Timeout))
+    return isinstance(
+        exc,
+        (
+            requests.ConnectionError,
+            requests.Timeout,
+            requests.exceptions.ChunkedEncodingError,
+        ),
+    )
 
 
 def _retry_delay(attempt: int, max_wait: int = 120) -> float:
@@ -79,7 +86,7 @@ def better_downloader(
         unit="B",
         unit_scale=True,
         desc=f"downloading {url}",
-        delay=5,
+        mininterval=1.0,
     ) as pbar:
 
         def _download_chunk(chunk_start: int, chunk_end: int) -> None:
@@ -87,6 +94,7 @@ def better_downloader(
                 return
 
             cursor = chunk_start
+            pbar_counted_up_to = chunk_start
 
             for attempt in range(retries):
                 bytes_this_attempt = 0
@@ -102,21 +110,39 @@ def better_downloader(
                     ):
                         r.raise_for_status()
                         f.seek(cursor)
+
                         for data in r.iter_content(chunk_size):
                             if not data:
                                 break
+
+                            remaining = chunk_end - cursor + 1
+                            if remaining <= 0:
+                                break
+
+                            if len(data) > remaining:
+                                data = data[:remaining]
+
                             f.write(data)
                             n = len(data)
                             cursor += n
                             bytes_this_attempt += n
-                            pbar.update(n)
+
+                            if cursor > pbar_counted_up_to:
+                                new_bytes = cursor - pbar_counted_up_to
+                                pbar.update(new_bytes)
+                                pbar_counted_up_to = cursor
+
+                    if cursor <= chunk_end:
+                        raise requests.exceptions.ChunkedEncodingError(
+                            f"chunk {chunk_start}-{chunk_end}: "
+                            f"expected bytes up to {chunk_end}, got to {cursor - 1}"
+                        )
                     return
 
                 except Exception as exc:
                     if not _is_retryable(exc) or attempt == retries - 1:
                         raise
 
-                    pbar.update(-bytes_this_attempt)
                     cursor -= bytes_this_attempt
 
                     wait = _retry_delay(attempt)
@@ -148,6 +174,13 @@ def better_downloader(
 
             for future in as_completed(futures):
                 future.result()
+
+        actual_size = dest_path.stat().st_size
+        if actual_size != content_length:
+            raise RuntimeError(
+                f"downloaded file size {actual_size} does not match "
+                f"expected content length {content_length} for {url}"
+            )
 
 
 def simple_file_download(
@@ -208,10 +241,15 @@ def simple_file_download(
                     if pbar:
                         pbar.update(n)
 
+            actual_size = dest_path.stat().st_size
+            if actual_size != total:
+                raise IOError(
+                    f"downloaded {actual_size} bytes, expected {total} for {url}"
+                )
             if pbar:
                 pbar.close()
             r.close()
-            return  # success
+            return
 
         except Exception as exc:
             if not _is_retryable(exc) or attempt == retries - 1:
