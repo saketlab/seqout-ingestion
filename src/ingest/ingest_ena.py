@@ -202,7 +202,9 @@ def ingest_ena(cfg: IngestionConfig):
     date_str = datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = db_dir / f"ena_metadata_{date_str}.db"
+    db_file = (
+        Path(cfg.db_file) if cfg.db_file else (db_dir / f"ena_metadata_{date_str}.db")
+    )
 
     logging.debug(
         "extracting ena file dumps in range (start_date=%s, end_date=%s)",
@@ -247,41 +249,8 @@ def ingest_ena(cfg: IngestionConfig):
         )
 
     exec_query_from_file("tables/ena_tables.sql", db_file)
-
-    with sqlite3.connect(db_file) as conn:
-        ingest_data = [
-            (
-                "studies",
-                "study_accession",
-                STUDY_FIELDS,
-                "storing ena studies in sqlite",
-            ),
-            (
-                "experiments",
-                "run_accession",
-                EXPERIMENT_FIELDS,
-                "storing ena experiments in sqlite",
-            ),
-            (
-                "samples",
-                "sample_accession",
-                SAMPLE_FIELDS,
-                "storing ena samples in sqlite",
-            ),
-        ]
-
-        for folder, key_col, fields, desc in ingest_data:
-            _ingest_data_to_sqlite(conn, output_dir / folder, key_col, fields, desc)
-
-        # rebuild fts
-        conn.execute("INSERT INTO ena_studies_fts(ena_studies_fts) VALUES('rebuild')")
-        conn.execute(
-            "INSERT INTO ena_experiments_fts(ena_experiments_fts) VALUES('rebuild')"
-        )
-        conn.execute("INSERT INTO ena_samples_fts(ena_samples_fts) VALUES('rebuild')")
-        conn.commit()
-
-        exec_query_from_file("indexes/ena_indexes.sql", conn=conn)
+    _ingest_data(db_file, output_dir)
+    exec_query_from_file("indexes/ena_indexes.sql", db_file)
 
 
 def _fetch_accessions(
@@ -371,7 +340,42 @@ def _run_per_study_download(
             pbar.update(1)
 
 
-def _ingest_data_to_sqlite(
+def _ingest_data(db_file: Path, output_dir: Path):
+    with sqlite3.connect(db_file) as conn:
+        ingest_data = [
+            (
+                "studies",
+                "study_accession",
+                STUDY_FIELDS,
+                "storing ena studies in sqlite",
+            ),
+            (
+                "experiments",
+                "run_accession",
+                EXPERIMENT_FIELDS,
+                "storing ena experiments in sqlite",
+            ),
+            (
+                "samples",
+                "sample_accession",
+                SAMPLE_FIELDS,
+                "storing ena samples in sqlite",
+            ),
+        ]
+
+        for folder, key_col, fields, desc in ingest_data:
+            _ingest_table_to_sqlite(conn, output_dir / folder, key_col, fields, desc)
+
+        # rebuild fts
+        conn.execute("INSERT INTO ena_studies_fts(ena_studies_fts) VALUES('rebuild')")
+        conn.execute(
+            "INSERT INTO ena_experiments_fts(ena_experiments_fts) VALUES('rebuild')"
+        )
+        conn.execute("INSERT INTO ena_samples_fts(ena_samples_fts) VALUES('rebuild')")
+        conn.commit()
+
+
+def _ingest_table_to_sqlite(
     conn: sqlite3.Connection,
     output_dir: Path,
     key_col: str,

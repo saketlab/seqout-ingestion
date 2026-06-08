@@ -8,6 +8,12 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "humanfriendly>=10.0",
     "libarchive-c>=5.3",
+    "pysradb>=2.5.1",
     "requests>=2.34.2",
     "tqdm>=4.67.3",
+]
+
+[tool.uv]
+override-dependencies = [
+    "lxml==7.0.0a1",
 ]

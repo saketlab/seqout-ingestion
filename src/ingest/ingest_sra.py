@@ -50,7 +50,9 @@ def ingest_sra(cfg: IngestionConfig):
     date_str = datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = db_dir / f"sra_metadata_{date_str}.db"
+    db_file = (
+        Path(cfg.db_file) if cfg.db_file else (db_dir / f"sra_metadata_{date_str}.db")
+    )
 
     logging.debug(
         "extracting sra file dumps in range: start_date=%s, end_date=%s",
@@ -92,7 +94,10 @@ def ingest_sra(cfg: IngestionConfig):
 
     exec_query_from_file("tables/sra_tables.sql", db_file)
     _process_tarballs(tarballs, accessions_idx, db_file, cfg.num_workers)
+
+    logging.info("creating indexes on sra tables ...")
     exec_query_from_file("indexes/sra_indexes.sql", db_file)
+    logging.info("indexes created successfully")
 
 
 def _extract_sra_file_dumps_in_range(start_date: date, end_date: date) -> list[str]:

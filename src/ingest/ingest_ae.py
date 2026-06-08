@@ -27,7 +27,9 @@ def ingest_ae(cfg: IngestionConfig):
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = db_dir / f"ae_metadata_{date_str}.db"
+    db_file = (
+        Path(cfg.db_file) if cfg.db_file else (db_dir / f"ae_metadata_{date_str}.db")
+    )
 
     accessions = _fetch_accessions(cfg.start_date, cfg.end_date, cfg.num_workers)
     _download_study_metadatas(accessions, cfg.num_workers, data_dir)

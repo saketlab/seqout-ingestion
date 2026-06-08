@@ -1,11 +1,14 @@
 import datetime
 from dataclasses import dataclass
 
+from config import Datasources
+
 
 @dataclass
 class IngestionConfig:
-    datasource: str
+    datasource: Datasources
     output_dir: str
+    db_file: str
     start_date: datetime.date
     end_date: datetime.date
     num_workers: int

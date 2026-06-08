@@ -319,7 +319,8 @@ def exec_query_from_file(
     db_file: str | Path | None = None,
     conn: sqlite3.Connection | None = None,
 ):
-    if not conn:
+    owns_conn = conn is None
+    if owns_conn:
         if not db_file:
             raise ValueError("missing db file")
         conn = sqlite3.connect(db_file)
@@ -327,4 +328,6 @@ def exec_query_from_file(
     cursor = conn.cursor()
     query = files("sql").joinpath(query_file).read_text()
     cursor.executescript(query)
-    conn.close()
+
+    if owns_conn:
+        conn.close()

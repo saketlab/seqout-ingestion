@@ -39,7 +39,9 @@ def ingest_geo(cfg: IngestionConfig):
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = db_dir / f"geo_metadata_{date_str}.db"
+    db_file = (
+        Path(cfg.db_file) if cfg.db_file else (db_dir / f"geo_metadata_{date_str}.db")
+    )
 
     geo_series_pkl_file = (
         Path(cfg.geo_series_pickle)
@@ -55,7 +57,7 @@ def ingest_geo(cfg: IngestionConfig):
     _run_pipeline(
         geo_dict, db_file, data_dir, cfg.num_workers, cfg.batch_size, cfg.chunk_size
     )
-    exec_query_from_file("tables/geo_indexes.sql", db_file)
+    exec_query_from_file("indexes/geo_indexes.sql", db_file)
 
 
 def _build_geo_dict(

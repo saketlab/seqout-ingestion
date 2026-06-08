@@ -1,8 +1,17 @@
 import argparse
 import datetime
+import enum
 import sys
 
 import humanfriendly
+
+
+class Datasources(enum.StrEnum):
+    Geo = "geo"
+    Sra = "sra"
+    Ena = "ena"
+    ArrayExpress = "ae"
+    PubMed = "pubmed"
 
 
 def parse_config() -> argparse.Namespace:
@@ -11,15 +20,20 @@ def parse_config() -> argparse.Namespace:
         "--stage",
         type=str,
         required=True,
-        choices=["ingest", "sc_enrich"],
+        choices=["ingest", "backfill_pubmed"],
         help="stage of the pipeline to run",
     )
     parser.add_argument(
         "--datasource",
         type=str,
         required=True,
-        choices=["geo", "sra", "ena", "ae"],
+        choices=list(Datasources),
         help="name of the datasources from where to pull data for ingest stage",
+    )
+    parser.add_argument(
+        "--db-file",
+        type=str,
+        help="path from where the db file would be used (or) where the db file would be created",
     )
     parser.add_argument(
         "--output-dir",
@@ -30,13 +44,13 @@ def parse_config() -> argparse.Namespace:
     parser.add_argument(
         "--start-date",
         type=humanfriendly.parse_date,
-        default=datetime.datetime.now(),
+        default=datetime.datetime.now().timetuple()[:6],
         help="start date of data dump range for ingest stage",
     )
     parser.add_argument(
         "--end-date",
         type=humanfriendly.parse_date,
-        default=datetime.datetime.now(),
+        default=datetime.datetime.now().timetuple()[:6],
         help="end date of data dump range for ingest stage",
     )
     parser.add_argument(
@@ -71,6 +85,17 @@ def parse_config() -> argparse.Namespace:
         help="time-to-live for `SRA_Accessions.tab` file for sra ingest stage",
     )
     parser.add_argument(
+        "--geo-series-pickle",
+        type=str,
+        help="path to pickle file which contains geo series dict",
+    )
+    parser.add_argument(
+        "--geo-series-limit",
+        type=int,
+        default=None,
+        help="limit the total number of series groups which would be indexed",
+    )
+    parser.add_argument(
         "--ena-use-last-updated",
         action="store_true",
         default=False,
@@ -89,19 +114,19 @@ def parse_config() -> argparse.Namespace:
         help="whether to skip download phase for per-study samples for ena ingest stage",
     )
     parser.add_argument(
-        "--geo-series-pickle",
+        "--pubmed-ncbi-api-keys",
         type=str,
-        help="path to pickle file which contains geo series dict",
+        help="path to .txt file which contains ncbi api keys, one key per line",
     )
     parser.add_argument(
-        "--geo-series-limit",
-        type=int,
-        default=None,
-        help="limit the total number of series groups which would be indexed",
+        "--pubmed-dry-run",
+        action="store_true",
+        default=False,
+        help="whether to only count and display the information of missing pubmed ids or update the existing records also",
     )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
-    if not args.start_date < args.end_date:
+    if not args.start_date <= args.end_date:
         raise ValueError("start date needs to be less than end date")
 
     return args
