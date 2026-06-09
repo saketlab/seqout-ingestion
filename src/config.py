@@ -11,6 +11,7 @@ class Datasource(enum.StrEnum):
     Sra = "sra"
     Ena = "ena"
     ArrayExpress = "ae"
+    _None = "none"
 
 
 STAGES = ["ingest", "backfill_pubmed_ids", "backfill_pubmed_meta"]
@@ -28,7 +29,7 @@ def parse_config() -> argparse.Namespace:
     parser.add_argument(
         "--datasource",
         type=str,
-        required=True,
+        default=Datasource._None,
         choices=list(Datasource),
         help="name of the Datasource from where to pull data for ingest stage",
     )
@@ -37,6 +38,10 @@ def parse_config() -> argparse.Namespace:
         type=str,
         help="path from where the db file would be used (or) where the db file would be created",
     )
+    parser.add_argument("--geo-db-file", type=str, help="path of geo db file")
+    parser.add_argument("--sra-db-file", type=str, help="path of sra db file")
+    parser.add_argument("--ena-db-file", type=str, help="path of ena db file")
+    parser.add_argument("--ae-db-file", type=str, help="path of arrayexpress db file")
     parser.add_argument(
         "--output-dir",
         type=str,

@@ -15,7 +15,6 @@ from pysradb.sraweb import SRAweb
 from backfill._utils import _chunked, _parse_pmid
 from backfill.backfill_config import BackfillConfig
 from config import Datasource
-from helpers import exec_query_from_file
 
 _PUBMED_META_OUTPUT_DIR = "pubmed_meta"
 
@@ -91,17 +90,14 @@ def backfill_pubmed_meta(cfg: BackfillConfig):
     output_dir = Path(cfg.base_output_dir) / _PUBMED_META_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    meta_db_file = output_dir / "pubmed_meta.db"
-    exec_query_from_file("tables/pubmed_meta_tables.sql", db_file=meta_db_file)
-
     if cfg.update_journal_metrics:
-        _process_via_per_journal_lookup(cfg, meta_db_file)
+        _process_via_per_journal_lookup(cfg)
     else:
-        _process_via_per_pmid_lookup(cfg, meta_db_file)
+        _process_via_per_pmid_lookup(cfg)
 
 
-def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: Path):
-    with sqlite3.Connection(meta_db_file) as conn:
+def _process_via_per_journal_lookup(cfg: BackfillConfig):
+    with sqlite3.Connection(cfg.db_file) as conn:
         if cfg.refresh_all_journals_metrics:
             target = _collect_all_journals(conn)
         else:
@@ -141,7 +137,7 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: Path):
 
     partial_worker_fn = functools.partial(
         _journal_lookup_worker,
-        meta_db_file,
+        db_file=cfg.db_file,
         sql=JOURNAL_METRICS_UPDATE_SQL,
         to_tuple=_journal_row_to_tuple,
         batch_size=cfg.batch_size,
@@ -165,7 +161,7 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: Path):
     )
 
 
-def _process_via_per_pmid_lookup(cfg: BackfillConfig, meta_db_file: Path):
+def _process_via_per_pmid_lookup(cfg: BackfillConfig):
     with sqlite3.Connection(cfg.db_file) as conn:
         all_pmids = _collect_all_pmids(conn, cfg.datasource)
         existing_pmids = _collect_existing_pmids(conn)
@@ -220,7 +216,7 @@ def _process_via_per_pmid_lookup(cfg: BackfillConfig, meta_db_file: Path):
 
     partial_worker_fn = functools.partial(
         _pmid_lookup_worker,
-        meta_db_file,
+        db_file=cfg.db_file,
         sql=sql,
         to_tuple=to_tuple,
         batch_size=cfg.batch_size,
@@ -266,9 +262,9 @@ def _worker_loop(
             futures.append(
                 pool.submit(
                     worker,
-                    worker_data[i],
-                    ncbi_key,
-                    openalex_key,
+                    data=worker_data[i],
+                    ncbi_key=ncbi_key,
+                    openalex_key=openalex_key,
                     pbar=pbar,
                     counters=counters,
                 )
@@ -279,7 +275,7 @@ def _worker_loop(
 
 
 def _journal_lookup_worker(
-    db_file: Path,
+    db_file: str,
     data: list[tuple[str, str]],
     ncbi_key: str,
     openalex_key: str,
@@ -363,7 +359,7 @@ def _journal_lookup_worker(
 
 
 def _pmid_lookup_worker(
-    db_file: Path,
+    db_file: str,
     data: list[str],
     ncbi_key: str,
     openalex_key: str,

@@ -1,9 +1,9 @@
 import logging
 import sqlite3
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
+import pandas as pd
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
@@ -38,76 +38,108 @@ BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
 
 
 def backfill_pubmed_ids(cfg: BackfillConfig):
-    if not cfg.db_file:
-        logging.fatal("missing db file (--db-file)")
-        sys.exit(1)
+    if (
+        (not cfg.geo_db_file)
+        and (not cfg.sra_db_file)
+        and (not cfg.ena_db_file)
+        and (not cfg.ae_db_file)
+    ):
+        raise ValueError(
+            "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
+        )
 
     if not cfg.ncbi_keys_file:
-        logging.fatal("missing api keys file flag (--pubmed-ncbi-api-keys)")
-        sys.exit(1)
+        raise ValueError("missing ncbi api keys file flag")
 
-    table = DATASOURCE_TABLE_MAPPING[cfg.datasource]
+    raw_mapping: dict[Datasource, str | None] = {
+        Datasource.Geo: cfg.geo_db_file,
+        Datasource.Sra: cfg.sra_db_file,
+        Datasource.Ena: cfg.ena_db_file,
+        Datasource.ArrayExpress: cfg.ae_db_file,
+    }
+    mapping: dict[Datasource, str] = {
+        k: v for k, v in raw_mapping.items() if v is not None
+    }
 
-    with sqlite3.Connection(cfg.db_file) as conn:
-        _add_col_if_not_exists(conn, table, "pubmed_id_pysradb", "TEXT")
-        _add_col_if_not_exists(conn, table, "pubmed_last_checked", "TEXT")
+    missing_by_datasource: dict[Datasource, list[str]] = {}
+    total = 0
+    already_checked = 0
+    num_has_original = 0
+    num_backfilled = 0
 
-        missing_query = MISSING_QUERIES[cfg.datasource]
-        has_original_query = HAS_ORIGINAL_PMID_QUERIES[cfg.datasource]
-        backfilled_query = BACKFILLED_PMID_QUERIES[cfg.datasource]
+    for datasource, db_file in mapping.items():
+        table = DATASOURCE_TABLE_MAPPING[datasource]
 
-        total = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        already_checked = conn.execute(
-            f"SELECT COUNT(*) FROM {table} WHERE pubmed_last_checked IS NOT NULL"
-        ).fetchone()[0]
-        missing_pubmed_ids = conn.execute(missing_query).fetchall()
-        num_has_original = conn.execute(has_original_query).fetchone()[0]
-        num_backfilled = conn.execute(backfilled_query).fetchone()[0]
+        with sqlite3.Connection(db_file) as conn:
+            _add_col_if_not_exists(conn, table, "pubmed_id_pysradb", "TEXT")
+            _add_col_if_not_exists(conn, table, "pubmed_last_checked", "TEXT")
 
-    missing_pubmed_ids = [id for (id,) in missing_pubmed_ids]
+            missing_query = MISSING_QUERIES[datasource]
+            has_original_query = HAS_ORIGINAL_PMID_QUERIES[datasource]
+            backfilled_query = BACKFILLED_PMID_QUERIES[datasource]
 
+            total += conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            already_checked += conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE pubmed_last_checked IS NOT NULL"
+            ).fetchone()[0]
+            num_has_original += conn.execute(has_original_query).fetchone()[0]
+            num_backfilled += conn.execute(backfilled_query).fetchone()[0]
+
+            per_datasource_missing_pubmed_ids = conn.execute(missing_query).fetchall()
+            missing_by_datasource[datasource] = [
+                id for (id,) in per_datasource_missing_pubmed_ids
+            ]
+
+    total_missing = sum(len(v) for v in missing_by_datasource.values())
     logging.info(
-        "%s: %d total\n\t\t\t%d have original pubmed_id\n\t\t\t%d found via pysradb\n\t\t\t%d already checked\n\t\t\t%d to check (%.1f%%)",
-        str(cfg.datasource),
+        "%d total, across {%s} datasources | %d have original pid | %d via pysradb | %d checked | %d to check (%.2f%%)",
         total,
+        ",".join(mapping.keys()),
         num_has_original,
         num_backfilled,
         already_checked,
-        len(missing_pubmed_ids),
-        (len(missing_pubmed_ids) * 100) / total if total else 0,
+        total_missing,
+        (total_missing * 100) / total if total else 0,
     )
 
-    if cfg.is_dry_run or len(missing_pubmed_ids) == 0:
+    if cfg.is_dry_run or total_missing == 0:
         return
 
     with open(str(cfg.ncbi_keys_file), "r") as f:
         keys = f.read().splitlines()
 
     optimal_num_workers = len(keys)
+    num_workers = cfg.num_workers
     if cfg.num_workers != optimal_num_workers:
         num_workers = optimal_num_workers
         logging.warning("using %d as num workers", num_workers)
 
-    worker_data: list[list[str]] = [[] for _ in range(num_workers)]
-    for i, pmid in enumerate(missing_pubmed_ids):
-        worker_data[i % num_workers].append(pmid)
+    for datasource, db_file in mapping.items():
+        accessions = missing_by_datasource[datasource]
+        if not accessions:
+            continue
 
-    with ThreadPoolExecutor(num_workers) as pool:
-        futures = [
-            pool.submit(
-                _worker,
-                keys[i],
-                cfg.datasource,
-                worker_data[i],
-                cfg.db_file,
-                cfg.batch_size,
-                i,
-            )
-            for i in range(num_workers)
-        ]
+        logging.info("processing %s — %d accessions", datasource, len(accessions))
+        worker_data: list[list[str]] = [[] for _ in range(num_workers)]
+        for i, accession in enumerate(accessions):
+            worker_data[i % num_workers].append(accession)
 
-        for f in as_completed(futures):
-            f.result()
+        with ThreadPoolExecutor(num_workers) as pool:
+            futures = [
+                pool.submit(
+                    _worker,
+                    keys[i],
+                    datasource,
+                    worker_data[i],
+                    db_file,
+                    cfg.batch_size,
+                    i,
+                )
+                for i in range(num_workers)
+            ]
+
+            for f in as_completed(futures):
+                f.result()
 
 
 def _worker(
@@ -124,13 +156,21 @@ def _worker(
 
     with tqdm(
         total=len(data),
-        desc=f"[worker-{worker_id}] processing accessions...",
-        unit=" accession",
+        desc=f"[W{worker_id}] {datasource.value}",
+        unit="acc",
         position=worker_id,
+        leave=True,
     ) as pbar:
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
         for batch in _chunked(data, batch_size):
-            df = sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
-            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            try:
+                df = (
+                    sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
+                )
+            except KeyError:
+                df = pd.DataFrame()
+
             pmid_updates = []
 
             for _, row in df.iterrows():
@@ -141,7 +181,12 @@ def _worker(
 
             with sqlite3.Connection(db_file) as conn:
                 table = DATASOURCE_TABLE_MAPPING[datasource]
-                conn.execute(f"UPDATE {table} SET pubmed_last_checked = ?", (now,))
+                accessions_in_batch = [a for a in batch if a]
+                placeholders = ",".join("?" for _ in accessions_in_batch)
+                conn.execute(
+                    f"UPDATE {table} SET pubmed_last_checked = ? WHERE accession IN ({placeholders})",
+                    (now, *accessions_in_batch),
+                )
                 if pmid_updates:
                     conn.executemany(
                         f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE accession = ?",

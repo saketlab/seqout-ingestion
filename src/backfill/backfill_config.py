@@ -8,6 +8,10 @@ class BackfillConfig:
     datasource: Datasource
     base_output_dir: str
     db_file: str
+    geo_db_file: str
+    sra_db_file: str
+    ena_db_file: str
+    ae_db_file: str
     ncbi_keys_file: str
     openalex_keys_file: str
     num_workers: int

@@ -44,10 +44,14 @@ def main() -> None:
         geo_series_limit=args.geo_series_limit,
     )
 
-    backfill_cfg = backfill_cfg = BackfillConfig(
+    backfill_cfg = BackfillConfig(
         datasource=args.datasource,
         base_output_dir=args.output_dir,
         db_file=args.db_file,
+        geo_db_file=args.geo_db_file,
+        sra_db_file=args.sra_db_file,
+        ena_db_file=args.ena_db_file,
+        ae_db_file=args.ae_db_file,
         ncbi_keys_file=args.ncbi_keys_file,
         openalex_keys_file=args.openalex_keys_file,
         num_workers=args.workers,
