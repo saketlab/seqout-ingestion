@@ -12,7 +12,7 @@ import tqdm
 from pysradb.sraweb import SRAweb
 
 from backfill._utils import _chunked, _parse_pmid
-from backfill.pubmed_config import BackfillConfig
+from backfill.backfill_config import BackfillConfig
 from config import Datasource
 from helpers import exec_query_from_file
 

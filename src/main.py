@@ -3,7 +3,7 @@ import sys
 from datetime import datetime
 
 import config
-from backfill.pubmed_config import BackfillConfig
+from backfill.backfill_config import BackfillConfig
 from backfill.pubmed_ids import backfill_pubmed_ids
 from backfill.pubmed_meta import backfill_pubmed_meta
 from ingest.ingest import IngestionConfig, run_ingest
