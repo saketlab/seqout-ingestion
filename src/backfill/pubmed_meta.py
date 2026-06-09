@@ -5,7 +5,6 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from multiprocessing.sharedctypes import Synchronized
-from pathlib import Path
 from typing import Callable, Optional
 
 import pandas as pd
@@ -15,6 +14,7 @@ from pysradb.sraweb import SRAweb
 from backfill._utils import _chunked, _parse_pmid
 from backfill.backfill_config import BackfillConfig
 from config import Datasource
+from helpers import exec_query_from_file
 
 _PUBMED_META_OUTPUT_DIR = "pubmed_meta"
 
@@ -87,17 +87,43 @@ class Counters:
 
 
 def backfill_pubmed_meta(cfg: BackfillConfig):
-    output_dir = Path(cfg.base_output_dir) / _PUBMED_META_OUTPUT_DIR
-    output_dir.mkdir(exist_ok=True, parents=True)
+    if (
+        (not cfg.geo_db_file)
+        and (not cfg.sra_db_file)
+        and (not cfg.ena_db_file)
+        and (not cfg.ae_db_file)
+    ):
+        raise ValueError(
+            "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
+        )
 
-    if cfg.update_journal_metrics:
-        _process_via_per_journal_lookup(cfg)
-    else:
-        _process_via_per_pmid_lookup(cfg)
+    if not cfg.ncbi_keys_file:
+        raise ValueError("missing ncbi api keys file flag")
+
+    if not cfg.openalex_keys_file:
+        raise ValueError("missing openalex api keys flag")
+
+    raw_mapping: dict[Datasource, str | None] = {
+        Datasource.Geo: cfg.geo_db_file,
+        Datasource.Sra: cfg.sra_db_file,
+        Datasource.Ena: cfg.ena_db_file,
+        Datasource.ArrayExpress: cfg.ae_db_file,
+    }
+    mapping: dict[Datasource, str] = {
+        k: v for k, v in raw_mapping.items() if v is not None
+    }
+
+    exec_query_from_file("tables/pubmed_meta_tables.sql", cfg.db_file)
+
+    for datasource, db_file in mapping.items():
+        if cfg.update_journal_metrics:
+            _process_via_per_journal_lookup(cfg, str(cfg.db_file))
+        else:
+            _process_via_per_pmid_lookup(cfg, datasource, db_file, cfg.db_file)
 
 
-def _process_via_per_journal_lookup(cfg: BackfillConfig):
-    with sqlite3.Connection(cfg.db_file) as conn:
+def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: str):
+    with sqlite3.Connection(meta_db_file) as conn:
         if cfg.refresh_all_journals_metrics:
             target = _collect_all_journals(conn)
         else:
@@ -137,7 +163,7 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig):
 
     partial_worker_fn = functools.partial(
         _journal_lookup_worker,
-        db_file=cfg.db_file,
+        db_file=meta_db_file,
         sql=JOURNAL_METRICS_UPDATE_SQL,
         to_tuple=_journal_row_to_tuple,
         batch_size=cfg.batch_size,
@@ -152,7 +178,7 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig):
 
     _worker_loop(
         partial_worker_fn,
-        cfg.num_workers,
+        num_workers,
         worker_data,
         ncbi_keys,
         openalex_keys,
@@ -161,15 +187,20 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig):
     )
 
 
-def _process_via_per_pmid_lookup(cfg: BackfillConfig):
-    with sqlite3.Connection(cfg.db_file) as conn:
-        all_pmids = _collect_all_pmids(conn, cfg.datasource)
-        existing_pmids = _collect_existing_pmids(conn)
+def _process_via_per_pmid_lookup(
+    cfg: BackfillConfig, datasource: Datasource, ds_db_file: str, meta_db_file: str
+):
+    logging.info("processing %s datasource...", datasource)
+
+    with sqlite3.Connection(ds_db_file) as conn:
+        all_pmids = _collect_all_pmids(conn, datasource)
+
+    with sqlite3.Connection(meta_db_file) as meta_conn:
+        existing_pmids = _collect_existing_pmids(meta_conn)
         log_prefix = f"pmids: {len(all_pmids)} unique, {len(existing_pmids)} already have metadata"
 
-        # only re-fetch metrics for records missing citation count or journal metrics
         if cfg.fill_metrics:
-            missing_metrics = _collect_pmids_with_missing_metrics(conn)
+            missing_metrics = _collect_pmids_with_missing_metrics(meta_conn)
             target = all_pmids & missing_metrics
             logging.info(
                 "%s, %d missing metrics, filling metrics for %d",
@@ -177,11 +208,9 @@ def _process_via_per_pmid_lookup(cfg: BackfillConfig):
                 len(missing_metrics),
                 len(target),
             )
-        # re-fetch metrics for all records
         elif cfg.update_metrics:
             target = all_pmids & existing_pmids
-            logging.info("%s, updating metrics for %d", log_prefix, target)
-        # fetching metadata for pmids who are not yet present in the table
+            logging.info("%s, updating metrics for %d", log_prefix, len(target))
         else:
             target = all_pmids - existing_pmids
             logging.info("%s, %d to fetch", log_prefix, len(target))
@@ -216,7 +245,7 @@ def _process_via_per_pmid_lookup(cfg: BackfillConfig):
 
     partial_worker_fn = functools.partial(
         _pmid_lookup_worker,
-        db_file=cfg.db_file,
+        db_file=meta_db_file,
         sql=sql,
         to_tuple=to_tuple,
         batch_size=cfg.batch_size,
@@ -232,7 +261,7 @@ def _process_via_per_pmid_lookup(cfg: BackfillConfig):
 
     _worker_loop(
         partial_worker_fn,
-        cfg.num_workers,
+        num_workers,
         worker_data,
         ncbi_keys,
         openalex_keys,
@@ -340,7 +369,7 @@ def _journal_lookup_worker(
             except Exception as e:
                 local_errors += 1
                 with counters.errors.get_lock():
-                    counters.errors.value += local_errors
+                    counters.errors.value += 1
                 with counters.total.get_lock():
                     counters.total.value += 1
 
@@ -424,7 +453,7 @@ def _pmid_lookup_worker(
             except Exception as e:
                 local_errors += len(batch)
                 with counters.errors.get_lock():
-                    counters.errors.value += local_errors
+                    counters.errors.value += len(batch)
                 with counters.total.get_lock():
                     counters.total.value += 1
 
