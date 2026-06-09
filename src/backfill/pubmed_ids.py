@@ -8,7 +8,7 @@ from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from backfill._utils import _chunked, _parse_pmid
-from backfill.pubmed_config import BackfillConfig
+from backfill.backfill_config import BackfillConfig
 from config import Datasource
 
 DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {

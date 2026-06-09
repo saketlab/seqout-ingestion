@@ -1,3 +1,4 @@
+import functools
 import logging
 import multiprocessing as mp
 import sqlite3
@@ -5,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from multiprocessing.sharedctypes import Synchronized
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import pandas as pd
 import tqdm
@@ -17,7 +18,6 @@ from config import Datasource
 from helpers import exec_query_from_file
 
 _PUBMED_META_OUTPUT_DIR = "pubmed_meta"
-
 
 PMID_EXTRACT_QUERIES = {
     "sra": [
@@ -54,7 +54,7 @@ ON CONFLICT (pmid) DO UPDATE SET
     journal_i10_index = EXCLUDED.journal_i10_index,
     journal_2yr_mean_citedness = EXCLUDED.journal_2yr_mean_citedness,
     journal_cited_by_count = EXCLUDED.journal_cited_by_count,
-    journal_works_count = EXCLUDED.journal_works_count
+    journal_works_count = EXCLUDED.journal_works_count;
 """
 UPDATE_METRICS_SQL = """
 UPDATE pubmed_metadata SET
@@ -64,17 +64,27 @@ UPDATE pubmed_metadata SET
     journal_2yr_mean_citedness = COALESCE(?, journal_2yr_mean_citedness),
     journal_cited_by_count     = COALESCE(?, journal_cited_by_count),
     journal_works_count        = COALESCE(?, journal_works_count)
-WHERE pmid = ?
+WHERE pmid = ?;
+"""
+JOURNAL_METRICS_UPDATE_SQL = """
+UPDATE pubmed_metadata SET
+    journal_h_index            = ?,
+    journal_i10_index          = ?,
+    journal_2yr_mean_citedness = ?,
+    journal_cited_by_count     = ?,
+    journal_works_count        = ?
+WHERE journal = ?;
 """
 
 
 @dataclass
 class Counters:
     total: Synchronized[int]
-    found: Synchronized[int]
+    updated: Synchronized[int]
     errors: Synchronized[int]
-    citations: Synchronized[int]
-    journals: Synchronized[int]
+    skipped: Optional[Synchronized[int]]
+    citations: Optional[Synchronized[int]]
+    journals: Optional[Synchronized[int]]
 
 
 def backfill_pubmed_meta(cfg: BackfillConfig):
@@ -84,9 +94,79 @@ def backfill_pubmed_meta(cfg: BackfillConfig):
     meta_db_file = output_dir / "pubmed_meta.db"
     exec_query_from_file("tables/pubmed_meta_tables.sql", db_file=meta_db_file)
 
-    with sqlite3.Connection(cfg.db_file) as conn:
-        exec_query_from_file("tables/pubmed_meta_tables.sql", conn=conn)
+    if cfg.update_journal_metrics:
+        _process_via_per_journal_lookup(cfg, meta_db_file)
+    else:
+        _process_via_per_pmid_lookup(cfg, meta_db_file)
 
+
+def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: Path):
+    with sqlite3.Connection(meta_db_file) as conn:
+        if cfg.refresh_all_journals_metrics:
+            target = _collect_all_journals(conn)
+        else:
+            target = _collect_journals_with_missing_metrics(conn)
+
+    total = len(target)
+    logging.info(
+        "found %d unique journals to look up (refresh_all=%s)",
+        total,
+        cfg.refresh_all_journals_metrics,
+    )
+
+    if cfg.is_dry_run or not target:
+        return
+
+    with open(cfg.ncbi_keys_file, "r") as f:
+        ncbi_keys = f.read().splitlines()
+    with open(cfg.openalex_keys_file, "r") as f:
+        openalex_keys = f.read().splitlines()
+
+    num_workers, _ = _calc_num_workers_and_batches(
+        target, cfg.num_workers, cfg.batch_size, len(ncbi_keys), len(openalex_keys)
+    )
+
+    worker_data: list[list[tuple[str, str]]] = [[] for _ in range(num_workers)]
+    for i, (journal, issn) in enumerate(target):
+        worker_data[i % num_workers].append((journal, issn))
+
+    counters = Counters(
+        total=mp.Value("i", 0),
+        updated=mp.Value("i", 0),
+        errors=mp.Value("i", 0),
+        skipped=mp.Value("i", 0),
+        citations=None,
+        journals=None,
+    )
+
+    partial_worker_fn = functools.partial(
+        _journal_lookup_worker,
+        meta_db_file,
+        sql=JOURNAL_METRICS_UPDATE_SQL,
+        to_tuple=_journal_row_to_tuple,
+        batch_size=cfg.batch_size,
+        counters=counters,
+    )
+
+    pbar = tqdm.tqdm(
+        total=total,
+        desc="backfilling pubmed metadata via journal lookups",
+        unit="journal",
+    )
+
+    _worker_loop(
+        partial_worker_fn,
+        cfg.num_workers,
+        worker_data,
+        ncbi_keys,
+        openalex_keys,
+        counters,
+        pbar,
+    )
+
+
+def _process_via_per_pmid_lookup(cfg: BackfillConfig, meta_db_file: Path):
+    with sqlite3.Connection(cfg.db_file) as conn:
         all_pmids = _collect_all_pmids(conn, cfg.datasource)
         existing_pmids = _collect_existing_pmids(conn)
         log_prefix = f"pmids: {len(all_pmids)} unique, {len(existing_pmids)} already have metadata"
@@ -94,7 +174,7 @@ def backfill_pubmed_meta(cfg: BackfillConfig):
         # only re-fetch metrics for records missing citation count or journal metrics
         if cfg.fill_metrics:
             missing_metrics = _collect_pmids_with_missing_metrics(conn)
-            target = sorted(all_pmids & missing_metrics)
+            target = all_pmids & missing_metrics
             logging.info(
                 "%s, %d missing metrics, filling metrics for %d",
                 log_prefix,
@@ -103,11 +183,11 @@ def backfill_pubmed_meta(cfg: BackfillConfig):
             )
         # re-fetch metrics for all records
         elif cfg.update_metrics:
-            target = sorted(all_pmids & existing_pmids)
+            target = all_pmids & existing_pmids
             logging.info("%s, updating metrics for %d", log_prefix, target)
         # fetching metadata for pmids who are not yet present in the table
         else:
-            target = sorted(all_pmids - existing_pmids)
+            target = all_pmids - existing_pmids
             logging.info("%s, %d to fetch", log_prefix, len(target))
 
     if cfg.is_dry_run or not target:
@@ -118,36 +198,65 @@ def backfill_pubmed_meta(cfg: BackfillConfig):
     with open(cfg.openalex_keys_file, "r") as f:
         openalex_keys = f.read().splitlines()
 
-    total_batches = (len(target) + cfg.batch_size - 1) // cfg.batch_size
-    optimal_num_workers = max(len(ncbi_keys), len(openalex_keys))
-    num_workers = cfg.num_workers
-    if cfg.num_workers != optimal_num_workers:
-        num_workers = optimal_num_workers
-        logging.warning("using %d as num workers", optimal_num_workers)
+    num_workers, total_batches = _calc_num_workers_and_batches(
+        target, cfg.num_workers, cfg.batch_size, len(ncbi_keys), len(openalex_keys)
+    )
 
     worker_data: list[list[str]] = [[] for _ in range(num_workers)]
     for i, pmid in enumerate(target):
         worker_data[i % num_workers].append(pmid)
 
     sql = UPDATE_METRICS_SQL if cfg.update_metrics else UPSERT_SQL
-    to_tuple = _row_to_metrics_tuple if cfg.update_metrics else _row_to_tuple
+    to_tuple = _pmid_row_to_metrics_tuple if cfg.update_metrics else _pmid_row_to_tuple
 
     counters = Counters(
         total=mp.Value("i", 0),
-        found=mp.Value("i", 0),
+        updated=mp.Value("i", 0),
         errors=mp.Value("i", 0),
+        skipped=None,
         citations=mp.Value("i", 0),
         journals=mp.Value("i", 0),
     )
 
-    pbar = tqdm.tqdm(
-        total=total_batches,
-        desc="backfilling pubmed metadata",
-        unit="batch",
-        position=0,
+    partial_worker_fn = functools.partial(
+        _pmid_lookup_worker,
+        meta_db_file,
+        sql=sql,
+        to_tuple=to_tuple,
+        batch_size=cfg.batch_size,
+        skip_journal_metrics=cfg.skip_journal_metrics,
+        counters=counters,
     )
 
-    with ThreadPoolExecutor(num_workers) as pool:
+    pbar = tqdm.tqdm(
+        total=total_batches,
+        desc="backfilling pubmed metadata via pmid lookups",
+        unit="batch",
+    )
+
+    _worker_loop(
+        partial_worker_fn,
+        cfg.num_workers,
+        worker_data,
+        ncbi_keys,
+        openalex_keys,
+        counters,
+        pbar,
+    )
+
+
+def _worker_loop(
+    worker: functools.partial,
+    num_workers: int,
+    worker_data: list,
+    ncbi_keys: list[str],
+    openalex_keys: list[str],
+    counters: Counters,
+    pbar: tqdm.tqdm,
+):
+    with (
+        ThreadPoolExecutor(num_workers) as pool,
+    ):
         futures = []
 
         for i in range(num_workers):
@@ -156,45 +265,129 @@ def backfill_pubmed_meta(cfg: BackfillConfig):
 
             futures.append(
                 pool.submit(
-                    _worker,
-                    meta_db_file,
+                    worker,
                     worker_data[i],
-                    sql,
-                    to_tuple,
                     ncbi_key,
                     openalex_key,
-                    cfg.batch_size,
-                    cfg.skip_journal_metrics,
-                    counters,
-                    pbar,
+                    pbar=pbar,
+                    counters=counters,
                 )
             )
 
         for f in futures:
             f.result()
 
-    pbar.close()
 
-
-def _worker(
+def _journal_lookup_worker(
     db_file: Path,
-    data: list[str],
-    sql: str,
-    to_tuple: Callable[[dict], tuple],
+    data: list[tuple[str, str]],
     ncbi_key: str,
     openalex_key: str,
+    sql: str,
+    to_tuple: Callable[[dict], tuple],
+    batch_size: int,
+    counters: Counters,
+    pbar: tqdm.tqdm,
+):
+    sra = SRAweb(api_key=ncbi_key, openalex_api_key=openalex_key)
+    local_updated = 0
+    local_errors = 0
+
+    with sqlite3.Connection(db_file) as conn:
+        _setup_wal(conn)
+
+        rows = []
+
+        def _flush():
+            nonlocal local_updated, rows
+            if rows:
+                conn.executemany(sql, rows)
+                conn.commit()
+
+                local_updated += len(rows)
+                with counters.updated.get_lock():
+                    counters.updated.value += len(rows)
+                rows = []
+
+        def _pbar_update():
+            pbar.update(1)
+            pbar.set_postfix(
+                updated=counters.updated.value,
+                errors=counters.errors.value,
+                refresh=False,
+            )
+
+        for journal, issn in data:
+            try:
+                journal_metrics: dict = sra._openalex_source_lookup(issn, journal)
+                tuple = (
+                    *to_tuple(
+                        journal_metrics,
+                    ),
+                    journal,
+                )
+
+                h_index = tuple[0]
+                i10_index = tuple[1]
+                cited_by = tuple[2]
+
+                if h_index is None or i10_index is None or cited_by is None:
+                    if counters.skipped:
+                        with counters.skipped.get_lock():
+                            counters.skipped.value += 1
+                else:
+                    rows.append(tuple)
+                    if len(rows) >= batch_size:
+                        _flush()
+
+                _pbar_update()
+            except Exception as e:
+                local_errors += 1
+                with counters.errors.get_lock():
+                    counters.errors.value += local_errors
+                with counters.total.get_lock():
+                    counters.total.value += 1
+
+                _pbar_update()
+                logging.exception("failed to fetch journal lookup (%s): %s", journal, e)
+
+        if rows:
+            _flush()
+            _pbar_update()
+    logging.info(
+        "finished: %d rows, %d errors out of %d journals",
+        local_updated,
+        local_errors,
+        len(data),
+    )
+
+
+def _pmid_lookup_worker(
+    db_file: Path,
+    data: list[str],
+    ncbi_key: str,
+    openalex_key: str,
+    sql: str,
+    to_tuple: Callable[[dict], tuple],
     batch_size: int,
     skip_journal_metrics: bool,
     counters: Counters,
     pbar: tqdm.tqdm,
 ):
     sra = SRAweb(api_key=ncbi_key, openalex_api_key=openalex_key)
-    local_found = 0
+    local_updated = 0
     local_errors = 0
 
+    def _pbar_update():
+        pbar.update(1)
+        pbar.set_postfix(
+            updated=counters.updated.value,
+            errors=counters.errors.value,
+            refresh=False,
+        )
+
     with sqlite3.Connection(db_file) as conn:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute("PRAGMA synchronous = NORMAL")
+        _setup_wal(conn)
 
         for batch in _chunked(data, batch_size):
             try:
@@ -215,23 +408,23 @@ def _worker(
                 if rows:
                     conn.executemany(sql, rows)
                     conn.commit()
-                    local_found += len(rows)
-                    with counters.found.get_lock():
-                        counters.found.value += len(rows)
 
-                with counters.citations.get_lock():
-                    counters.citations.value += batch_citations
-                with counters.journals.get_lock():
-                    counters.journals.value += batch_journals
+                    local_updated += len(rows)
+                    with counters.updated.get_lock():
+                        counters.updated.value += len(rows)
+
                 with counters.total.get_lock():
                     counters.total.value += 1
 
-                pbar.update(1)
-                pbar.set_postfix(
-                    found=counters.found.value,
-                    errors=counters.errors.value,
-                    refresh=False,
-                )
+                if counters.citations:
+                    with counters.citations.get_lock():
+                        counters.citations.value += batch_citations
+
+                if counters.journals:
+                    with counters.journals.get_lock():
+                        counters.journals.value += batch_journals
+
+                _pbar_update()
             except Exception as e:
                 local_errors += len(batch)
                 with counters.errors.get_lock():
@@ -239,18 +432,12 @@ def _worker(
                 with counters.total.get_lock():
                     counters.total.value += 1
 
-                pbar.update(1)
-                pbar.set_postfix(
-                    found=counters.found.value,
-                    errors=counters.errors.value,
-                    refresh=False,
-                )
-
+                _pbar_update()
                 logging.exception("batch failed (%d pubmed ids): %s", len(batch), e)
 
     logging.info(
         "finished: %d metadata rows, %d errors out of %d pubmed ids",
-        local_found,
+        local_updated,
         local_errors,
         len(data),
     )
@@ -276,15 +463,66 @@ def _collect_existing_pmids(conn: sqlite3.Connection) -> set[str]:
 
 def _collect_pmids_with_missing_metrics(conn: sqlite3.Connection) -> set[str]:
     rows = conn.execute(
-        """SELECT pmid FROM pubmed_metadata
-        WHERE citation_count IS NULL
-            OR journal_h_index IS NULL
-            OR journal_i10_index IS NULL
-            OR journal_2yr_mean_citedness IS NULL
-            OR journal_cited_by_count IS NULL
-            OR journal_works_count IS NULL"""
+        """
+        SELECT pmid FROM pubmed_metadata
+            WHERE citation_count IS NULL
+                OR journal_h_index IS NULL
+                OR journal_i10_index IS NULL
+                OR journal_2yr_mean_citedness IS NULL
+                OR journal_cited_by_count IS NULL
+                OR journal_works_count IS NULL;
+        """
     ).fetchall()
     return {r[0] for r in rows}
+
+
+def _collect_all_journals(conn: sqlite3.Connection) -> set[tuple[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT journal, issn FROM pubmed_metadata
+           WHERE journal IS NOT NULL AND journal != '';
+        """
+    ).fetchall()
+    return set(rows)
+
+
+def _collect_journals_with_missing_metrics(
+    conn: sqlite3.Connection,
+) -> set[tuple[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT DISTINCT journal, issn FROM pubmed_metadata
+           WHERE journal IS NOT NULL AND journal != ''
+             AND (journal_h_index IS NULL
+                  OR journal_i10_index IS NULL
+                  OR journal_2yr_mean_citedness IS NULL
+                  OR journal_cited_by_count IS NULL
+                  OR journal_works_count IS NULL);
+        """
+    ).fetchall()
+    return set(rows)
+
+
+def _setup_wal(conn: sqlite3.Connection):
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 5000")
+
+
+def _calc_num_workers_and_batches(
+    target: set,
+    num_workers: int,
+    batch_size: int,
+    num_ncbi_keys: int,
+    num_openalex_keys: int,
+) -> tuple[int, int]:
+    total_batches = (len(target) + batch_size - 1) // batch_size
+    optimal_num_workers = max(num_ncbi_keys, num_openalex_keys)
+    if num_workers != optimal_num_workers:
+        num_workers = optimal_num_workers
+        logging.warning("using %d as num workers", optimal_num_workers)
+
+    return (num_workers, total_batches)
 
 
 def _normalize_val(v):
@@ -308,7 +546,7 @@ def _to_number(v):
         return None
 
 
-def _row_to_tuple(row: dict) -> tuple:
+def _pmid_row_to_tuple(row: dict) -> tuple:
     return (
         str(row.get("pmid", "")),
         _normalize_val(row.get("title")),
@@ -326,7 +564,7 @@ def _row_to_tuple(row: dict) -> tuple:
     )
 
 
-def _row_to_metrics_tuple(row: dict) -> tuple:
+def _pmid_row_to_metrics_tuple(row: dict) -> tuple:
     return (
         _to_number(row.get("citation_count")),
         _to_number(row.get("journal_h_index")),
@@ -335,4 +573,14 @@ def _row_to_metrics_tuple(row: dict) -> tuple:
         _to_number(row.get("journal_cited_by_count")),
         _to_number(row.get("journal_works_count")),
         str(row.get("pmid", "")),
+    )
+
+
+def _journal_row_to_tuple(journal: dict) -> tuple:
+    return (
+        _to_number(journal.get("journal_h_index")),
+        _to_number(journal.get("journal_i10_index")),
+        _to_number(journal.get("journal_2yr_mean_citedness")),
+        _to_number(journal.get("journal_cited_by_count")),
+        _to_number(journal.get("journal_works_count")),
     )
