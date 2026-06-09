@@ -17,3 +17,6 @@ dependencies = [
 override-dependencies = [
     "lxml==7.0.0a1",
 ]
+
+[tool.uv.sources]
+pysradb = { git = "https://github.com/0xMukesh/pysradb.git", rev = "enrichment" }
