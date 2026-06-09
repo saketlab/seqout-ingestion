@@ -6,12 +6,14 @@ import sys
 import humanfriendly
 
 
-class Datasources(enum.StrEnum):
+class Datasource(enum.StrEnum):
     Geo = "geo"
     Sra = "sra"
     Ena = "ena"
     ArrayExpress = "ae"
-    PubMed = "pubmed"
+
+
+STAGES = ["ingest", "backfill_pubmed_ids", "backfill_pubmed_meta"]
 
 
 def parse_config() -> argparse.Namespace:
@@ -20,15 +22,15 @@ def parse_config() -> argparse.Namespace:
         "--stage",
         type=str,
         required=True,
-        choices=["ingest", "backfill_pubmed"],
+        choices=STAGES,
         help="stage of the pipeline to run",
     )
     parser.add_argument(
         "--datasource",
         type=str,
         required=True,
-        choices=list(Datasources),
-        help="name of the datasources from where to pull data for ingest stage",
+        choices=list(Datasource),
+        help="name of the Datasource from where to pull data for ingest stage",
     )
     parser.add_argument(
         "--db-file",
@@ -66,6 +68,22 @@ def parse_config() -> argparse.Namespace:
         help="amount of data which is to be held in RAM per worker at once during any read/write phase",
     )
     parser.add_argument("--batch-size", type=int, default=2000, help="batch size")
+    parser.add_argument(
+        "--ncbi-keys-file",
+        type=str,
+        help="path to .txt file which contains ncbi api keys, one key per line",
+    )
+    parser.add_argument(
+        "--openalex-keys-file",
+        type=str,
+        help="path to .txt file which contains openalex api keys, one key per line",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="whether to only count and display the information or update the existing records also",
+    )
     parser.add_argument(
         "--stream",
         type=str,
@@ -114,15 +132,34 @@ def parse_config() -> argparse.Namespace:
         help="whether to skip download phase for per-study samples for ena ingest stage",
     )
     parser.add_argument(
-        "--pubmed-ncbi-api-keys",
-        type=str,
-        help="path to .txt file which contains ncbi api keys, one key per line",
-    )
-    parser.add_argument(
-        "--pubmed-dry-run",
+        "--pm-meta-update-metrics",
         action="store_true",
         default=False,
-        help="whether to only count and display the information of missing pubmed ids or update the existing records also",
+        help="update citation counts and journal metrics for existing records (instead of fetching new records)",
+    )
+    parser.add_argument(
+        "--pm-meta-fill-metrics",
+        action="store_true",
+        default=False,
+        help="only fetch metrics for records where citation_count or journal metrics are null",
+    )
+    parser.add_argument(
+        "--pm-meta-skip-journal-metrics",
+        action="store_true",
+        default=False,
+        help="skip openalex journal metrics (h-index, i10, etc.) and only fetch citation counts",
+    )
+    parser.add_argument(
+        "--pm-meta-update-journal-metrics",
+        action="store_true",
+        default=False,
+        help="looks up unique journals in the db via openalex and bulk-update all rows for each journal",
+    )
+    parser.add_argument(
+        "--pm-meta-refresh-all-journals",
+        action="store_true",
+        default=False,
+        help="with --pm-meta-update-journal-metrics: re-fetch all journals, not just those missing metrics.",
     )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])
