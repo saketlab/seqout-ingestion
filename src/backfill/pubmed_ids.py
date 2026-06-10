@@ -10,7 +10,7 @@ from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from backfill.backfill_utils import _chunked, _parse_pmid
-from config import Datasource
+from pipeline_types import Datasource
 
 DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
     Datasource.Sra: "sra_studies",
@@ -18,18 +18,21 @@ DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
     Datasource.ArrayExpress: "arrayexpress_experiments",
     Datasource.Ena: "ena_studies",
 }
+
 MISSING_QUERIES: dict[Datasource, str] = {
     Datasource.Sra: "SELECT accession FROM sra_studies WHERE (links IS NULL OR NOT json_valid(links) OR json_extract(links, '$.XREF_LINK.DB') != 'pubmed') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
     Datasource.Geo: "SELECT accession FROM geo_series WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
     Datasource.ArrayExpress: "SELECT accession FROM arrayexpress_experiments WHERE (pubmed_id IS NULL OR pubmed_id = '') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
     Datasource.Ena: "SELECT study_accession FROM ena_studies WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
 }
+
 HAS_ORIGINAL_PMID_QUERIES: dict[Datasource, str] = {
     Datasource.Sra: "SELECT COUNT(*) FROM sra_studies WHERE json_valid(links) AND json_extract(links, '$.XREF_LINK.DB') = 'pubmed' AND json_extract(links, '$.XREF_LINK.ID') IS NOT NULL",
     Datasource.Geo: "SELECT COUNT(*) FROM geo_series WHERE pubmed_id IS NOT NULL AND pubmed_id != '' AND pubmed_id != '[]'",
     Datasource.ArrayExpress: "SELECT COUNT(*) FROM arrayexpress_experiments WHERE pubmed_id IS NOT NULL AND pubmed_id != ''",
     Datasource.Ena: "SELECT 0",
 }
+
 BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
     Datasource.Sra: "SELECT COUNT(*) FROM sra_studies WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
     Datasource.Geo: "SELECT COUNT(*) FROM geo_series WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",

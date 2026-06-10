@@ -3,38 +3,33 @@ import logging
 import re
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
 from helpers import exec_query_from_file
-from unifier.unifier_config import UnifierConfig
 
 _UNIFIED_CATALOG_DIR = "unified_catalog"
 
 
-def build_unified_catalog(cfg: UnifierConfig):
-    if (
-        (not cfg.geo_db_file)
-        or (not cfg.sra_db_file)
-        or (not cfg.ena_db_file)
-        or (not cfg.ae_db_file)
-    ):
-        raise ValueError(
-            "all of these flags need to be passed: --geo-db-file, --sra-db-file, --ena-db-file and --ae-db-file"
-        )
-
-    if not cfg.output_dir:
-        raise ValueError("missing output dir")
-
-    output_dir = Path(cfg.output_dir) / _UNIFIED_CATALOG_DIR
+def build_unified_catalog(
+    base_output_dir: Path,
+    geo_db_file: Path,
+    sra_db_file: Path,
+    ena_db_file: Path,
+    ae_db_file: Path,
+    db_file: Optional[Path],
+    dump_parquet: bool,
+):
+    output_dir = base_output_dir / _UNIFIED_CATALOG_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    db_file = Path(cfg.db_file) if cfg.db_file else (output_dir / "unified_catalog.db")
+    db_file = db_file or (output_dir / "unified_catalog.db")
 
-    geo_dict = _load_geo(cfg.geo_db_file)
-    sra_dict = _load_sra(cfg.sra_db_file)
-    ena_dict = _load_ena(cfg.ena_db_file)
-    ae_dict = _load_ae(cfg.ae_db_file)
+    geo_dict = _load_geo(geo_db_file)
+    sra_dict = _load_sra(sra_db_file)
+    ena_dict = _load_ena(ena_db_file)
+    ae_dict = _load_ae(ae_db_file)
     catalog = _build_catalog_tuples(geo_dict, sra_dict, ena_dict, ae_dict)
 
     with sqlite3.Connection(db_file) as conn:
@@ -44,7 +39,7 @@ def build_unified_catalog(cfg: UnifierConfig):
         )
         conn.commit()
 
-        if cfg.dump_parquet:
+        if dump_parquet:
             df = pd.read_sql_query("SELECT * FROM unified_studies", conn)
             pq_path = output_dir / "unified_studies.parquet"
             df.to_parquet(pq_path)
@@ -54,7 +49,7 @@ def build_unified_catalog(cfg: UnifierConfig):
     logging.info(f"inserted {len(catalog)} rows ({size_mb:.2f} MB)")
 
 
-def _load_geo(geo_db_file: str) -> dict[str, tuple[str, str]]:
+def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
     with sqlite3.Connection(geo_db_file) as conn:
         rows = conn.execute(
             "SELECT accession, title, summary FROM geo_series"
@@ -67,7 +62,7 @@ def _load_geo(geo_db_file: str) -> dict[str, tuple[str, str]]:
     return result
 
 
-def _load_sra(sra_db_file: str) -> dict[str, tuple[str, str, str]]:
+def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str]]:
     with sqlite3.Connection(sra_db_file) as conn:
         rows = conn.execute(
             "SELECT accession, alias, title, abstract FROM sra_studies"
@@ -84,7 +79,7 @@ def _load_sra(sra_db_file: str) -> dict[str, tuple[str, str, str]]:
     return result
 
 
-def _load_ena(ena_db_file: str) -> dict[str, tuple[str, str, str, str]]:
+def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
     with sqlite3.Connection(ena_db_file) as conn:
         rows = conn.execute(
             "SELECT study_accession, secondary_study_accession, geo_accession, study_title, study_description FROM ena_studies"
@@ -102,7 +97,7 @@ def _load_ena(ena_db_file: str) -> dict[str, tuple[str, str, str, str]]:
     return result
 
 
-def _load_ae(ae_db_file: str) -> dict[str, tuple[str, str, list[dict]]]:
+def _load_ae(ae_db_file: Path) -> dict[str, tuple[str, str, list[dict]]]:
     with sqlite3.Connection(ae_db_file) as conn:
         rows = conn.execute(
             "SELECT accession, title, description, external_links FROM arrayexpress_experiments"

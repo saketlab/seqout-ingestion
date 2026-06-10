@@ -410,7 +410,7 @@ def _ingest_table_to_sqlite(
                 total += 1
     seen.clear()
 
-    with tqdm(total=total, unit=" accession", desc=desc) as pbar:
+    with tqdm(total=total, unit="accession", desc=desc) as pbar:
         cursor = conn.cursor()
         table = key_col_to_table[key_col]
         sql = f"INSERT OR IGNORE INTO {table} ({', '.join(fields)}) VALUES ({', '.join('?' * len(fields))})"

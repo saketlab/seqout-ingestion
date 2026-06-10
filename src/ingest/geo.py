@@ -311,7 +311,7 @@ def _get_series(root: ET.Element) -> list[tuple] | None:
     pubmed_ids = json.dumps(pubmed_ids_list) if pubmed_ids_list else None
     relations_raw = _et_to_dict(series.findall(_wrap_ns("Relation")))
     relations = json.dumps(relations_raw) if relations_raw else None
-    sample_refs_raw = _et_to_dict(series.findall(_wrap_ns("Sample-Refs")))
+    sample_refs_raw = _et_to_dict(series.findall(_wrap_ns("Sample-Ref")))
     sample_refs = json.dumps(sample_refs_raw) if sample_refs_raw else None
 
     title = _findtext(series, "Title")
@@ -543,7 +543,7 @@ def _run_pipeline(
 
     pbar = tqdm(
         total=num_accessions,
-        unit=" accession",
+        unit="accession",
         desc="processing accessions",
         mininterval=2.0,
     )

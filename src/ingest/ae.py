@@ -121,7 +121,7 @@ def _fetch_accessions(
 
     with (
         ThreadPoolExecutor(num_workers) as pool,
-        tqdm(total=num_days, unit=" day", desc="fetching accessions in range") as pbar,
+        tqdm(total=num_days, unit="day", desc="fetching accessions in range") as pbar,
     ):
         futures = [pool.submit(_worker, b) for b in batches]
 
@@ -156,7 +156,7 @@ def _download_study_metadatas(
     with (
         ThreadPoolExecutor(num_workers) as pool,
         tqdm(
-            total=len(accessions), unit=" accession", desc="downloading study metadata"
+            total=len(accessions), unit="accession", desc="downloading study metadata"
         ) as pbar,
     ):
         futures = [
@@ -209,7 +209,7 @@ def _download_magetab_files(output_dir: Path, num_workers: int):
 
     with (
         ThreadPoolExecutor(num_workers) as pool,
-        tqdm(total=len(files), unit=" file", desc="downloading magetab files") as pbar,
+        tqdm(total=len(files), unit="file", desc="downloading magetab files") as pbar,
     ):
         futures = [
             pool.submit(_download_worker, accession, filename)
@@ -641,7 +641,7 @@ def _process_accessions(
     with (
         tqdm(
             total=len(accessions),
-            unit=" accession",
+            unit="accession",
             desc="ingesting accessions' data to sqlite",
         ) as pbar,
         sqlite3.Connection(db_file) as conn,

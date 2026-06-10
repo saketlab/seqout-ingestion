@@ -13,8 +13,8 @@ import tqdm
 from pysradb.sraweb import SRAweb
 
 from backfill.backfill_utils import _chunked, _parse_pmid
-from config import Datasource
 from helpers import exec_query_from_file
+from pipeline_types import Datasource
 
 _PUBMED_META_OUTPUT_DIR = "pubmed_meta"
 
@@ -35,6 +35,7 @@ PMID_EXTRACT_QUERIES = {
         "SELECT DISTINCT pubmed_id_pysradb FROM ena_studies WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
     ],
 }
+
 UPSERT_SQL = """
 INSERT INTO pubmed_metadata (
     pmid, title, journal, doi, pub_date, authors, issn,
@@ -55,6 +56,7 @@ ON CONFLICT (pmid) DO UPDATE SET
     journal_cited_by_count = EXCLUDED.journal_cited_by_count,
     journal_works_count = EXCLUDED.journal_works_count;
 """
+
 UPDATE_METRICS_SQL = """
 UPDATE pubmed_metadata SET
     citation_count             = COALESCE(?, citation_count),
@@ -65,6 +67,7 @@ UPDATE pubmed_metadata SET
     journal_works_count        = COALESCE(?, journal_works_count)
 WHERE pmid = ?;
 """
+
 JOURNAL_METRICS_UPDATE_SQL = """
 UPDATE pubmed_metadata SET
     journal_h_index            = ?,
