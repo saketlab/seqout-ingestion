@@ -2,13 +2,14 @@ import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
-from backfill._utils import _chunked, _parse_pmid
-from backfill.backfill_config import BackfillConfig
+from backfill.backfill_utils import _chunked, _parse_pmid
 from config import Datasource
 
 DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
@@ -37,27 +38,33 @@ BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
 }
 
 
-def backfill_pubmed_ids(cfg: BackfillConfig):
+def backfill_pubmed_ids(
+    geo_db_file: Optional[Path],
+    sra_db_file: Optional[Path],
+    ena_db_file: Optional[Path],
+    ae_db_file: Optional[Path],
+    ncbi_keys_file: Path,
+    num_workers: int,
+    batch_size: int,
+    is_dry_run: bool,
+):
     if (
-        (not cfg.geo_db_file)
-        and (not cfg.sra_db_file)
-        and (not cfg.ena_db_file)
-        and (not cfg.ae_db_file)
+        (not geo_db_file)
+        and (not sra_db_file)
+        and (not ena_db_file)
+        and (not ae_db_file)
     ):
         raise ValueError(
             "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
         )
 
-    if not cfg.ncbi_keys_file:
-        raise ValueError("missing ncbi api keys file flag")
-
-    raw_mapping: dict[Datasource, str | None] = {
-        Datasource.Geo: cfg.geo_db_file,
-        Datasource.Sra: cfg.sra_db_file,
-        Datasource.Ena: cfg.ena_db_file,
-        Datasource.ArrayExpress: cfg.ae_db_file,
+    raw_mapping: dict[Datasource, Path | None] = {
+        Datasource.Geo: geo_db_file,
+        Datasource.Sra: sra_db_file,
+        Datasource.Ena: ena_db_file,
+        Datasource.ArrayExpress: ae_db_file,
     }
-    mapping: dict[Datasource, str] = {
+    mapping: dict[Datasource, Path] = {
         k: v for k, v in raw_mapping.items() if v is not None
     }
 
@@ -102,15 +109,15 @@ def backfill_pubmed_ids(cfg: BackfillConfig):
         (total_missing * 100) / total if total else 0,
     )
 
-    if cfg.is_dry_run or total_missing == 0:
+    if is_dry_run or total_missing == 0:
         return
 
-    with open(str(cfg.ncbi_keys_file), "r") as f:
+    with open(str(ncbi_keys_file), "r") as f:
         keys = f.read().splitlines()
 
     optimal_num_workers = len(keys)
-    num_workers = cfg.num_workers
-    if cfg.num_workers != optimal_num_workers:
+    num_workers = num_workers
+    if num_workers != optimal_num_workers:
         num_workers = optimal_num_workers
         logging.warning("using %d as num workers", num_workers)
 
@@ -132,7 +139,7 @@ def backfill_pubmed_ids(cfg: BackfillConfig):
                     datasource,
                     worker_data[i],
                     db_file,
-                    cfg.batch_size,
+                    batch_size,
                     i,
                 )
                 for i in range(num_workers)
@@ -146,7 +153,7 @@ def _worker(
     api_key: str,
     datasource: Datasource,
     data: list[str],
-    db_file: str,
+    db_file: Path,
     batch_size: int,
     worker_id: int = 0,
 ):

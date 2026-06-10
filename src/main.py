@@ -3,6 +3,7 @@ from typing import Literal, Optional
 
 import typer
 
+from cli.backfill import backfill_app
 from cli.ingest import ingest_app
 
 cli = typer.Typer()
@@ -32,6 +33,7 @@ def main(
 
 
 cli.add_typer(ingest_app, name="ingest")
+cli.add_typer(backfill_app, name="backfill")
 
 if __name__ == "__main__":
     cli()

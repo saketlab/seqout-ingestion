@@ -5,14 +5,14 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from multiprocessing.sharedctypes import Synchronized
+from pathlib import Path
 from typing import Callable, Optional
 
 import pandas as pd
 import tqdm
 from pysradb.sraweb import SRAweb
 
-from backfill._utils import _chunked, _parse_pmid
-from backfill.backfill_config import BackfillConfig
+from backfill.backfill_utils import _chunked, _parse_pmid
 from config import Datasource
 from helpers import exec_query_from_file
 
@@ -86,45 +86,88 @@ class Counters:
     journals: Optional[Synchronized[int]]
 
 
-def backfill_pubmed_meta(cfg: BackfillConfig):
+def backfill_pubmed_meta(
+    base_output_dir: Path,
+    geo_db_file: Optional[Path],
+    sra_db_file: Optional[Path],
+    ena_db_file: Optional[Path],
+    ae_db_file: Optional[Path],
+    db_file: Optional[Path],
+    ncbi_keys_file: Path,
+    openalex_keys_file: Path,
+    num_workers: int,
+    batch_size: int,
+    fill_metrics: bool,
+    update_metrics: bool,
+    skip_journal_metrics: bool,
+    update_journal_metrics: bool,
+    refresh_all_journals_metrics: bool,
+    is_dry_run: bool,
+):
     if (
-        (not cfg.geo_db_file)
-        and (not cfg.sra_db_file)
-        and (not cfg.ena_db_file)
-        and (not cfg.ae_db_file)
+        (not geo_db_file)
+        and (not sra_db_file)
+        and (not ena_db_file)
+        and (not ae_db_file)
     ):
         raise ValueError(
             "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
         )
 
-    if not cfg.ncbi_keys_file:
-        raise ValueError("missing ncbi api keys file flag")
+    output_dir = base_output_dir / _PUBMED_META_OUTPUT_DIR
+    output_dir.mkdir(exist_ok=True, parents=True)
+    db_file = db_file or (output_dir / "pubmed_meta.db")
 
-    if not cfg.openalex_keys_file:
-        raise ValueError("missing openalex api keys flag")
-
-    raw_mapping: dict[Datasource, str | None] = {
-        Datasource.Geo: cfg.geo_db_file,
-        Datasource.Sra: cfg.sra_db_file,
-        Datasource.Ena: cfg.ena_db_file,
-        Datasource.ArrayExpress: cfg.ae_db_file,
+    raw_mapping: dict[Datasource, Path | None] = {
+        Datasource.Geo: geo_db_file,
+        Datasource.Sra: sra_db_file,
+        Datasource.Ena: ena_db_file,
+        Datasource.ArrayExpress: ae_db_file,
     }
-    mapping: dict[Datasource, str] = {
+    mapping: dict[Datasource, Path] = {
         k: v for k, v in raw_mapping.items() if v is not None
     }
 
-    exec_query_from_file("tables/pubmed_meta_tables.sql", cfg.db_file)
+    exec_query_from_file("tables/pubmed_meta_tables.sql", db_file)
 
-    for datasource, db_file in mapping.items():
-        if cfg.update_journal_metrics:
-            _process_via_per_journal_lookup(cfg, str(cfg.db_file))
+    for datasource, ds_db_file in mapping.items():
+        if update_journal_metrics:
+            _process_via_per_journal_lookup(
+                db_file,
+                ncbi_keys_file,
+                openalex_keys_file,
+                num_workers,
+                batch_size,
+                refresh_all_journals_metrics,
+                is_dry_run,
+            )
         else:
-            _process_via_per_pmid_lookup(cfg, datasource, db_file, cfg.db_file)
+            _process_via_per_pmid_lookup(
+                datasource,
+                ds_db_file,
+                db_file,
+                ncbi_keys_file,
+                openalex_keys_file,
+                num_workers,
+                batch_size,
+                fill_metrics,
+                update_metrics,
+                skip_journal_metrics,
+                is_dry_run,
+            )
 
 
-def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: str):
-    with sqlite3.Connection(meta_db_file) as conn:
-        if cfg.refresh_all_journals_metrics:
+def _process_via_per_journal_lookup(
+    db_file: Path,
+    ncbi_keys_file: Path,
+    openalex_keys_file: Path,
+    num_workers: int,
+    batch_size: int,
+    refresh_all_journals_metrics: bool,
+    is_dry_run: bool,
+):
+    with sqlite3.Connection(db_file) as conn:
+        if refresh_all_journals_metrics:
             target = _collect_all_journals(conn)
         else:
             target = _collect_journals_with_missing_metrics(conn)
@@ -133,19 +176,19 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: str):
     logging.info(
         "found %d unique journals to look up (refresh_all=%s)",
         total,
-        cfg.refresh_all_journals_metrics,
+        refresh_all_journals_metrics,
     )
 
-    if cfg.is_dry_run or not target:
+    if is_dry_run or not target:
         return
 
-    with open(cfg.ncbi_keys_file, "r") as f:
+    with open(ncbi_keys_file, "r") as f:
         ncbi_keys = f.read().splitlines()
-    with open(cfg.openalex_keys_file, "r") as f:
+    with open(openalex_keys_file, "r") as f:
         openalex_keys = f.read().splitlines()
 
     num_workers, _ = _calc_num_workers_and_batches(
-        target, cfg.num_workers, cfg.batch_size, len(ncbi_keys), len(openalex_keys)
+        target, num_workers, batch_size, len(ncbi_keys), len(openalex_keys)
     )
 
     worker_data: list[list[tuple[str, str]]] = [[] for _ in range(num_workers)]
@@ -163,10 +206,10 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: str):
 
     partial_worker_fn = functools.partial(
         _journal_lookup_worker,
-        db_file=meta_db_file,
+        db_file=db_file,
         sql=JOURNAL_METRICS_UPDATE_SQL,
         to_tuple=_journal_row_to_tuple,
-        batch_size=cfg.batch_size,
+        batch_size=batch_size,
         counters=counters,
     )
 
@@ -188,18 +231,28 @@ def _process_via_per_journal_lookup(cfg: BackfillConfig, meta_db_file: str):
 
 
 def _process_via_per_pmid_lookup(
-    cfg: BackfillConfig, datasource: Datasource, ds_db_file: str, meta_db_file: str
+    datasource: Datasource,
+    datasource_db_file: Path,
+    meta_db_file: Path,
+    ncbi_keys_file: Path,
+    openalex_keys_file: Path,
+    num_workers: int,
+    batch_size: int,
+    fill_metrics: bool,
+    update_metrics: bool,
+    skip_journal_metrics: bool,
+    is_dry_run: bool,
 ):
     logging.info("processing %s datasource...", datasource)
 
-    with sqlite3.Connection(ds_db_file) as conn:
+    with sqlite3.Connection(datasource_db_file) as conn:
         all_pmids = _collect_all_pmids(conn, datasource)
 
     with sqlite3.Connection(meta_db_file) as meta_conn:
         existing_pmids = _collect_existing_pmids(meta_conn)
         log_prefix = f"pmids: {len(all_pmids)} unique, {len(existing_pmids)} already have metadata"
 
-        if cfg.fill_metrics:
+        if fill_metrics:
             missing_metrics = _collect_pmids_with_missing_metrics(meta_conn)
             target = all_pmids & missing_metrics
             logging.info(
@@ -208,31 +261,31 @@ def _process_via_per_pmid_lookup(
                 len(missing_metrics),
                 len(target),
             )
-        elif cfg.update_metrics:
+        elif update_metrics:
             target = all_pmids & existing_pmids
             logging.info("%s, updating metrics for %d", log_prefix, len(target))
         else:
             target = all_pmids - existing_pmids
             logging.info("%s, %d to fetch", log_prefix, len(target))
 
-    if cfg.is_dry_run or not target:
+    if is_dry_run or not target:
         return
 
-    with open(cfg.ncbi_keys_file, "r") as f:
+    with open(ncbi_keys_file, "r") as f:
         ncbi_keys = f.read().splitlines()
-    with open(cfg.openalex_keys_file, "r") as f:
+    with open(openalex_keys_file, "r") as f:
         openalex_keys = f.read().splitlines()
 
     num_workers, total_batches = _calc_num_workers_and_batches(
-        target, cfg.num_workers, cfg.batch_size, len(ncbi_keys), len(openalex_keys)
+        target, num_workers, batch_size, len(ncbi_keys), len(openalex_keys)
     )
 
     worker_data: list[list[str]] = [[] for _ in range(num_workers)]
     for i, pmid in enumerate(target):
         worker_data[i % num_workers].append(pmid)
 
-    sql = UPDATE_METRICS_SQL if cfg.update_metrics else UPSERT_SQL
-    to_tuple = _pmid_row_to_metrics_tuple if cfg.update_metrics else _pmid_row_to_tuple
+    sql = UPDATE_METRICS_SQL if update_metrics else UPSERT_SQL
+    to_tuple = _pmid_row_to_metrics_tuple if update_metrics else _pmid_row_to_tuple
 
     counters = Counters(
         total=mp.Value("i", 0),
@@ -248,8 +301,8 @@ def _process_via_per_pmid_lookup(
         db_file=meta_db_file,
         sql=sql,
         to_tuple=to_tuple,
-        batch_size=cfg.batch_size,
-        skip_journal_metrics=cfg.skip_journal_metrics,
+        batch_size=batch_size,
+        skip_journal_metrics=skip_journal_metrics,
         counters=counters,
     )
 
@@ -304,7 +357,7 @@ def _worker_loop(
 
 
 def _journal_lookup_worker(
-    db_file: str,
+    db_file: Path,
     data: list[tuple[str, str]],
     ncbi_key: str,
     openalex_key: str,
@@ -388,7 +441,7 @@ def _journal_lookup_worker(
 
 
 def _pmid_lookup_worker(
-    db_file: str,
+    db_file: Path,
     data: list[str],
     ncbi_key: str,
     openalex_key: str,
