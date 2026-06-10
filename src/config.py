@@ -6,6 +6,13 @@ import sys
 import humanfriendly
 
 
+class Stage(enum.StrEnum):
+    Ingest = "ingest"
+    BackfillPubmedIds = "backfill_pubmed_ids"
+    BackfillPubmedMeta = "backfill_pubmed_meta"
+    BuildUnifiedCatalog = "build_unified_catalog"
+
+
 class Datasource(enum.StrEnum):
     Geo = "geo"
     Sra = "sra"
@@ -14,16 +21,13 @@ class Datasource(enum.StrEnum):
     _None = "none"
 
 
-STAGES = ["ingest", "backfill_pubmed_ids", "backfill_pubmed_meta"]
-
-
 def parse_config() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="seqout ingestion toolkit")
     parser.add_argument(
         "--stage",
-        type=str,
+        type=Stage,
         required=True,
-        choices=STAGES,
+        choices=list(Stage),
         help="stage of the pipeline to run",
     )
     parser.add_argument(

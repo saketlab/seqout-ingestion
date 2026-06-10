@@ -1,0 +1,367 @@
+import json
+import logging
+import re
+import sqlite3
+from pathlib import Path
+
+from helpers import exec_query_from_file
+from unifier.unifier_config import UnifierConfig
+
+_UNIFIED_CATALOG_DIR = "unified_catalog"
+
+
+def build_unified_catalog(cfg: UnifierConfig):
+    if (
+        (not cfg.geo_db_file)
+        or (not cfg.sra_db_file)
+        or (not cfg.ena_db_file)
+        or (not cfg.ae_db_file)
+    ):
+        raise ValueError(
+            "all of these flags need to be passed: --geo-db-file, --sra-db-file, --ena-db-file and --ae-db-file"
+        )
+
+    if not cfg.output_dir:
+        raise ValueError("missing output dir")
+
+    output_dir = Path(cfg.output_dir) / _UNIFIED_CATALOG_DIR
+    output_dir.mkdir(exist_ok=True, parents=True)
+
+    db_file = Path(cfg.db_file) if cfg.db_file else (output_dir / "unified_catalog.db")
+
+    geo_dict = _load_geo(cfg.geo_db_file)
+    sra_dict = _load_sra(cfg.sra_db_file)
+    ena_dict = _load_ena(cfg.ena_db_file)
+    ae_dict = _load_ae(cfg.ae_db_file)
+    catalog = _build_catalog_tuples(geo_dict, sra_dict, ena_dict, ae_dict)
+
+    with sqlite3.Connection(db_file) as conn:
+        exec_query_from_file("tables/unified_studies_tables.sql", conn=conn)
+        conn.executemany("INSERT INTO unified_studies VALUES (?, ?, ?, ?, ?)", catalog)
+        conn.commit()
+
+    size_mb = db_file.stat().st_size / 1024**2
+    logging.info(f"inserted {len(catalog)} rows ({size_mb:.2f} MB)")
+
+
+def _load_geo(geo_db_file: str) -> dict[str, tuple[str, str]]:
+    with sqlite3.Connection(geo_db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, title, summary FROM geo_series"
+        ).fetchall()
+
+    result = {}
+    for acc, title, summary in rows:
+        result[acc] = (_clean_string(title), _clean_string(summary))
+
+    return result
+
+
+def _load_sra(sra_db_file: str) -> dict[str, tuple[str, str, str]]:
+    with sqlite3.Connection(sra_db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, alias, title, abstract FROM sra_studies"
+        ).fetchall()
+
+    result = {}
+    for acc, alias, title, abstract in rows:
+        result[acc] = (
+            _clean_string(alias),
+            _clean_string(title),
+            _clean_string(abstract),
+        )
+
+    return result
+
+
+def _load_ena(ena_db_file: str) -> dict[str, tuple[str, str, str, str]]:
+    with sqlite3.Connection(ena_db_file) as conn:
+        rows = conn.execute(
+            "SELECT study_accession, secondary_study_accession, geo_accession, study_title, study_description FROM ena_studies"
+        ).fetchall()
+
+    result = {}
+    for study_acc, sec_acc, geo_acc, title, description in rows:
+        result[study_acc] = (
+            _clean_string(study_acc),
+            _clean_string(geo_acc),
+            _clean_string(title),
+            _strip_html(description),
+        )
+
+    return result
+
+
+def _load_ae(ae_db_file: str) -> dict[str, tuple[str, str, list[dict]]]:
+    with sqlite3.Connection(ae_db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, title, description, external_links FROM arrayexpress_experiments"
+        ).fetchall()
+
+    result = {}
+    for acc, title, desc, links_json in rows:
+        links = []
+        if links_json:
+            try:
+                links = json.loads(links_json)
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        result[acc] = (_clean_string(title), _clean_string(desc), links)
+    return result
+
+
+# future reference: https://github.com/saketlab/pysradb-ingestion/blob/d117090430a6e2b095d5fda71c65e3275db10e6a/embed/build_unified_catalog.py#L142-L394
+def _build_catalog_tuples(
+    geo_dict: dict, sra_dict: dict, ena_dict: dict, ae_dict: dict
+) -> list[tuple[str, str, str, str, str]]:
+    # sra alias -> sra accession(s) (reverse: given a gse or prjna, find srps)
+    # multiple srps can map to the same alias (e.g. two srps for one gse)
+    alias_to_srps: dict[str, list[str]] = {}
+    srp_to_alias: dict[str, str] = {}
+    for srp, (alias, _, _) in sra_dict.items():
+        if alias:
+            alias_to_srps.setdefault(alias, []).append(srp)
+            srp_to_alias[srp] = alias
+
+    # ena: geo_accession -> list of ena prj accessions
+    geo_to_ena: dict[str, list[str]] = {}
+    # ena: secondary (srp/erp/drp) -> ena prj accession
+    srp_to_ena: dict[str, str] = {}
+    for prj, (secondary, geo_acc, _, _) in ena_dict.items():
+        if geo_acc:
+            geo_to_ena.setdefault(geo_acc, []).append(prj)
+        if secondary:
+            srp_to_ena[secondary] = prj
+
+    # ae: e-geod-xxx -> gsexxx
+    ae_geod_to_gse: dict[str, str] = {}
+    # ae: non-geod accession -> ena accessions (from external_links type=ena)
+    ae_to_ena_links: dict[str, list[str]] = {}
+    for ae_acc, (_, _, links) in ae_dict.items():
+        if ae_acc.startswith("E-GEOD-"):
+            gse_num = ae_acc[len("E-GEOD-") :]
+            ae_geod_to_gse[ae_acc] = f"GSE{gse_num}"
+        else:
+            ena_accs = []
+            for link in links:
+                if isinstance(link, dict) and link.get("type") == "ENA":
+                    url = link.get("url", "")
+                    if url:
+                        ena_accs.append(url)
+            if ena_accs:
+                ae_to_ena_links[ae_acc] = ena_accs
+
+    # reverse: ena accession -> ae accession (for non-geod ae)
+    ena_to_ae: dict[str, str] = {}
+    for ae_acc, ena_accs in ae_to_ena_links.items():
+        for ena_acc in ena_accs:
+            ena_to_ae[ena_acc] = ae_acc
+
+    claimed: set[str] = set()
+    catalog: list[tuple[str, str, str, str, str]] = []
+
+    # pre-claiming ae-linked sra entries
+    # ae external_links contain erp accessions that also exist in sra.
+    # since ae has richer metadata for these european studies, pre-claim
+    # them so sra skips them. also handle sra entries whose alias is an
+    # ae accession (e.g. erp152569 alias=e-mtab-13444).
+    ae_preclaim: set[str] = set()
+    for ae_acc in ae_dict:
+        if ae_acc in claimed:
+            continue
+        if ae_acc.startswith("E-GEOD-"):
+            continue  # these are handled by geo
+        ena_accs = ae_to_ena_links.get(ae_acc, [])
+        for ena_acc in ena_accs:
+            # the ena link (e.g. erp123) may be in sra db
+            if ena_acc in sra_dict:
+                ae_preclaim.add(ena_acc)
+            # the ena link's prj parent may have a secondary that's in sra
+            if ena_acc in srp_to_ena:
+                prj = srp_to_ena[ena_acc]
+                if prj in ena_dict:
+                    sec = ena_dict[prj][0]
+                    if sec and sec in sra_dict:
+                        ae_preclaim.add(sec)
+
+    # also find sra entries whose alias is an ae accession
+    for srp, (alias, _, _) in sra_dict.items():
+        if alias and alias in ae_dict and not alias.startswith("E-GEOD-"):
+            ae_preclaim.add(srp)
+
+    claimed.update(ae_preclaim)
+    if ae_preclaim:
+        logging.info(f"  pre-claimed {len(ae_preclaim):,} sra entries for arrayexpress")
+
+    # 1. processing geo (highest priority)
+    logging.info("processing geo ...")
+    for gse, (title, desc) in geo_dict.items():
+        aliases: dict[str, str] = {}
+
+        # find sra alias(es) -- may be multiple srps for one gse
+        srps = alias_to_srps.get(gse, [])
+        for srp in srps:
+            aliases.setdefault("sra", srp)  # store first srp
+            claimed.add(srp)
+            # sra entry has a bioproject alias (prjna) -> store and claim from ena
+            bp_alias = srp_to_alias.get(srp, "")
+            if bp_alias and bp_alias != gse and bp_alias != srp:
+                aliases.setdefault("bioproject", bp_alias)
+            # if this srp maps to an ena prj, claim it
+            if srp in srp_to_ena:
+                prj = srp_to_ena[srp]
+                aliases.setdefault("ena", prj)
+                claimed.add(prj)
+
+        # find ena alias(es) via geo_accession
+        ena_prjs = geo_to_ena.get(gse, [])
+        for prj in ena_prjs:
+            aliases.setdefault("ena", prj)
+            claimed.add(prj)
+
+        # find arrayexpress e-geod alias
+        ae_acc = f"E-GEOD-{gse[3:]}"
+        if ae_acc in ae_dict:
+            aliases["arrayexpress"] = ae_acc
+            claimed.add(ae_acc)
+
+        combined_text = f"{title}. {desc}".strip(". ")
+        if combined_text:
+            catalog.append(
+                (gse, "geo", title, desc, json.dumps(aliases, separators=(",", ":")))
+            )
+
+        claimed.add(gse)
+
+    logging.info(f"  geo: {len([r for r in catalog if r[1] == 'geo']):,} canonical")
+
+    # 2. processing sra
+    # skip gse-aliased, those are already claimed by geo
+    logging.info("processing sra ...")
+    sra_count = 0
+    for srp, (alias, title, abstract) in sra_dict.items():
+        if srp in claimed:
+            continue
+
+        aliases = {}
+
+        # sra alias is typically prjna -> check if that prjna is in ena
+        # skip self-aliases (drp/erp entries where alias == accession)
+        if alias and alias != srp:
+            aliases["bioproject"] = alias
+            # find ena entry via the srp's secondary accession reverse lookup
+            ena_prj = srp_to_ena.get(srp)
+            if ena_prj:
+                aliases["ena"] = ena_prj
+                claimed.add(ena_prj)
+            # also check if alias itself (prjna) is an ena study_accession
+            if alias in ena_dict:
+                if "ena" not in aliases:
+                    aliases["ena"] = alias
+                claimed.add(alias)
+        else:
+            # Even without a useful alias, check reverse SRP->ENA lookup
+            ena_prj = srp_to_ena.get(srp)
+            if ena_prj:
+                aliases["ena"] = ena_prj
+                claimed.add(ena_prj)
+
+        combined_text = f"{title}. {abstract}".strip(". ")
+        if combined_text:
+            catalog.append(
+                (
+                    srp,
+                    "sra",
+                    title,
+                    abstract,
+                    json.dumps(aliases, separators=(",", ":")),
+                )
+            )
+            sra_count += 1
+
+        claimed.add(srp)
+
+    logging.info(f"  sra: {sra_count:,} canonical")
+
+    # 3. processing arrayexpress
+    # note: ae external_links contain ena accessions (erp*). these erp*
+    # accessions may also exist as study_accession in ena db (as prjeb*)
+    # and as accessions in the sra db. we must claim all of them.
+    logging.info("processing arrayexpress...")
+    ae_count = 0
+    for ae_acc, (title, desc, links) in ae_dict.items():
+        if ae_acc in claimed:
+            continue
+
+        aliases = {}
+
+        # claim linked ena accessions
+        ena_accs = ae_to_ena_links.get(ae_acc, [])
+        for ena_acc in ena_accs:
+            aliases.setdefault("ena", ena_acc)
+            claimed.add(ena_acc)
+            # the ena external_link value (e.g. erp123456) might be:
+            # a) a secondary_study_accession in ena db -> claim its prj parent
+            # b) a study_accession in ena db directly
+            # c) also present as an accession in the sra db
+            if ena_acc in ena_dict:
+                # it's an ena study_accession (prj*), claim its secondary too
+                secondary = ena_dict[ena_acc][0]
+                if secondary:
+                    aliases.setdefault("sra", secondary)
+                    claimed.add(secondary)
+            # check if it's a secondary accession (erp*) that maps to a prj
+            if ena_acc in srp_to_ena:
+                prj = srp_to_ena[ena_acc]
+                claimed.add(prj)
+            # also claim from sra db if the erp exists there
+            if ena_acc in sra_dict:
+                claimed.add(ena_acc)
+                aliases.setdefault("sra", ena_acc)
+
+        combined_text = f"{title}. {desc}".strip(". ")
+        if combined_text:
+            catalog.append(
+                (ae_acc, "ae", title, desc, json.dumps(aliases, separators=(",", ":")))
+            )
+            ae_count += 1
+
+        claimed.add(ae_acc)
+
+    logging.info(f"  arrayexpress: {ae_count:,} canonical")
+
+    # 4. processing ena
+    logging.info("processing ena...")
+    ena_count = 0
+    for prj, (secondary, geo_acc, title, desc) in ena_dict.items():
+        if prj in claimed:
+            continue
+
+        aliases = {}
+        if secondary:
+            aliases["sra"] = secondary
+            # if the secondary srp is in sra but wasn't claimed (edge case), claim it
+            if secondary in sra_dict and secondary not in claimed:
+                claimed.add(secondary)
+
+        combined_text = f"{title}. {desc}".strip(". ")
+        if combined_text:
+            catalog.append(
+                (prj, "ena", title, desc, json.dumps(aliases, separators=(",", ":")))
+            )
+            ena_count += 1
+
+        claimed.add(prj)
+
+    logging.info(f"  ena: {ena_count:,} canonical")
+    return catalog
+
+
+def _clean_string(s) -> str:
+    return (s or "").strip()
+
+
+def _strip_html(text: str) -> str:
+    regexp = re.compile(r"<[^>]+>")
+    return regexp.sub("", _clean_string(text)).strip()
