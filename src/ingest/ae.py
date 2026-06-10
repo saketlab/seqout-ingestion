@@ -6,19 +6,26 @@ import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional
 
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
-from ingest.ingest_config import IngestionConfig
 
 _AE_OUTPUT_DIR = "arrayexpress"
 _BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
 _BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
 
 
-def ingest_ae(cfg: IngestionConfig):
-    output_dir = Path(cfg.output_dir) / _AE_OUTPUT_DIR
+def ingest_ae(
+    base_output_dir: Path,
+    db_file: Optional[Path],
+    start_date: datetime.date,
+    end_date: datetime.date,
+    num_workers: int,
+    batch_size: int,
+):
+    output_dir = base_output_dir / _AE_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
@@ -27,16 +34,14 @@ def ingest_ae(cfg: IngestionConfig):
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = (
-        Path(cfg.db_file) if cfg.db_file else (db_dir / f"ae_metadata_{date_str}.db")
-    )
+    db_file = db_file or (db_dir / f"ae_metadata_{date_str}.db")
 
-    accessions = _fetch_accessions(cfg.start_date, cfg.end_date, cfg.num_workers)
-    _download_study_metadatas(accessions, cfg.num_workers, data_dir)
-    _download_magetab_files(data_dir, cfg.num_workers)
+    accessions = _fetch_accessions(start_date, end_date, num_workers)
+    _download_study_metadatas(accessions, num_workers, data_dir)
+    _download_magetab_files(data_dir, num_workers)
 
     exec_query_from_file("tables/ae_tables.sql", db_file)
-    _process_accessions(accessions, db_file, data_dir, cfg.num_workers, cfg.batch_size)
+    _process_accessions(accessions, db_file, data_dir, num_workers, batch_size)
     exec_query_from_file("indexes/ae_indexes.sql", db_file)
 
 
@@ -508,6 +513,7 @@ def _merge_json_and_idf(json_data: dict | None, idf_data: dict | None) -> dict |
     return result
 
 
+# credits: mr. sonnet 4.6
 def normalize_sdrf_col(raw: str) -> str:
     # strip edges, lowercase, collapse whitespace
     # "  Source Name  " -> "source name"

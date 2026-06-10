@@ -20,4 +20,5 @@ PYTHON_GIL=1 python ./src/main.py --stage=build_unified_catalog \
     --geo-db-file=./data/geo/db/2026-06-08/geo_metadata_2026-06-08.db \
     --ena-db-file=./data/ena/db/2026-06-08/ena_metadata_2026-06-08.db \
     --ae-db-file=./data/arrayexpress/db/2026-06-08/ae_metadata_2026-06-08.db \
-    --output-dir=./data --workers=10 --batch-size=100 --chunk-size="10 MiB"
+    --output-dir=./data --workers=10 --batch-size=100 --chunk-size="10 MiB" \
+    --dump-parquet

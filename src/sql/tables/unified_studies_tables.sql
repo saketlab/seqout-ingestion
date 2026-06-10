@@ -1,4 +1,4 @@
-CREATE TABLE unified_studies (
+CREATE TABLE IF NOT EXISTS unified_studies (
     canonical_accession TEXT PRIMARY KEY,
     source              TEXT NOT NULL,
     title               TEXT,

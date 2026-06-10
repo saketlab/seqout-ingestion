@@ -1,14 +1,14 @@
+import datetime
 import json
 import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime
 from pathlib import Path
+from typing import Optional
 
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
-from ingest.ingest_config import IngestionConfig
 
 logging.getLogger("urllib3.connectionpool").setLevel(
     logging.WARNING
@@ -18,7 +18,7 @@ _ENA_OUTPUT_DIR = "ena"
 _ENA_PORTAL_API_BASE_URL = "https://www.ebi.ac.uk/ena/portal/api"
 
 
-STUDY_FIELDS = [
+_STUDY_FIELDS = [
     "study_accession",
     "secondary_study_accession",
     "secondary_study_alias",
@@ -48,8 +48,7 @@ STUDY_FIELDS = [
     "description",
     "status",
 ]
-
-EXPERIMENT_FIELDS = [
+_EXPERIMENT_FIELDS = [
     "experiment_accession",
     "run_accession",
     "run_alias",
@@ -80,8 +79,7 @@ EXPERIMENT_FIELDS = [
     "base_count",
     "read_count",
 ]
-
-SAMPLE_FIELDS = [
+_SAMPLE_FIELDS = [
     "sample_accession",
     "secondary_sample_accession",
     "sample_alias",
@@ -195,54 +193,59 @@ SAMPLE_FIELDS = [
 ]
 
 
-def ingest_ena(cfg: IngestionConfig):
-    output_dir = Path(cfg.output_dir) / _ENA_OUTPUT_DIR
+def ingest_ena(
+    base_output_dir: Path,
+    db_file: Optional[Path],
+    start_date: datetime.date,
+    end_date: datetime.date,
+    num_workers: int,
+    use_last_updated: bool,
+    skip_experiments: bool,
+    skip_samples: bool,
+):
+    output_dir = base_output_dir / _ENA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = (
-        Path(cfg.db_file) if cfg.db_file else (db_dir / f"ena_metadata_{date_str}.db")
-    )
+    db_file = db_file or (db_dir / f"ena_metadata_{date_str}.db")
 
     logging.debug(
         "extracting ena file dumps in range (start_date=%s, end_date=%s)",
-        cfg.start_date,
-        cfg.end_date,
+        start_date,
+        end_date,
     )
-    study_accessions = _fetch_accessions(
-        cfg.start_date, cfg.end_date, cfg.ena_use_last_updated
-    )
+    study_accessions = _fetch_accessions(start_date, end_date, use_last_updated)
     assert study_accessions is not None, "failed to fetch accessions"
     assert len(study_accessions) > 0, (
-        f"no accessions found in {cfg.start_date} to {cfg.end_date} range"
+        f"no accessions found in {start_date} to {end_date} range"
     )
 
     _run_per_study_download(
         study_accessions=study_accessions,
-        num_workers=cfg.num_workers,
-        fields=STUDY_FIELDS,
+        num_workers=num_workers,
+        fields=_STUDY_FIELDS,
         output_dir=output_dir / "studies",
         result_type="study",
         desc="downloading per-study metadata",
     )
 
-    if not cfg.ena_skip_experiments:
+    if not skip_experiments:
         _run_per_study_download(
             study_accessions=study_accessions,
-            num_workers=cfg.num_workers,
-            fields=EXPERIMENT_FIELDS,
+            num_workers=num_workers,
+            fields=_EXPERIMENT_FIELDS,
             output_dir=output_dir / "experiments",
             result_type="read_experiment",
             desc="downloading experiments per study",
         )
 
-    if not cfg.ena_skip_samples:
+    if not skip_samples:
         _run_per_study_download(
             study_accessions=study_accessions,
-            num_workers=cfg.num_workers,
-            fields=SAMPLE_FIELDS,
+            num_workers=num_workers,
+            fields=_SAMPLE_FIELDS,
             output_dir=output_dir / "samples",
             result_type="sample",
             desc="downloading samples per study",
@@ -254,7 +257,7 @@ def ingest_ena(cfg: IngestionConfig):
 
 
 def _fetch_accessions(
-    start_date: date, end_date: date, use_last_updated: bool
+    start_date: datetime.date, end_date: datetime.date, use_last_updated: bool
 ) -> list[str] | None:
     start_date_str = start_date.strftime("%Y-%m-%d")
     end_date_str = end_date.strftime("%Y-%m-%d")
@@ -346,19 +349,19 @@ def _ingest_data(db_file: Path, output_dir: Path):
             (
                 "studies",
                 "study_accession",
-                STUDY_FIELDS,
+                _STUDY_FIELDS,
                 "storing ena studies in sqlite",
             ),
             (
                 "experiments",
                 "run_accession",
-                EXPERIMENT_FIELDS,
+                _EXPERIMENT_FIELDS,
                 "storing ena experiments in sqlite",
             ),
             (
                 "samples",
                 "sample_accession",
-                SAMPLE_FIELDS,
+                _SAMPLE_FIELDS,
                 "storing ena samples in sqlite",
             ),
         ]

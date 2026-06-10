@@ -4,6 +4,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+import pandas as pd
+
 from helpers import exec_query_from_file
 from unifier.unifier_config import UnifierConfig
 
@@ -37,8 +39,16 @@ def build_unified_catalog(cfg: UnifierConfig):
 
     with sqlite3.Connection(db_file) as conn:
         exec_query_from_file("tables/unified_studies_tables.sql", conn=conn)
-        conn.executemany("INSERT INTO unified_studies VALUES (?, ?, ?, ?, ?)", catalog)
+        conn.executemany(
+            "INSERT OR REPLACE INTO unified_studies VALUES (?, ?, ?, ?, ?)", catalog
+        )
         conn.commit()
+
+        if cfg.dump_parquet:
+            df = pd.read_sql_query("SELECT * FROM unified_studies", conn)
+            pq_path = output_dir / "unified_studies.parquet"
+            df.to_parquet(pq_path)
+            logging.info("saved data as parquet at %s", str(pq_path))
 
     size_mb = db_file.stat().st_size / 1024**2
     logging.info(f"inserted {len(catalog)} rows ({size_mb:.2f} MB)")

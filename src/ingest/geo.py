@@ -9,13 +9,12 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
-from typing import IO
+from typing import IO, Optional
 
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req, simple_file_download
-from ingest.ingest_config import IngestionConfig
 
 _GEO_OUTPUT_DIR = "geo"
 _STOP = object()
@@ -29,8 +28,16 @@ class TableType(StrEnum):
     Contributors = "Contributors"
 
 
-def ingest_geo(cfg: IngestionConfig):
-    output_dir = Path(cfg.output_dir) / _GEO_OUTPUT_DIR
+def ingest_geo(
+    base_output_dir: Path,
+    db_file: Optional[Path],
+    num_workers: int,
+    chunk_size: int,
+    batch_size: int,
+    series_pickle: Optional[Path],
+    series_limit: Optional[int],
+):
+    output_dir = Path(base_output_dir) / _GEO_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
@@ -39,24 +46,13 @@ def ingest_geo(cfg: IngestionConfig):
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = (
-        Path(cfg.db_file) if cfg.db_file else (db_dir / f"geo_metadata_{date_str}.db")
-    )
+    db_file = db_file or (db_dir / f"geo_metadata_{date_str}.db")
 
-    geo_series_pkl_file = (
-        Path(cfg.geo_series_pickle)
-        if cfg.geo_series_pickle
-        else output_dir / "geo_series.pkl"
-    )
-
-    geo_dict = _build_geo_dict(
-        cfg.num_workers, geo_series_pkl_file, cfg.geo_series_limit
-    )
+    geo_series_pkl_file = series_pickle or (output_dir / "geo_series.pkl")
+    geo_dict = _build_geo_dict(num_workers, geo_series_pkl_file, series_limit)
 
     exec_query_from_file("tables/geo_tables.sql", db_file)
-    _run_pipeline(
-        geo_dict, db_file, data_dir, cfg.num_workers, cfg.batch_size, cfg.chunk_size
-    )
+    _run_pipeline(geo_dict, db_file, data_dir, num_workers, batch_size, chunk_size)
     exec_query_from_file("indexes/geo_indexes.sql", db_file)
 
 

@@ -12,3 +12,4 @@ class UnifierConfig:
     num_workers: int
     batch_size: int
     chunk_size: int
+    dump_parquet: bool

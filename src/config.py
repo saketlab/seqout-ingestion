@@ -11,6 +11,7 @@ class Stage(enum.StrEnum):
     BackfillPubmedIds = "backfill_pubmed_ids"
     BackfillPubmedMeta = "backfill_pubmed_meta"
     BuildUnifiedCatalog = "build_unified_catalog"
+    BuildUnifiedMetadata = "build_unified_metadata"
 
 
 class Datasource(enum.StrEnum):
@@ -169,6 +170,12 @@ def parse_config() -> argparse.Namespace:
         action="store_true",
         default=False,
         help="with --pm-meta-update-journal-metrics: re-fetch all journals, not just those missing metrics.",
+    )
+    parser.add_argument(
+        "--dump-parquet",
+        action="store_true",
+        default=False,
+        help="export the output sql table as a parquet with the same file base name as the db file",
     )
 
     args = parser.parse_args(args=None if sys.argv[1:] else ["--help"])

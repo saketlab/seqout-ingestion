@@ -1,5 +1,6 @@
 import csv
 import ctypes
+import datetime
 import enum
 import io
 import json
@@ -16,16 +17,15 @@ import time
 import typing
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime
 from math import isqrt
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
+from typing_extensions import Optional
 
 from helpers import better_downloader, exec_query_from_file
-from ingest.ingest_config import IngestionConfig
 
 _SRA_OUTPUT_DIR = "sra"
 _SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
@@ -43,33 +43,41 @@ class FileType(enum.StrEnum):
     Run = "run"
 
 
-def ingest_sra(cfg: IngestionConfig):
-    output_dir = Path(cfg.output_dir) / _SRA_OUTPUT_DIR
+def ingest_sra(
+    base_output_dir: Path,
+    db_file: Optional[Path],
+    start_date: datetime.date,
+    end_date: datetime.date,
+    num_workers: int,
+    chunk_size: int,
+    read_batch_size: int,
+    write_batch_size: int,
+    accessions_ttl: int,
+):
+    output_dir = Path(base_output_dir) / _SRA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = (
-        Path(cfg.db_file) if cfg.db_file else (db_dir / f"sra_metadata_{date_str}.db")
-    )
+    db_file = db_file or (db_dir / f"sra_metadata_{date_str}.db")
 
     logging.debug(
         "extracting sra file dumps in range: start_date=%s, end_date=%s",
-        cfg.start_date,
-        cfg.end_date,
+        start_date,
+        end_date,
     )
-    file_dumps = _extract_sra_file_dumps_in_range(cfg.start_date, cfg.end_date)
+    file_dumps = _extract_sra_file_dumps_in_range(start_date, end_date)
     assert len(file_dumps) > 0, (
-        f"no sra file dumps found in {cfg.start_date} to {cfg.end_date} range"
+        f"no sra file dumps found in {start_date} to {end_date} range"
     )
 
     logging.debug("downloading accessions tab file")
     tab_path, is_freshly_downloaded = _download_accessions_tab_file(
         output_dir,
-        cfg.sra_accessions_ttl,
-        cfg.num_workers,
-        cfg.chunk_size,
+        accessions_ttl,
+        num_workers,
+        chunk_size,
     )
 
     accessions_csv_path = output_dir / "sra_accessions.csv"
@@ -79,11 +87,11 @@ def ingest_sra(cfg: IngestionConfig):
 
     if to_reprocess_csv:
         logging.debug("converting accessions tab file into csv")
-        _convert_tab_to_csv(accessions_csv_path, output_dir, tab_path, cfg.chunk_size)
+        _convert_tab_to_csv(accessions_csv_path, output_dir, tab_path, chunk_size)
 
     logging.debug("downloading sra file dumps")
     dumps_dir = _download_sra_file_dumps(
-        file_dumps, output_dir, cfg.num_workers, cfg.chunk_size
+        file_dumps, output_dir, num_workers, chunk_size
     )
 
     logging.debug("building accession index")
@@ -93,14 +101,23 @@ def ingest_sra(cfg: IngestionConfig):
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
 
     exec_query_from_file("tables/sra_tables.sql", db_file)
-    _process_tarballs(tarballs, accessions_idx, db_file, cfg.num_workers)
+    _process_tarballs(
+        tarballs,
+        accessions_idx,
+        db_file,
+        num_workers,
+        read_batch_size,
+        write_batch_size,
+    )
 
     logging.info("creating indexes on sra tables ...")
     exec_query_from_file("indexes/sra_indexes.sql", db_file)
     logging.info("indexes created successfully")
 
 
-def _extract_sra_file_dumps_in_range(start_date: date, end_date: date) -> list[str]:
+def _extract_sra_file_dumps_in_range(
+    start_date: datetime.date, end_date: datetime.date
+) -> list[str]:
     file_dumps: list[str] = []
 
     with requests.get(_SRA_FTP_BASE_URL, timeout=30) as r:
@@ -113,7 +130,7 @@ def _extract_sra_file_dumps_in_range(start_date: date, end_date: date) -> list[s
         if match is None:
             continue
 
-        file_date = datetime.strptime(match.group(1), "%Y%m%d").date()
+        file_date = datetime.datetime.strptime(match.group(1), "%Y%m%d").date()
         if start_date <= file_date <= end_date:
             file_dumps.append(href)
 
@@ -555,7 +572,7 @@ def _reader_worker(
     tarball: Path,
     transform_queue: queue.Queue,
     pbar: tqdm,
-    read_batch_size: int = 50,
+    read_batch_size: int,
 ):
     batch: list = []
 
@@ -652,7 +669,7 @@ def _writer_worker(
     write_queue: queue.Queue,
     db_file: Path,
     sentinels_to_receive: int,
-    write_batch_size: int = 500,
+    write_batch_size: int,
 ):
     conn = sqlite3.connect(str(db_file))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -729,6 +746,8 @@ def _process_tarballs(
     accessions_idx: dict[str, str],
     db_file: Path,
     num_workers: int,
+    read_batch_size: int,
+    write_batch_size: int,
 ):
     num_readers = max(1, min(len(tarballs), num_workers // 4))
     num_writer = 1
@@ -750,7 +769,7 @@ def _process_tarballs(
         ThreadPoolExecutor(num_writer) as writer_pool,
     ):
         write_future = writer_pool.submit(
-            _writer_worker, write_queue, db_file, num_transform
+            _writer_worker, write_queue, db_file, num_transform, write_batch_size
         )
         transform_futures = [
             transform_pool.submit(
@@ -762,7 +781,9 @@ def _process_tarballs(
             for _ in range(num_transform)
         ]
         reader_futures = [
-            reader_pool.submit(_reader_worker, tb, transform_queue, pbar)
+            reader_pool.submit(
+                _reader_worker, tb, transform_queue, pbar, read_batch_size
+            )
             for tb in tarballs
         ]
 
