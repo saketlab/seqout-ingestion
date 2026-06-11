@@ -19,6 +19,13 @@ DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
     Datasource.Ena: "ena_studies",
 }
 
+DATASOURCE_COLUMN_MAPPING: dict[Datasource, str] = {
+    Datasource.Sra: "accession",
+    Datasource.Geo: "accession",
+    Datasource.ArrayExpress: "accession",
+    Datasource.Ena: "study_accession",
+}
+
 MISSING_QUERIES: dict[Datasource, str] = {
     Datasource.Sra: "SELECT accession FROM sra_studies WHERE (links IS NULL OR NOT json_valid(links) OR json_extract(links, '$.XREF_LINK.DB') != 'pubmed') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
     Datasource.Geo: "SELECT accession FROM geo_series WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
@@ -129,7 +136,7 @@ def backfill_pubmed_ids(
         if not accessions:
             continue
 
-        logging.info("processing %s — %d accessions", datasource, len(accessions))
+        logging.info("processing %s - %d accessions\n", datasource, len(accessions))
         worker_data: list[list[str]] = [[] for _ in range(num_workers)]
         for i, accession in enumerate(accessions):
             worker_data[i % num_workers].append(accession)
@@ -191,15 +198,18 @@ def _worker(
 
             with sqlite3.Connection(db_file) as conn:
                 table = DATASOURCE_TABLE_MAPPING[datasource]
+                column = DATASOURCE_COLUMN_MAPPING[datasource]
+
                 accessions_in_batch = [a for a in batch if a]
                 placeholders = ",".join("?" for _ in accessions_in_batch)
                 conn.execute(
-                    f"UPDATE {table} SET pubmed_last_checked = ? WHERE accession IN ({placeholders})",
+                    f"UPDATE {table} SET pubmed_last_checked = ? WHERE {column} IN ({placeholders})",
                     (now, *accessions_in_batch),
                 )
+
                 if pmid_updates:
                     conn.executemany(
-                        f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE accession = ?",
+                        f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE {column} = ?",
                         pmid_updates,
                     )
                 conn.commit()

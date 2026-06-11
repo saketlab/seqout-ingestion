@@ -2,24 +2,26 @@ import csv
 import ctypes
 import datetime
 import enum
+import functools
 import io
 import json
 import logging
 import logging.config
+import multiprocessing
 import os
-import pickle
 import queue
 import re
 import sqlite3
-import sys
 import tarfile
 import time
 import typing
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from math import isqrt
 from pathlib import Path
 
+import humanfriendly
+import lmdb
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -53,6 +55,9 @@ def ingest_sra(
     read_batch_size: int,
     write_batch_size: int,
     accessions_ttl: int,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     output_dir = Path(base_output_dir) / _SRA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -61,6 +66,26 @@ def ingest_sra(
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"sra_metadata_{date_str}.db")
+
+    logging.info(
+        """starting sra ingest with following config:
+- num workers: %d
+- chunk size: %s
+- read batch size: %d
+- write batch size: %d
+- accessions file ttl: %s
+- retries: %d
+- timeout: %s
+- max timeout: %s""",
+        num_workers,
+        humanfriendly.format_size(chunk_size),
+        read_batch_size,
+        write_batch_size,
+        humanfriendly.format_timespan(accessions_ttl),
+        retries,
+        humanfriendly.format_timespan(timeout),
+        humanfriendly.format_timespan(max_timeout),
+    )
 
     logging.debug(
         "extracting sra file dumps in range: start_date=%s, end_date=%s",
@@ -72,8 +97,13 @@ def ingest_sra(
         f"no sra file dumps found in {start_date} to {end_date} range"
     )
 
+    downloader = functools.partial(
+        better_downloader, retries=retries, timeout=timeout, max_timeout=max_timeout
+    )
+
     logging.debug("downloading accessions tab file")
     tab_path, is_freshly_downloaded = _download_accessions_tab_file(
+        downloader,
         output_dir,
         accessions_ttl,
         num_workers,
@@ -87,15 +117,15 @@ def ingest_sra(
 
     if to_reprocess_csv:
         logging.debug("converting accessions tab file into csv")
-        _convert_tab_to_csv(accessions_csv_path, output_dir, tab_path, chunk_size)
+        _convert_tab_to_csv(accessions_csv_path, tab_path, chunk_size)
 
     logging.debug("downloading sra file dumps")
     dumps_dir = _download_sra_file_dumps(
-        file_dumps, output_dir, num_workers, chunk_size
+        downloader, file_dumps, output_dir, num_workers, chunk_size
     )
 
     logging.debug("building accession index")
-    accessions_idx = _build_accessions_index(
+    lmdb_path = _build_accessions_index(
         accessions_csv_path, to_reprocess_csv, output_dir
     )
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
@@ -103,8 +133,8 @@ def ingest_sra(
     exec_query_from_file("tables/sra_tables.sql", db_file)
     _process_tarballs(
         tarballs,
-        accessions_idx,
         db_file,
+        lmdb_path,
         num_workers,
         read_batch_size,
         write_batch_size,
@@ -138,7 +168,11 @@ def _extract_sra_file_dumps_in_range(
 
 
 def _download_accessions_tab_file(
-    output_dir: Path, accessions_ttl: int, num_workers: int, chunk_size: int
+    downloader: functools.partial,
+    output_dir: Path,
+    accessions_ttl: int,
+    num_workers: int,
+    chunk_size: int,
 ) -> tuple[Path, bool]:
     tab_file = output_dir / _SRA_ACCESSIONS_TAB_FILE_NAME
     to_download = False
@@ -154,12 +188,11 @@ def _download_accessions_tab_file(
 
     if not to_download:
         logging.info(
-            "skipped download step for sra accessions tab file as it already exists "
-            "and it is within the ttl range"
+            "skipped download step for sra accessions tab file as it already exists and it is within the ttl range"
         )
         return tab_file, False
 
-    better_downloader(
+    downloader(
         f"{_SRA_FTP_BASE_URL}/{_SRA_ACCESSIONS_TAB_FILE_NAME}",
         tab_file,
         num_workers,
@@ -170,7 +203,7 @@ def _download_accessions_tab_file(
 
 
 def _convert_tab_to_csv(
-    csv_file_path: Path, output_dir: Path, tab_file_path: Path, chunk_size: int
+    csv_file_path: Path, tab_file_path: Path, chunk_size: int
 ) -> None:
     libc = ctypes.CDLL("libc.so.6")
 
@@ -208,7 +241,11 @@ def _convert_tab_to_csv(
 
 
 def _download_sra_file_dumps(
-    file_dumps: list[str], output_dir: Path, num_workers: int, chunk_size: int
+    downloader: functools.partial,
+    file_dumps: list[str],
+    output_dir: Path,
+    num_workers: int,
+    chunk_size: int,
 ) -> Path:
     concurrent_files = min(len(file_dumps), isqrt(num_workers))
     workers_per_file = num_workers // concurrent_files
@@ -223,16 +260,19 @@ def _download_sra_file_dumps(
         return dumps_dir
 
     logging.info(
-        f"starting download phase for sra file dumps with following configuration:\n"
-        f"- num of file(s) to download: {len(missing_files)}\n"
-        f"- num of concurrent file downloads: {concurrent_files}\n"
-        f"- num workers per file: {workers_per_file}"
+        """starting downloading phase for sra file dumps with following config:
+- num of file(s) to download: %d
+- num of concurrent file downloads: %d
+- num workers per file: %d""",
+        len(missing_files),
+        concurrent_files,
+        workers_per_file,
     )
 
     def _process_per_file(file: str):
         dest_path = dumps_dir / file
         url = f"{_SRA_FTP_BASE_URL}/{file}"
-        better_downloader(url, dest_path, workers_per_file, chunk_size)
+        downloader(url, dest_path, workers_per_file, chunk_size)
 
     if concurrent_files == 1:
         [_process_per_file(file) for file in missing_files]
@@ -247,77 +287,36 @@ def _download_sra_file_dumps(
 
 def _build_accessions_index(
     accessions_csv_path: Path, to_rebuild: bool, output_dir: Path
-) -> dict[str, str]:
-    accessions_idx_pkl_path = output_dir / "sra_accessions_idx.pkl"
+) -> Path:
+    lmdb_path = output_dir / "sra_accessions_idx"
+    if lmdb_path.exists():
+        return lmdb_path
 
-    if not to_rebuild and accessions_idx_pkl_path.exists():
-        with open(accessions_idx_pkl_path, "rb") as f:
-            data = pickle.load(f)
-        return {k: sys.intern(v) for k, v in data.items()}
-
-    with open(accessions_csv_path, "r", newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        col = {name: i for i, name in enumerate(header)}
-        acc_i, upd_i, pub_i = col["accession"], col["updated_at"], col["published_at"]
-
-        accessions_idx: dict[str, str] = {
-            row[acc_i]: sys.intern(row[upd_i] + "|" + row[pub_i]) for row in reader
-        }
-
-    with open(accessions_idx_pkl_path, "wb") as f:
-        pickle.dump(accessions_idx, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-    return accessions_idx
-
-
-def _parse_external_ids(external_ids: list) -> str | None:
-    if not external_ids:
-        return None
-    return json.dumps({el.get("namespace"): el.text for el in external_ids})
-
-
-def _parse_attributes(sample_attrs: list) -> str | None:
-    if not sample_attrs:
-        return None
-    return json.dumps(
-        {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs}
+    env = lmdb.open(
+        str(lmdb_path),
+        map_size=10_737_418_240,  # 10 GB
+        sync=False,
+        metasync=False,
     )
 
+    with env.begin(write=True) as txn:
+        with open(accessions_csv_path, newline="") as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            col = {name: i for i, name in enumerate(header)}
+            for row in reader:
+                key = row[col["accession"]].encode()
+                val = (row[col["updated_at"]] + "|" + row[col["published_at"]]).encode()
+                txn.put(key, val)
 
-def _parse_links(sample_links: list) -> str | None:
-    if not sample_links:
-        return None
-    results = {}
-
-    for link in sample_links:
-        url = link.find("URL_LINK")
-        if url is not None:
-            label = url.findtext("LABEL")
-            results[label] = url.findtext("URL")
-        else:
-            for child in link:
-                results[child.tag] = {el.tag: el.text for el in child}
-
-    return json.dumps(results)
-
-
-def _xml_elem_to_dict(elem) -> dict:
-    if elem is None:
-        return {}
-
-    result = {}
-    for child in elem:
-        if len(child) == 0:
-            result[child.tag] = child.attrib if child.attrib else child.text
-        else:
-            result[child.tag] = _xml_elem_to_dict(child)
-
-    return result
+    env.close()
+    return lmdb_path
 
 
 def _process_submission(
-    submission_accession: str, content: typing.BinaryIO, accessions_idx: dict[str, str]
+    submission_accession: str,
+    content: typing.BinaryIO,
+    txn: lmdb.Transaction,
 ):
     ctx = ET.iterparse(content, events=("end",))
     attrs: dict[str, str] = {}
@@ -337,8 +336,11 @@ def _process_submission(
     if not accession:
         return None
 
-    dates = accessions_idx.get(accession)
-    updated_at, published_at = dates.split("|") if dates else (None, None)
+    dates = txn.get(accession.encode())
+    if not dates:
+        return
+    dates_str = str(dates)
+    updated_at, published_at = dates_str.split("|") if dates else (None, None)
 
     return (
         accession,
@@ -349,6 +351,66 @@ def _process_submission(
         updated_at,
         published_at,
     )
+
+
+def _process_studies(
+    submission_accession: str, content: typing.BinaryIO, txn: lmdb.Transaction
+):
+    ctx = ET.iterparse(content, events=("end",))
+    results = []
+
+    try:
+        for _, elem in ctx:
+            if elem.tag != "STUDY_SET":
+                continue
+
+            items = elem.findall("STUDY")
+
+            for study in items:
+                accession: str = study.get("accession")
+                descriptor = _xml_elem_to_dict(study.find("DESCRIPTOR"))
+
+                identifiers = study.find("IDENTIFIERS")
+                external_ids = (
+                    identifiers.findall("EXTERNAL_ID")
+                    if identifiers is not None
+                    else []
+                )
+                attrs = study.findall("STUDY_ATTRIBUTES/STUDY_ATTRIBUTE")
+                links = study.findall("STUDY_LINKS/STUDY_LINK")
+
+                dates = txn.get(accession.encode())
+                if not dates:
+                    continue
+                dates_str = str(dates)
+                updated_at, published_at = (
+                    dates_str.split("|") if dates else (None, None)
+                )
+
+                record = (
+                    accession,
+                    study.get("alias"),
+                    study.get("center_name"),
+                    descriptor.get("STUDY_ABSTRACT"),
+                    descriptor.get("STUDY_TITLE"),
+                    _parse_external_ids(external_ids),
+                    descriptor.get("STUDY_TYPE", {}).get("existing_study_type"),
+                    _parse_attributes(attrs),
+                    _parse_links(links),
+                    descriptor.get("CENTER_PROJECT_NAME"),
+                    submission_accession,
+                    published_at,
+                    updated_at,
+                )
+
+                results.append(record)
+                study.clear()
+            elem.clear()
+            break
+    except ET.ParseError:
+        return None
+
+    return results
 
 
 def _process_samples(submission_accession: str, content: typing.BinaryIO):
@@ -384,61 +446,6 @@ def _process_samples(submission_accession: str, content: typing.BinaryIO):
 
             results.append(record)
             elem.clear()
-    except ET.ParseError:
-        return None
-
-    return results
-
-
-def _process_studies(
-    submission_accession: str, content: typing.BinaryIO, accessions_idx: dict[str, str]
-):
-    ctx = ET.iterparse(content, events=("end",))
-    results = []
-
-    try:
-        for _, elem in ctx:
-            if elem.tag != "STUDY_SET":
-                continue
-
-            items = elem.findall("STUDY")
-
-            for study in items:
-                accession = study.get("accession")
-                descriptor = _xml_elem_to_dict(study.find("DESCRIPTOR"))
-
-                identifiers = study.find("IDENTIFIERS")
-                external_ids = (
-                    identifiers.findall("EXTERNAL_ID")
-                    if identifiers is not None
-                    else []
-                )
-                attrs = study.findall("STUDY_ATTRIBUTES/STUDY_ATTRIBUTE")
-                links = study.findall("STUDY_LINKS/STUDY_LINK")
-
-                dates = accessions_idx.get(accession)
-                updated_at, published_at = dates.split("|") if dates else (None, None)
-
-                record = (
-                    accession,
-                    study.get("alias"),
-                    study.get("center_name"),
-                    descriptor.get("STUDY_ABSTRACT"),
-                    descriptor.get("STUDY_TITLE"),
-                    _parse_external_ids(external_ids),
-                    descriptor.get("STUDY_TYPE", {}).get("existing_study_type"),
-                    _parse_attributes(attrs),
-                    _parse_links(links),
-                    descriptor.get("CENTER_PROJECT_NAME"),
-                    submission_accession,
-                    published_at,
-                    updated_at,
-                )
-
-                results.append(record)
-                study.clear()
-            elem.clear()
-            break
     except ET.ParseError:
         return None
 
@@ -553,24 +560,9 @@ def _process_runs(submission_accession: str, content: typing.BinaryIO):
     return results
 
 
-def _convert_file_name_to_type(file_name: str) -> FileType | None:
-    if file_name.endswith(".submission.xml"):
-        return FileType.Submission
-    elif file_name.endswith(".sample.xml"):
-        return FileType.Sample
-    elif file_name.endswith(".study.xml"):
-        return FileType.Study
-    elif file_name.endswith(".experiment.xml"):
-        return FileType.Experiment
-    elif file_name.endswith(".run.xml"):
-        return FileType.Run
-    else:
-        return None
-
-
 def _reader_worker(
     tarball: Path,
-    transform_queue: queue.Queue,
+    transform_queue: multiprocessing.Queue,
     pbar: tqdm,
     read_batch_size: int,
 ):
@@ -615,9 +607,9 @@ def _reader_worker(
 
 
 def _transform_worker(
-    transform_queue: queue.Queue,
-    write_queue: queue.Queue,
-    accessions_idx: dict[str, str],
+    lmdb_path: Path,
+    transform_queue: multiprocessing.Queue,
+    write_queue: multiprocessing.Queue,
 ):
     while True:
         try:
@@ -629,44 +621,46 @@ def _transform_worker(
             write_queue.put(_STOP)
             break
 
-        for submission_accession, file_type, content in batch:
-            try:
-                result = None
+        with lmdb.open(str(lmdb_path), readonly=True) as env:
+            with env.begin() as txn:
+                for submission_accession, file_type, content in batch:
+                    try:
+                        result = None
 
-                if file_type == FileType.Submission:
-                    result = _process_submission(
-                        submission_accession, content, accessions_idx
-                    )
-                elif file_type == FileType.Sample:
-                    result = _process_samples(submission_accession, content)
-                elif file_type == FileType.Study:
-                    result = _process_studies(
-                        submission_accession, content, accessions_idx
-                    )
-                elif file_type == FileType.Experiment:
-                    result = _process_experiments(submission_accession, content)
-                elif file_type == FileType.Run:
-                    result = _process_runs(submission_accession, content)
-                else:
-                    logging.error(
-                        f"[transform] received invalid file type: {file_type}"
-                    )
+                        if file_type == FileType.Submission:
+                            result = _process_submission(
+                                submission_accession, content, txn
+                            )
+                        elif file_type == FileType.Study:
+                            result = _process_studies(
+                                submission_accession, content, txn
+                            )
+                        elif file_type == FileType.Sample:
+                            result = _process_samples(submission_accession, content)
+                        elif file_type == FileType.Experiment:
+                            result = _process_experiments(submission_accession, content)
+                        elif file_type == FileType.Run:
+                            result = _process_runs(submission_accession, content)
+                        else:
+                            logging.error(
+                                f"[transform] received invalid file type: {file_type}"
+                            )
 
-                if result is None:
-                    continue
+                        if result is None:
+                            continue
 
-                rows = result if isinstance(result, list) else [result]
-                for row in rows:
-                    write_queue.put((file_type, row))
+                        rows = result if isinstance(result, list) else [result]
+                        for row in rows:
+                            write_queue.put((file_type, row))
 
-            except Exception as e:
-                logging.error(
-                    f"[transform] failed to process {submission_accession}: {e}"
-                )
+                    except Exception as e:
+                        logging.error(
+                            f"[transform] failed to process {submission_accession}: {e}"
+                        )
 
 
 def _writer_worker(
-    write_queue: queue.Queue,
+    write_queue: multiprocessing.Queue,
     db_file: Path,
     sentinels_to_receive: int,
     write_batch_size: int,
@@ -743,8 +737,8 @@ def _writer_worker(
 
 def _process_tarballs(
     tarballs: list[Path],
-    accessions_idx: dict[str, str],
     db_file: Path,
+    lmdb_path: Path,
     num_workers: int,
     read_batch_size: int,
     write_batch_size: int,
@@ -753,11 +747,14 @@ def _process_tarballs(
     num_writer = 1
     num_transform = max(1, num_workers - num_readers - num_writer)
 
-    transform_queue: queue.Queue = queue.Queue()
-    write_queue: queue.Queue = queue.Queue()
+    transform_queue: multiprocessing.Queue = multiprocessing.Queue()
+    write_queue: multiprocessing.Queue = multiprocessing.Queue()
+
+    with lmdb.open(str(lmdb_path), readonly=True) as env:
+        total = env.stat()["entries"]
 
     pbar = tqdm(
-        total=len(accessions_idx),
+        total=total,
         unit="file",
         desc="processing tarballs",
         mininterval=2.0,
@@ -765,7 +762,7 @@ def _process_tarballs(
 
     with (
         ThreadPoolExecutor(num_readers) as reader_pool,
-        ThreadPoolExecutor(num_transform) as transform_pool,
+        ProcessPoolExecutor(num_transform) as transform_pool,
         ThreadPoolExecutor(num_writer) as writer_pool,
     ):
         write_future = writer_pool.submit(
@@ -774,9 +771,9 @@ def _process_tarballs(
         transform_futures = [
             transform_pool.submit(
                 _transform_worker,
+                lmdb_path,
                 transform_queue,
                 write_queue,
-                accessions_idx,
             )
             for _ in range(num_transform)
         ]
@@ -788,10 +785,7 @@ def _process_tarballs(
         ]
 
         for f in as_completed(reader_futures):
-            try:
-                f.result()
-            except Exception as e:
-                logging.exception(f"[reader] a reader thread failed: {e}")
+            f.result()
 
         for _ in range(num_transform):
             transform_queue.put(_STOP)
@@ -801,3 +795,63 @@ def _process_tarballs(
         write_future.result()
 
     pbar.close()
+
+
+def _parse_external_ids(external_ids: list) -> str | None:
+    if not external_ids:
+        return None
+    return json.dumps({el.get("namespace"): el.text for el in external_ids})
+
+
+def _parse_attributes(sample_attrs: list) -> str | None:
+    if not sample_attrs:
+        return None
+    return json.dumps(
+        {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs}
+    )
+
+
+def _parse_links(sample_links: list) -> str | None:
+    if not sample_links:
+        return None
+    results = {}
+
+    for link in sample_links:
+        url = link.find("URL_LINK")
+        if url is not None:
+            label = url.findtext("LABEL")
+            results[label] = url.findtext("URL")
+        else:
+            for child in link:
+                results[child.tag] = {el.tag: el.text for el in child}
+
+    return json.dumps(results)
+
+
+def _xml_elem_to_dict(elem) -> dict:
+    if elem is None:
+        return {}
+
+    result = {}
+    for child in elem:
+        if len(child) == 0:
+            result[child.tag] = child.attrib if child.attrib else child.text
+        else:
+            result[child.tag] = _xml_elem_to_dict(child)
+
+    return result
+
+
+def _convert_file_name_to_type(file_name: str) -> FileType | None:
+    if file_name.endswith(".submission.xml"):
+        return FileType.Submission
+    elif file_name.endswith(".sample.xml"):
+        return FileType.Sample
+    elif file_name.endswith(".study.xml"):
+        return FileType.Study
+    elif file_name.endswith(".experiment.xml"):
+        return FileType.Experiment
+    elif file_name.endswith(".run.xml"):
+        return FileType.Run
+    else:
+        return None

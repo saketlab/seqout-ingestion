@@ -9,6 +9,7 @@ dependencies = [
     "fastparquet>=2026.5.0",
     "humanfriendly>=10.0",
     "libarchive-c>=5.3",
+    "lmdb>=2.2.1",
     "pysradb",
     "requests>=2.34.2",
     "tqdm>=4.67.3",

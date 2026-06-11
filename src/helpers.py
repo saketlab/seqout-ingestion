@@ -28,7 +28,7 @@ def _is_retryable(exc: Exception) -> bool:
     )
 
 
-def _retry_delay(attempt: int, max_wait: int = 120) -> float:
+def _retry_delay(attempt: int, max_wait: int) -> float:
     return min(2**attempt, max_wait)
 
 
@@ -37,10 +37,11 @@ def better_downloader(
     dest_path: Path,
     num_workers: int,
     chunk_size: int,
-    retries: int = 10,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ) -> None:
     dest_path.parent.mkdir(exist_ok=True, parents=True)
-    timeout = (10, 60)
 
     content_length = -1
     accepts_range = ""
@@ -54,7 +55,8 @@ def better_downloader(
         except Exception as exc:
             if not _is_retryable(exc) or attempt == retries - 1:
                 raise
-            wait = _retry_delay(attempt)
+
+            wait = _retry_delay(attempt, max_timeout)
             logging.warning(
                 "HEAD %s failed (attempt %d/%d): %s — retrying in %.0fs",
                 url,
@@ -66,7 +68,7 @@ def better_downloader(
             time.sleep(wait)
 
     if content_length == -1 or accepts_range == "":
-        simple_file_download(url, dest_path, chunk_size, timeout, retries=retries)
+        simple_file_download(url, dest_path, chunk_size, retries, timeout, max_timeout)
         return
 
     already_downloaded = 0
@@ -145,7 +147,7 @@ def better_downloader(
 
                     cursor -= bytes_this_attempt
 
-                    wait = _retry_delay(attempt)
+                    wait = _retry_delay(attempt, max_timeout)
                     logging.warning(
                         "chunk %d-%d failed (attempt %d/%d): %s — retrying in %.0fs",
                         chunk_start,
@@ -178,8 +180,7 @@ def better_downloader(
         actual_size = dest_path.stat().st_size
         if actual_size != content_length:
             raise RuntimeError(
-                f"downloaded file size {actual_size} does not match "
-                f"expected content length {content_length} for {url}"
+                f"downloaded file size {actual_size} does not match expected content length {content_length} for {url}"
             )
 
 
@@ -187,9 +188,10 @@ def simple_file_download(
     url: str,
     dest_path: Path,
     chunk_size: int,
-    timeout: int | tuple[int, int],
+    retries: int,
+    timeout: int,
+    max_timeout: int,
     with_pbar: bool = True,
-    retries: int = 10,
 ) -> None:
     dest_path.parent.mkdir(exist_ok=True, parents=True)
 
@@ -257,7 +259,7 @@ def simple_file_download(
 
             already_downloaded -= bytes_this_attempt
 
-            wait = _retry_delay(attempt)
+            wait = _retry_delay(attempt, max_timeout)
             logging.warning(
                 "simple_file_download %s failed (attempt %d/%d): %s — retrying in %.0fs",
                 url,
@@ -276,9 +278,9 @@ def send_req(
     params: dict | None = None,
     headers: dict | None = None,
     json: dict | None = None,
-    timeout: int | tuple[int, int] = 300,
-    num_retries: int = 5,
-    max_wait: int = 60,
+    timeout: int,
+    num_retries: int,
+    max_wait: int,
     stream: bool = False,
     **kwargs,
 ) -> requests.Response | None:

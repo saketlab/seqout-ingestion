@@ -1,6 +1,7 @@
 import csv
 import datetime
 import json
+import logging
 import math
 import re
 import sqlite3
@@ -8,11 +9,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
+import humanfriendly
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
 
-_AE_OUTPUT_DIR = "arrayexpress"
+_AE_OUTPUT_DIR = "AE"
 _BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
 _BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
 
@@ -24,6 +26,9 @@ def ingest_ae(
     end_date: datetime.date,
     num_workers: int,
     batch_size: int,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     output_dir = base_output_dir / _AE_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -36,16 +41,36 @@ def ingest_ae(
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"ae_metadata_{date_str}.db")
 
-    accessions = _fetch_accessions(start_date, end_date, num_workers)
-    _download_study_metadatas(accessions, num_workers, data_dir)
-    _download_magetab_files(data_dir, num_workers)
+    logging.info(
+        """starting ae ingest with following config:
+- num workers: %d
+- batch sizze: %d
+- retries: %d
+- timeout: %s
+- max timeout: %s""",
+        num_workers,
+        batch_size,
+        retries,
+        humanfriendly.format_timespan(timeout),
+        humanfriendly.format_timespan(max_timeout),
+    )
+
+    accessions = _fetch_accessions(
+        start_date, end_date, num_workers, retries, timeout, max_timeout
+    )
+    _download_study_metadatas(
+        accessions, num_workers, data_dir, retries, timeout, max_timeout
+    )
+    _download_magetab_files(data_dir, num_workers, retries, timeout, max_timeout)
 
     exec_query_from_file("tables/ae_tables.sql", db_file)
     _process_accessions(accessions, db_file, data_dir, num_workers, batch_size)
     exec_query_from_file("indexes/ae_indexes.sql", db_file)
 
 
-def _send_search_req(date: datetime.date) -> list[str] | None:
+def _send_search_req(
+    date: datetime.date, retries: int, timeout: int, max_timeout: int
+) -> list[str] | None:
     r = send_req(
         method="GET",
         url=f"{_BIOSTUDIES_API_BASE_URL}/search",
@@ -54,6 +79,9 @@ def _send_search_req(date: datetime.date) -> list[str] | None:
             "release_date": date,
             "page_size": 100,
         },
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
     )
     if r is None:
         return []
@@ -68,7 +96,12 @@ def _send_search_req(date: datetime.date) -> list[str] | None:
 
 
 def _fetch_accessions(
-    start_date: datetime.date, end_date: datetime.date, num_workers: int
+    start_date: datetime.date,
+    end_date: datetime.date,
+    num_workers: int,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ) -> list[str]:
     accessions: list[str] = []
     num_days = (end_date - start_date).days + 1
@@ -90,7 +123,9 @@ def _fetch_accessions(
         current_date = start
 
         while current_date <= end:
-            per_page_accessions = _send_search_req(current_date)
+            per_page_accessions = _send_search_req(
+                current_date, retries, timeout, max_timeout
+            )
             if per_page_accessions is None or len(per_page_accessions) == 0:
                 current_date += datetime.timedelta(1)
                 days_processed += 1
@@ -105,7 +140,9 @@ def _fetch_accessions(
             else:
                 curr_accessions = len(per_page_accessions)
                 while curr_accessions >= 100:
-                    per_page_accessions = _send_search_req(current_date)
+                    per_page_accessions = _send_search_req(
+                        current_date, retries, timeout, max_timeout
+                    )
                     if per_page_accessions is None:
                         break
                     if len(per_page_accessions) == 0:
@@ -133,12 +170,20 @@ def _fetch_accessions(
     return accessions
 
 
-def _study_metadata_worker(accession: str, output_dir: Path):
+def _study_metadata_worker(
+    accession: str, output_dir: Path, retries: int, timeout: int, max_timeout: int
+):
     output_file = output_dir / f"{accession}.json"
     if output_file.exists():
         return
 
-    r = send_req(method="GET", url=f"{_BIOSTUDIES_API_BASE_URL}/studies/{accession}")
+    r = send_req(
+        method="GET",
+        url=f"{_BIOSTUDIES_API_BASE_URL}/studies/{accession}",
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
+    )
     if r is None:
         return
 
@@ -149,7 +194,12 @@ def _study_metadata_worker(accession: str, output_dir: Path):
 
 
 def _download_study_metadatas(
-    accessions: list[str], num_workers: int, output_dir: Path
+    accessions: list[str],
+    num_workers: int,
+    output_dir: Path,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -160,7 +210,10 @@ def _download_study_metadatas(
         ) as pbar,
     ):
         futures = [
-            pool.submit(_study_metadata_worker, acc, output_dir) for acc in accessions
+            pool.submit(
+                _study_metadata_worker, acc, output_dir, retries, timeout, max_timeout
+            )
+            for acc in accessions
         ]
 
         for f in as_completed(futures):
@@ -168,7 +221,9 @@ def _download_study_metadatas(
             pbar.update(1)
 
 
-def _download_magetab_files(output_dir: Path, num_workers: int):
+def _download_magetab_files(
+    output_dir: Path, num_workers: int, retries: int, timeout: int, max_timeout: int
+):
     metadata_json_files = output_dir.glob("*.json")
     files = []  # store (accession, filename) tuples
 
@@ -199,7 +254,7 @@ def _download_magetab_files(output_dir: Path, num_workers: int):
             return
 
         url = f"{_BIOSTUDIES_FILES_BASE_URL}/{accession}/{filename}"
-        r = send_req("GET", url)
+        r = send_req("GET", url, num_retries=retries, timeout=timeout, max_wait=timeout)
         if r is None:
             return
 

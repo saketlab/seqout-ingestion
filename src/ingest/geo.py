@@ -1,24 +1,23 @@
 import datetime
+import functools
 import json
 import logging
 import pickle
-import queue
 import sqlite3
 import tarfile
+import time
 import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Optional
 
+import humanfriendly
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req, simple_file_download
-
-_GEO_OUTPUT_DIR = "geo"
-_STOP = object()
-_MINIML_NAMESPACE = "http://www.ncbi.nlm.nih.gov/geo/info/MINiML"
 
 
 class TableType(StrEnum):
@@ -26,6 +25,47 @@ class TableType(StrEnum):
     Samples = "Samples"
     Series = "Series"
     Contributors = "Contributors"
+
+
+_GEO_OUTPUT_DIR = "geo"
+_MINIML_NAMESPACE = "http://www.ncbi.nlm.nih.gov/geo/info/MINiML"
+
+_GEO_SQL_STATEMENTS: dict[TableType, str] = {
+    TableType.Platforms: """
+        INSERT OR REPLACE INTO geo_platforms
+            (
+                accession, description, title, technology,
+                published_at, updated_at, organism,
+                manufacturer, relation
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+    TableType.Samples: """
+        INSERT OR REPLACE INTO geo_samples
+            (
+                accession, channel_count, channels,
+                description, platform_ref, published_at,
+                updated_at, supplementary_data, title,
+                sample_type, hybridization_protocol, scan_protocol
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+    TableType.Series: """
+        INSERT OR REPLACE INTO geo_series
+            (
+                accession, overall_design, pubmed_id,
+                relation, samples_ref, published_at,
+                updated_at, summary, supplementary_data,
+                title, series_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+    TableType.Contributors: """
+        INSERT INTO geo_contributors
+            (
+                accession, person, department,
+                organization, address_line, address_city,
+                address_state, address_zipcode, address_country
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+}
 
 
 def ingest_geo(
@@ -36,6 +76,9 @@ def ingest_geo(
     batch_size: int,
     series_pickle: Optional[Path],
     series_limit: Optional[int],
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     output_dir = Path(base_output_dir) / _GEO_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -48,16 +91,56 @@ def ingest_geo(
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"geo_metadata_{date_str}.db")
 
+    logging.info(
+        """starting geo ingest with following config:
+- num workers: %d
+- chunk size: %s
+- batch size: %d
+- series limit: %d
+- retries: %d
+- timeout: %s
+- max timeout: %s""",
+        num_workers,
+        humanfriendly.format_size(chunk_size),
+        batch_size,
+        series_limit,
+        retries,
+        humanfriendly.format_timespan(timeout),
+        humanfriendly.format_timespan(max_timeout),
+    )
+
     geo_series_pkl_file = series_pickle or (output_dir / "geo_series.pkl")
-    geo_dict = _build_geo_dict(num_workers, geo_series_pkl_file, series_limit)
+    geo_dict = _build_geo_dict(
+        num_workers, geo_series_pkl_file, series_limit, retries, timeout, max_timeout
+    )
+
+    downloader = functools.partial(
+        simple_file_download, retries=retries, timeout=timeout, max_timeout=max_timeout
+    )
 
     exec_query_from_file("tables/geo_tables.sql", db_file)
-    _run_pipeline(geo_dict, db_file, data_dir, num_workers, batch_size, chunk_size)
+    _run_pipeline(
+        downloader,
+        geo_dict,
+        db_file,
+        data_dir,
+        num_workers,
+        batch_size,
+        chunk_size,
+        retries,
+        timeout,
+        max_timeout,
+    )
     exec_query_from_file("indexes/geo_indexes.sql", db_file)
 
 
 def _build_geo_dict(
-    num_workers: int, pkl_file: Path, series_limit: int | None
+    num_workers: int,
+    pkl_file: Path,
+    series_limit: int | None,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ) -> dict[str, list[str]]:
     if pkl_file.exists():
         with open(pkl_file, "rb") as f:
@@ -65,7 +148,13 @@ def _build_geo_dict(
 
     geo_dict: dict[str, list[str]] = {}
 
-    series_resp = send_req("GET", "https://ftp.ncbi.nlm.nih.gov/geo/series/")
+    series_resp = send_req(
+        "GET",
+        "https://ftp.ncbi.nlm.nih.gov/geo/series/",
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
+    )
     assert series_resp is not None, "failed to fetch geo series"
 
     soup = BeautifulSoup(series_resp.text, "html.parser")
@@ -78,7 +167,13 @@ def _build_geo_dict(
         series_list = series_list[:series_limit]
 
     def _worker(s: str) -> list[str] | None:
-        dir_resp = send_req("GET", f"https://ftp.ncbi.nlm.nih.gov/geo/series/{s}")
+        dir_resp = send_req(
+            "GET",
+            f"https://ftp.ncbi.nlm.nih.gov/geo/series/{s}",
+            num_retries=retries,
+            timeout=timeout,
+            max_wait=max_timeout,
+        )
         if dir_resp is None:
             logging.error("failed to fetch geo accession ids (series=%s)", s)
             return None
@@ -122,10 +217,9 @@ def _build_geo_dict(
 
 
 def _download_worker(
+    downloader: functools.partial,
     series_group: str,
     accession: str,
-    transform_queue: queue.Queue,
-    pbar: tqdm,
     output_dir: Path,
     chunk_size: int,
 ):
@@ -133,19 +227,12 @@ def _download_worker(
     url = f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series_group}/{accession}/miniml/{accession}_family.xml.tgz"
 
     if dest_path.exists():
-        transform_queue.put((accession, dest_path))
-        pbar.update(1)
         return
 
     try:
-        simple_file_download(url, dest_path, chunk_size, (10, 60), False)
+        downloader(url, dest_path, chunk_size, with_pbar=False)
     except Exception:
         logging.exception("failed to download %s from %s", accession, url)
-        pbar.update(1)
-        return
-
-    pbar.update(1)
-    transform_queue.put((accession, dest_path))
 
 
 def _wrap_ns(s: str) -> str:
@@ -153,8 +240,18 @@ def _wrap_ns(s: str) -> str:
 
 
 def _findtext(root: ET.Element, s: str) -> str | None:
-    v = root.findtext(_wrap_ns("Title")) or ""
+    v = root.findtext(_wrap_ns(s)) or ""
     return (v or "").strip() or None
+
+
+def _parse_dates(root: ET.Element, s: str) -> datetime.date | None:
+    date_raw = root.findtext(s)
+    parsed_date: datetime.date | None = None
+
+    if date_raw:
+        parsed_date = datetime.date.fromisoformat(date_raw)
+
+    return parsed_date
 
 
 def _et_to_dict(elem: ET.Element | list[ET.Element]) -> list | dict | str:
@@ -207,19 +304,12 @@ def _get_platforms(root: ET.Element) -> list[tuple] | None:
         relations_list = _et_to_dict(platform.findall(_wrap_ns("Relation")))
         relations = json.dumps(relations_list) if relations_list else None
 
-        release_date_raw = platform.findtext(
-            f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
+        published_at = _parse_dates(
+            platform, f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
         )
-        last_update_date_raw = platform.findtext(
-            f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
+        updated_at = _parse_dates(
+            platform, f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
         )
-        published_at: datetime.date | None = None
-        updated_at: datetime.date | None = None
-
-        if release_date_raw:
-            published_at = datetime.date.fromisoformat(release_date_raw)
-        if last_update_date_raw:
-            updated_at = datetime.date.fromisoformat(last_update_date_raw)
 
         platforms.append(
             (
@@ -254,7 +344,9 @@ def _get_samples(root: ET.Element) -> list[tuple] | None:
 
         description = _findtext(sample, "Description")
         platform_ref_elem = sample.find(_wrap_ns("Platform-Ref"))
-        platform_ref = platform_ref_elem.get("ref") if platform_ref_elem else None
+        platform_ref = (
+            platform_ref_elem.get("ref") if platform_ref_elem is not None else None
+        )
 
         supplementary_raw = _et_to_dict(sample.findall(_wrap_ns("Supplementary-Data")))
         supplementary_data = (
@@ -263,22 +355,15 @@ def _get_samples(root: ET.Element) -> list[tuple] | None:
 
         title = _findtext(sample, "Title")
         sample_type = sample.findtext(_wrap_ns("Type"))
-        hybridization_protocol = sample.findtext(_wrap_ns("Hybridization-Protocol"))
-        scan_protocol = sample.findtext(_wrap_ns("Scan-Protocol"))
+        hybridization_protocol = _findtext(sample, "Hybridization-Protocol")
+        scan_protocol = _findtext(sample, "Scan-Protocol")
 
-        release_date_raw = sample.findtext(
-            f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
+        published_at = _parse_dates(
+            sample, f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
         )
-        last_update_date_raw = sample.findtext(
-            f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
+        updated_at = _parse_dates(
+            sample, f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
         )
-        published_at: datetime.date | None = None
-        updated_at: datetime.date | None = None
-
-        if release_date_raw:
-            published_at = datetime.date.fromisoformat(release_date_raw)
-        if last_update_date_raw:
-            updated_at = datetime.date.fromisoformat(last_update_date_raw)
 
         samples.append(
             (
@@ -315,29 +400,20 @@ def _get_series(root: ET.Element) -> list[tuple] | None:
     sample_refs = json.dumps(sample_refs_raw) if sample_refs_raw else None
 
     title = _findtext(series, "Title")
-    summary = _findtext(series, "Description")
-    supplementary_data = json.dumps(
-        [
-            {"@type": sd.get("type"), "#text": sd.text}
-            for sd in series.findall(_wrap_ns("Supplementary-Data"))
-        ]
+    summary = _findtext(series, "Summary")
+    supplementary_data_raw = _et_to_dict(series.findall(_wrap_ns("Supplementary-Data")))
+    supplementary_data = (
+        json.dumps(supplementary_data_raw) if supplementary_data_raw else None
     )
     series_type_raw = series.findtext(_wrap_ns("Type"))
     series_type = json.dumps([series_type_raw]) if series_type_raw else None
 
-    release_date_raw = series.findtext(
-        f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
+    published_at = _parse_dates(
+        series, f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
     )
-    last_update_date_raw = series.findtext(
-        f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
+    updated_at = _parse_dates(
+        series, f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
     )
-    published_at: datetime.date | None = None
-    updated_at: datetime.date | None = None
-
-    if release_date_raw:
-        published_at = datetime.date.fromisoformat(release_date_raw)
-    if last_update_date_raw:
-        updated_at = datetime.date.fromisoformat(last_update_date_raw)
 
     return [
         (
@@ -424,101 +500,83 @@ def _parse_miniml(f: IO[bytes], accession: str) -> dict[TableType, list | None]:
     }
 
 
-def _transform_worker(
-    transform_queue: queue.Queue, write_queue: queue.Queue, output_dir: Path
-):
-    while True:
-        try:
-            item = transform_queue.get(timeout=10)
-        except queue.Empty:
-            continue
-
-        if item is _STOP:
-            write_queue.put(_STOP)
-            break
-
-        accession, dest_path = item
-
-        try:
-            with tarfile.open(dest_path, "r:gz") as tar:
-                for member in tar.getmembers():
-                    if member.name.endswith(".xml"):
-                        f = tar.extractfile(member)
-                        if not f:
-                            logging.error("failed to extract file (path=%s)", dest_path)
-                            continue
-
-                        parsed_data = _parse_miniml(f, accession)
-                        for k, v in parsed_data.items():
-                            write_queue.put((k, v))
-
-                        break
-        except Exception:
-            logging.exception("failed to transform %s (path=%s)", accession, dest_path)
-
-
-def _write_to_sqlite_worker(
-    write_queue: queue.Queue, db_file: Path, batch_size: int, sentinels_to_receive: int
-):
-    conn = sqlite3.Connection(db_file)
+def _process_one(
+    accession: str,
+    dest_path: Path,
+    db_file: Path,
+    batch_size: int,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
+) -> int:
+    conn = sqlite3.Connection(db_file, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     cursor = conn.cursor()
 
-    sentinels_received = 0
-    batch_by_type: dict[TableType, list] = {}
-    sql_statements: dict[TableType, str] = {
-        TableType.Platforms: "INSERT OR REPLACE INTO geo_platforms (accession, description, title, technology, published_at, updated_at, organism, manufacturer, relation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        TableType.Samples: "INSERT OR REPLACE INTO geo_samples (accession, channel_count, channels, description, platform_ref, published_at, updated_at, supplementary_data, title, sample_type, hybridization_protocol, scan_protocol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        TableType.Series: "INSERT OR REPLACE INTO geo_series (accession, overall_design, pubmed_id, relation, samples_ref, published_at, updated_at, summary, supplementary_data, title, series_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        TableType.Contributors: "INSERT INTO geo_contributors (accession, person, department, organization, address_line, address_city, address_state, address_zipcode, address_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    }
+    batch_by_type: dict[TableType, list] = defaultdict(list)
+    item_count = 0
 
     def _flush(batch: list, table_type: TableType):
-        if batch:
+        if not batch:
+            return
+
+        delay = timeout
+        for attempt in range(retries):
             try:
-                cursor.executemany(sql_statements[table_type], batch)
+                cursor.executemany(_GEO_SQL_STATEMENTS[table_type], batch)
                 conn.commit()
-            except Exception:
-                logging.exception("failed to flush batch for table %s", table_type)
-            finally:
                 batch_by_type[table_type] = []
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e) and attempt < retries - 1:
+                    time.sleep(delay)
+                    delay = min(timeout * 2, max_timeout)
+                else:
+                    raise
 
-    while True:
-        try:
-            item = write_queue.get(timeout=10)
-        except queue.Empty:
-            continue
+    try:
+        with tarfile.open(dest_path, "r:gz") as tar:
+            for member in tar.getmembers():
+                if not member.name.endswith(".xml"):
+                    continue
+                f = tar.extractfile(member)
+                if not f:
+                    logging.error("failed to extract file (path=%s)", dest_path)
+                    break
 
-        if item is _STOP:
-            sentinels_received += 1
-            if sentinels_received == sentinels_to_receive:
-                for table_type, batch in batch_by_type.items():
-                    _flush(batch, table_type)
+                parsed_data = _parse_miniml(f, accession)
+                for table_type, rows in parsed_data.items():
+                    if not rows:
+                        continue
+                    item_count += 1
+                    batch_by_type[table_type].extend(rows)
+                    if len(batch_by_type[table_type]) >= batch_size:
+                        _flush(batch_by_type[table_type], table_type)
                 break
-            continue
+    except Exception:
+        logging.exception("failed to process %s (path=%s)", accession, dest_path)
+        conn.close()
+        return 0
 
-        table_type, parsed_data = item
-        if not parsed_data:
-            continue
-
-        if table_type not in batch_by_type:
-            batch_by_type[table_type] = []
-        batch_by_type[table_type].extend(parsed_data)
-
-        if len(batch_by_type[table_type]) >= batch_size:
-            _flush(batch_by_type[table_type], table_type)
+    for table_type, batch in batch_by_type.items():
+        _flush(batch, table_type)
 
     conn.close()
+    return item_count
 
 
 def _run_pipeline(
+    downloader: functools.partial,
     geo_dict: dict[str, list[str]],
     db_file: Path,
     output_dir: Path,
     num_workers: int,
     batch_size: int,
     chunk_size: int,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     num_accessions = sum(len(v) for v in geo_dict.values())
     logging.info("loaded %d groups and %d accessions", len(geo_dict), num_accessions)
@@ -527,80 +585,72 @@ def _run_pipeline(
         logging.warning("geo_dict is empty, nothing to process")
         return
 
-    num_downloaders = max(1, min(num_accessions, int(num_workers * 0.6)))
-    num_writer = 1
-    num_transformers = max(1, num_workers - num_downloaders - num_writer)
+    download_tasks = [
+        (series_group, acc) for series_group, accs in geo_dict.items() for acc in accs
+    ]
 
+    existing = sum(
+        1
+        for _, acc in download_tasks
+        if (output_dir / f"{acc}_family.xml.tgz").exists()
+    )
+    cached_ratio = existing / num_accessions if num_accessions else 0
     logging.info(
-        "pipeline workers: %d downloaders, %d transformers, %d writer",
-        num_downloaders,
-        num_transformers,
-        num_writer,
+        "cached files: %d/%d (%.0f%%)", existing, num_accessions, cached_ratio * 100
     )
 
-    transform_queue: queue.Queue = queue.Queue()
-    write_queue: queue.Queue = queue.Queue()
+    to_download = num_accessions - existing
 
-    pbar = tqdm(
-        total=num_accessions,
-        unit="accession",
-        desc="processing accessions",
-        mininterval=2.0,
-    )
+    if to_download > 0:
+        with ThreadPoolExecutor(num_workers) as pool:
+            futures = [
+                pool.submit(
+                    _download_worker,
+                    downloader,
+                    series_group,
+                    acc,
+                    output_dir,
+                    chunk_size,
+                )
+                for series_group, acc in download_tasks
+                if not (output_dir / f"{acc}_family.xml.tgz").exists()
+            ]
+            pbar = tqdm(total=len(futures), unit="files", desc="downloading accessions")
+            for f in as_completed(futures):
+                try:
+                    f.result()
+                except Exception:
+                    logging.exception("downloader future raised an exception")
+                pbar.update(1)
+            pbar.close()
 
-    with (
-        ThreadPoolExecutor(num_downloaders) as downloader_pool,
-        ThreadPoolExecutor(num_transformers) as transformer_pool,
-        ThreadPoolExecutor(num_writer) as writer_pool,
-    ):
-        transformer_futures = [
-            transformer_pool.submit(
-                _transform_worker, transform_queue, write_queue, output_dir
-            )
-            for _ in range(num_transformers)
-        ]
+    file_list = [
+        (output_dir / f"{acc}_family.xml.tgz", acc) for _, acc in download_tasks
+    ]
 
-        writer_future = writer_pool.submit(
-            _write_to_sqlite_worker, write_queue, db_file, batch_size, num_transformers
-        )
+    pbar = tqdm(total=num_accessions, unit="acc", desc="processing accessions")
 
-        downloader_futures = [
-            downloader_pool.submit(
-                _download_worker,
-                series_group,
+    with ProcessPoolExecutor(num_workers) as pool:
+        futures = {
+            pool.submit(
+                _process_one,
                 acc,
-                transform_queue,
-                pbar,
-                output_dir,
-                chunk_size,
-            )
-            for series_group, accs in geo_dict.items()
-            for acc in accs
-        ]
+                path,
+                db_file,
+                batch_size,
+                retries,
+                timeout,
+                max_timeout,
+            ): acc
+            for path, acc in file_list
+            if path.exists()
+        }
 
-        logging.info("submitted %d download futures", len(downloader_futures))
-
-        for f in as_completed(downloader_futures):
+        for f in as_completed(futures):
             try:
                 f.result()
             except Exception:
-                logging.exception("downloader future raised an exception")
-                raise
-
-        for _ in range(num_transformers):
-            transform_queue.put(_STOP)
-
-        for f in as_completed(transformer_futures):
-            try:
-                f.result()
-            except Exception:
-                logging.exception("transformer future raised an exception")
-                raise
-
-        try:
-            writer_future.result()
-        except Exception:
-            logging.exception("writer future raised an exception")
-            raise
+                logging.exception("failed to process accession %s", futures[f])
+            pbar.update(1)
 
     pbar.close()

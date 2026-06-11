@@ -6,13 +6,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional
 
+import humanfriendly
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
 
-logging.getLogger("urllib3.connectionpool").setLevel(
-    logging.WARNING
-)  # to disable debug messages by urllib
+# to disable debug messages by urllib
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 _ENA_OUTPUT_DIR = "ena"
 _ENA_PORTAL_API_BASE_URL = "https://www.ebi.ac.uk/ena/portal/api"
@@ -48,6 +48,7 @@ _STUDY_FIELDS = [
     "description",
     "status",
 ]
+
 _EXPERIMENT_FIELDS = [
     "experiment_accession",
     "run_accession",
@@ -79,6 +80,7 @@ _EXPERIMENT_FIELDS = [
     "base_count",
     "read_count",
 ]
+
 _SAMPLE_FIELDS = [
     "sample_accession",
     "secondary_sample_accession",
@@ -202,6 +204,9 @@ def ingest_ena(
     use_last_updated: bool,
     skip_experiments: bool,
     skip_samples: bool,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     output_dir = base_output_dir / _ENA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -211,12 +216,26 @@ def ingest_ena(
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"ena_metadata_{date_str}.db")
 
+    logging.info(
+        """starting ena ingest with following config:
+- num workers: %d
+- retries: %d
+- timeout: %s
+- max timeout: %s""",
+        num_workers,
+        retries,
+        humanfriendly.format_timespan(timeout),
+        humanfriendly.format_timespan(max_timeout),
+    )
+
     logging.debug(
         "extracting ena file dumps in range (start_date=%s, end_date=%s)",
         start_date,
         end_date,
     )
-    study_accessions = _fetch_accessions(start_date, end_date, use_last_updated)
+    study_accessions = _fetch_accessions(
+        start_date, end_date, use_last_updated, retries, timeout, max_timeout
+    )
     assert study_accessions is not None, "failed to fetch accessions"
     assert len(study_accessions) > 0, (
         f"no accessions found in {start_date} to {end_date} range"
@@ -229,6 +248,9 @@ def ingest_ena(
         output_dir=output_dir / "studies",
         result_type="study",
         desc="downloading per-study metadata",
+        retries=retries,
+        timeout=timeout,
+        max_timeout=max_timeout,
     )
 
     if not skip_experiments:
@@ -239,6 +261,9 @@ def ingest_ena(
             output_dir=output_dir / "experiments",
             result_type="read_experiment",
             desc="downloading experiments per study",
+            retries=retries,
+            timeout=timeout,
+            max_timeout=max_timeout,
         )
 
     if not skip_samples:
@@ -249,6 +274,9 @@ def ingest_ena(
             output_dir=output_dir / "samples",
             result_type="sample",
             desc="downloading samples per study",
+            retries=retries,
+            timeout=timeout,
+            max_timeout=max_timeout,
         )
 
     exec_query_from_file("tables/ena_tables.sql", db_file)
@@ -257,7 +285,12 @@ def ingest_ena(
 
 
 def _fetch_accessions(
-    start_date: datetime.date, end_date: datetime.date, use_last_updated: bool
+    start_date: datetime.date,
+    end_date: datetime.date,
+    use_last_updated: bool,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ) -> list[str] | None:
     start_date_str = start_date.strftime("%Y-%m-%d")
     end_date_str = end_date.strftime("%Y-%m-%d")
@@ -273,6 +306,9 @@ def _fetch_accessions(
             "fields": "study_accession",
             "format": "json",
         },
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
     )
     if r is None:
         return None
@@ -286,7 +322,12 @@ def _fetch_accessions(
 
 
 def _fetch_per_study(
-    study_accession: str, result_type: str, fields: list[str]
+    study_accession: str,
+    result_type: str,
+    fields: list[str],
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ) -> list[dict] | None:
     r = send_req(
         "GET",
@@ -298,6 +339,9 @@ def _fetch_per_study(
             "limit": 0,
             "format": "json",
         },
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
     )
     if r is None:
         return None
@@ -316,12 +360,17 @@ def _run_per_study_download(
     output_dir: Path,
     result_type: str,
     desc: str,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ):
     output_dir.mkdir(exist_ok=True, parents=True)
 
     def _worker(study_accession: str):
         output_file = output_dir / f"{study_accession}.json"
-        data = _fetch_per_study(study_accession, result_type, fields)
+        data = _fetch_per_study(
+            study_accession, result_type, fields, retries, timeout, max_timeout
+        )
         if data is None:
             return
 
