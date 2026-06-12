@@ -69,7 +69,7 @@ def sra(
     num_workers: int = _NUM_WORKERS_FLAG,
     chunk_size: int = _CHUNK_SIZE_FLAG,
     read_batch_size: int = typer.Option(500),
-    write_batch_size: int = typer.Option(2000),
+    write_batch_size: int = typer.Option(100),
     accessions_ttl: int = typer.Option("2 days", parser=_parse_timespan),
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,

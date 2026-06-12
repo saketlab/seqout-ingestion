@@ -10,6 +10,7 @@ dependencies = [
     "humanfriendly>=10.0",
     "libarchive-c>=5.3",
     "lmdb>=2.2.1",
+    "lxml>=7.0.0a1",
     "pysradb",
     "requests>=2.34.2",
     "tqdm>=4.67.3",

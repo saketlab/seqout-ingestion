@@ -1,4 +1,4 @@
-export PYTHON_GIL := "1"
+export PYTHON_GIL := "0"
 
 PYTHON := ".venv/bin/python"
 DATA_DIR := "./data"
@@ -8,7 +8,7 @@ _latest_db source:
     echo "{{ DATA_DIR }}/{{ source }}/db/$latest/{{ source }}_metadata_$latest.db"
 
 ingest_sra:
-    {{ PYTHON }} ./src/main.py ingest sra --output-dir {{ DATA_DIR }} --start-date 2026-01-15 --end-date 2026-01-20 --workers 1
+    {{ PYTHON }} ./src/main.py ingest sra --output-dir {{ DATA_DIR }} --start-date 2026-01-15 --end-date 2026-01-20 --workers 10
 
 ingest_geo:
     {{ PYTHON }} ./src/main.py ingest geo --output-dir {{ DATA_DIR }} --series-limit 1

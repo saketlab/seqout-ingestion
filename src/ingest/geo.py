@@ -6,14 +6,14 @@ import pickle
 import sqlite3
 import tarfile
 import time
-import xml.etree.ElementTree as ET
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
 from typing import IO, Optional
 
 import humanfriendly
+import lxml.etree as ET
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
@@ -239,12 +239,12 @@ def _wrap_ns(s: str) -> str:
     return f"{{{_MINIML_NAMESPACE}}}{s}"
 
 
-def _findtext(root: ET.Element, s: str) -> str | None:
+def _findtext(root: ET._Element, s: str) -> str | None:
     v = root.findtext(_wrap_ns(s)) or ""
     return (v or "").strip() or None
 
 
-def _parse_dates(root: ET.Element, s: str) -> datetime.date | None:
+def _parse_dates(root: ET._Element, s: str) -> datetime.date | None:
     date_raw = root.findtext(s)
     parsed_date: datetime.date | None = None
 
@@ -254,7 +254,7 @@ def _parse_dates(root: ET.Element, s: str) -> datetime.date | None:
     return parsed_date
 
 
-def _et_to_dict(elem: ET.Element | list[ET.Element]) -> list | dict | str:
+def _et_to_dict(elem: ET._Element | list[ET._Element]) -> list | dict | str:
     if isinstance(elem, list):
         return [_et_to_dict(v) for v in elem]
     else:
@@ -285,7 +285,7 @@ def _et_to_dict(elem: ET.Element | list[ET.Element]) -> list | dict | str:
         return result
 
 
-def _get_platforms(root: ET.Element) -> list[tuple] | None:
+def _get_platforms(root: ET._Element) -> list[tuple] | None:
     platform_elems = root.findall(_wrap_ns("Platform"))
     if not platform_elems:
         return None
@@ -328,7 +328,7 @@ def _get_platforms(root: ET.Element) -> list[tuple] | None:
     return platforms
 
 
-def _get_samples(root: ET.Element) -> list[tuple] | None:
+def _get_samples(root: ET._Element) -> list[tuple] | None:
     samples = []
     samples_elems = root.findall(_wrap_ns("Sample"))
     if not samples_elems:
@@ -385,7 +385,7 @@ def _get_samples(root: ET.Element) -> list[tuple] | None:
     return samples
 
 
-def _get_series(root: ET.Element) -> list[tuple] | None:
+def _get_series(root: ET._Element) -> list[tuple] | None:
     series = root.find(_wrap_ns("Series"))
     if not series:
         return None
@@ -432,7 +432,7 @@ def _get_series(root: ET.Element) -> list[tuple] | None:
     ]
 
 
-def _get_contributors(root: ET.Element, accession: str) -> list[tuple] | None:
+def _get_contributors(root: ET._Element, accession: str) -> list[tuple] | None:
     contributors_elems = root.findall(_wrap_ns("Contributor"))
     if not contributors_elems:
         return None
@@ -630,7 +630,7 @@ def _run_pipeline(
 
     pbar = tqdm(total=num_accessions, unit="acc", desc="processing accessions")
 
-    with ProcessPoolExecutor(num_workers) as pool:
+    with ThreadPoolExecutor(num_workers) as pool:
         futures = {
             pool.submit(
                 _process_one,

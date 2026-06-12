@@ -7,21 +7,20 @@ import io
 import json
 import logging
 import logging.config
-import multiprocessing
 import os
+import pickle
 import queue
 import re
 import sqlite3
 import tarfile
 import time
 import typing
-import xml.etree.ElementTree as ET
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import isqrt
 from pathlib import Path
 
 import humanfriendly
-import lmdb
+import lxml.etree as ET
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
@@ -124,8 +123,8 @@ def ingest_sra(
         downloader, file_dumps, output_dir, num_workers, chunk_size
     )
 
-    logging.debug("building accession index")
-    lmdb_path = _build_accessions_index(
+    logging.debug("building accession lookup dict")
+    accessions_dict = _build_accessions_dict(
         accessions_csv_path, to_reprocess_csv, output_dir
     )
     tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
@@ -134,7 +133,7 @@ def ingest_sra(
     _process_tarballs(
         tarballs,
         db_file,
-        lmdb_path,
+        accessions_dict,
         num_workers,
         read_batch_size,
         write_batch_size,
@@ -285,38 +284,38 @@ def _download_sra_file_dumps(
     return dumps_dir
 
 
-def _build_accessions_index(
+def _build_accessions_dict(
     accessions_csv_path: Path, to_rebuild: bool, output_dir: Path
-) -> Path:
-    lmdb_path = output_dir / "sra_accessions_idx"
-    if lmdb_path.exists():
-        return lmdb_path
+) -> dict[str, str]:
+    pickle_path = output_dir / "sra_accessions.pkl"
 
-    env = lmdb.open(
-        str(lmdb_path),
-        map_size=10_737_418_240,  # 10 GB
-        sync=False,
-        metasync=False,
-    )
+    if not to_rebuild and pickle_path.exists():
+        logging.debug("loading accessions dict from pickle")
+        with open(pickle_path, "rb") as f:
+            return pickle.load(f)
 
-    with env.begin(write=True) as txn:
-        with open(accessions_csv_path, newline="") as f:
-            reader = csv.reader(f)
-            header = next(reader)
-            col = {name: i for i, name in enumerate(header)}
-            for row in reader:
-                key = row[col["accession"]].encode()
-                val = (row[col["updated_at"]] + "|" + row[col["published_at"]]).encode()
-                txn.put(key, val)
+    logging.debug("building accessions dict from csv")
+    accessions: dict[str, str] = {}
+    with open(accessions_csv_path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader)
+        col = {name: i for i, name in enumerate(header)}
+        for row in reader:
+            key = row[col["accession"]]
+            val = row[col["updated_at"]] + "|" + row[col["published_at"]]
+            accessions[key] = val
 
-    env.close()
-    return lmdb_path
+    logging.debug("saving accessions dict to pickle")
+    with open(pickle_path, "wb") as f:
+        pickle.dump(accessions, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    return accessions
 
 
 def _process_submission(
     submission_accession: str,
     content: typing.BinaryIO,
-    txn: lmdb.Transaction,
+    accessions: dict[str, str],
 ):
     ctx = ET.iterparse(content, events=("end",))
     attrs: dict[str, str] = {}
@@ -330,19 +329,18 @@ def _process_submission(
             elem.clear()
             break
     except ET.ParseError:
-        return None
+        return
 
     accession = attrs.get("accession", submission_accession)
     if not accession:
-        return None
-
-    dates = txn.get(accession.encode())
-    if not dates:
         return
-    dates_str = str(dates)
-    updated_at, published_at = dates_str.split("|") if dates else (None, None)
 
-    return (
+    dates_str = accessions.get(accession)
+    if not dates_str:
+        return
+    updated_at, published_at = dates_str.split("|")
+
+    yield (
         accession,
         attrs.get("alias"),
         attrs.get("center_name"),
@@ -354,10 +352,9 @@ def _process_submission(
 
 
 def _process_studies(
-    submission_accession: str, content: typing.BinaryIO, txn: lmdb.Transaction
+    submission_accession: str, content: typing.BinaryIO, accessions: dict[str, str]
 ):
     ctx = ET.iterparse(content, events=("end",))
-    results = []
 
     try:
         for _, elem in ctx:
@@ -379,15 +376,12 @@ def _process_studies(
                 attrs = study.findall("STUDY_ATTRIBUTES/STUDY_ATTRIBUTE")
                 links = study.findall("STUDY_LINKS/STUDY_LINK")
 
-                dates = txn.get(accession.encode())
-                if not dates:
+                dates_str = accessions.get(accession)
+                if not dates_str:
                     continue
-                dates_str = str(dates)
-                updated_at, published_at = (
-                    dates_str.split("|") if dates else (None, None)
-                )
+                updated_at, published_at = dates_str.split("|")
 
-                record = (
+                yield (
                     accession,
                     study.get("alias"),
                     study.get("center_name"),
@@ -403,19 +397,15 @@ def _process_studies(
                     updated_at,
                 )
 
-                results.append(record)
                 study.clear()
             elem.clear()
             break
     except ET.ParseError:
-        return None
-
-    return results
+        return
 
 
 def _process_samples(submission_accession: str, content: typing.BinaryIO):
     ctx = ET.iterparse(content, events=("end",))
-    results = []
 
     try:
         for _, elem in ctx:
@@ -431,7 +421,7 @@ def _process_samples(submission_accession: str, content: typing.BinaryIO):
             attrs = elem.findall("SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
             links = elem.findall("SAMPLE_LINKS/SAMPLE_LINK")
 
-            record = (
+            yield (
                 accession,
                 elem.get("alias"),
                 elem.findtext("DESCRIPTION"),
@@ -444,17 +434,13 @@ def _process_samples(submission_accession: str, content: typing.BinaryIO):
                 _parse_links(links),
             )
 
-            results.append(record)
             elem.clear()
     except ET.ParseError:
-        return None
-
-    return results
+        return
 
 
 def _process_experiments(submission_accession: str, content: typing.BinaryIO):
     ctx = ET.iterparse(content, events=("end",))
-    results = []
 
     try:
         for _, elem in ctx:
@@ -504,7 +490,7 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
 
                 title = experiment.findtext("TITLE")
 
-                record = (
+                yield (
                     experiment_accession,
                     design_description,
                     library_layout,
@@ -520,19 +506,15 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
                     submission_accession,
                 )
 
-                results.append(record)
                 experiment.clear()
             elem.clear()
             break
     except ET.ParseError:
-        return None
-
-    return results
+        return
 
 
 def _process_runs(submission_accession: str, content: typing.BinaryIO):
     ctx = ET.iterparse(content, events=("end",))
-    results = []
 
     try:
         for _, elem in ctx:
@@ -548,21 +530,19 @@ def _process_runs(submission_accession: str, content: typing.BinaryIO):
                     if experiment_ref_elem is not None
                     else None
                 )
-                record = (run.get("accession"), experiment_ref, submission_accession)
 
-                results.append(record)
+                yield (run.get("accession"), experiment_ref, submission_accession)
+
                 run.clear()
             elem.clear()
             break
     except ET.ParseError:
-        return None
-
-    return results
+        return
 
 
 def _reader_worker(
     tarball: Path,
-    transform_queue: multiprocessing.Queue,
+    transform_queue: queue.Queue,
     pbar: tqdm,
     read_batch_size: int,
 ):
@@ -607,13 +587,13 @@ def _reader_worker(
 
 
 def _transform_worker(
-    lmdb_path: Path,
-    transform_queue: multiprocessing.Queue,
-    write_queue: multiprocessing.Queue,
+    accessions: dict[str, str],
+    transform_queue: queue.Queue,
+    write_queue: queue.Queue,
 ):
     while True:
         try:
-            batch = transform_queue.get(timeout=1.0)
+            batch = transform_queue.get(timeout=10.0)
         except queue.Empty:
             continue
 
@@ -621,46 +601,39 @@ def _transform_worker(
             write_queue.put(_STOP)
             break
 
-        with lmdb.open(str(lmdb_path), readonly=True) as env:
-            with env.begin() as txn:
-                for submission_accession, file_type, content in batch:
-                    try:
-                        result = None
+        for submission_accession, file_type, content in batch:
+            try:
+                if file_type == FileType.Submission:
+                    processor = _process_submission(
+                        submission_accession, content, accessions
+                    )
+                elif file_type == FileType.Study:
+                    processor = _process_studies(
+                        submission_accession, content, accessions
+                    )
+                elif file_type == FileType.Sample:
+                    processor = _process_samples(submission_accession, content)
+                elif file_type == FileType.Experiment:
+                    processor = _process_experiments(submission_accession, content)
+                elif file_type == FileType.Run:
+                    processor = _process_runs(submission_accession, content)
+                else:
+                    logging.error(
+                        f"[transform] received invalid file type: {file_type}"
+                    )
+                    continue
 
-                        if file_type == FileType.Submission:
-                            result = _process_submission(
-                                submission_accession, content, txn
-                            )
-                        elif file_type == FileType.Study:
-                            result = _process_studies(
-                                submission_accession, content, txn
-                            )
-                        elif file_type == FileType.Sample:
-                            result = _process_samples(submission_accession, content)
-                        elif file_type == FileType.Experiment:
-                            result = _process_experiments(submission_accession, content)
-                        elif file_type == FileType.Run:
-                            result = _process_runs(submission_accession, content)
-                        else:
-                            logging.error(
-                                f"[transform] received invalid file type: {file_type}"
-                            )
+                for row in processor:
+                    write_queue.put((file_type, row))
 
-                        if result is None:
-                            continue
-
-                        rows = result if isinstance(result, list) else [result]
-                        for row in rows:
-                            write_queue.put((file_type, row))
-
-                    except Exception as e:
-                        logging.error(
-                            f"[transform] failed to process {submission_accession}: {e}"
-                        )
+            except Exception as e:
+                logging.error(
+                    f"[transform] failed to process {submission_accession}: {e}"
+                )
 
 
 def _writer_worker(
-    write_queue: multiprocessing.Queue,
+    write_queue: queue.Queue,
     db_file: Path,
     sentinels_to_receive: int,
     write_batch_size: int,
@@ -712,7 +685,7 @@ def _writer_worker(
 
     while True:
         try:
-            item = write_queue.get(timeout=1.0)
+            item = write_queue.get(timeout=10.0)
         except queue.Empty:
             continue
 
@@ -738,7 +711,7 @@ def _writer_worker(
 def _process_tarballs(
     tarballs: list[Path],
     db_file: Path,
-    lmdb_path: Path,
+    accessions: dict[str, str],
     num_workers: int,
     read_batch_size: int,
     write_batch_size: int,
@@ -747,11 +720,10 @@ def _process_tarballs(
     num_writer = 1
     num_transform = max(1, num_workers - num_readers - num_writer)
 
-    transform_queue: multiprocessing.Queue = multiprocessing.Queue()
-    write_queue: multiprocessing.Queue = multiprocessing.Queue()
+    transform_queue: queue.Queue = queue.Queue(maxsize=num_transform * 16)
+    write_queue: queue.Queue = queue.Queue(maxsize=num_writer * 32)
 
-    with lmdb.open(str(lmdb_path), readonly=True) as env:
-        total = env.stat()["entries"]
+    total = len(accessions)
 
     pbar = tqdm(
         total=total,
@@ -762,7 +734,7 @@ def _process_tarballs(
 
     with (
         ThreadPoolExecutor(num_readers) as reader_pool,
-        ProcessPoolExecutor(num_transform) as transform_pool,
+        ThreadPoolExecutor(num_transform) as transform_pool,
         ThreadPoolExecutor(num_writer) as writer_pool,
     ):
         write_future = writer_pool.submit(
@@ -771,7 +743,7 @@ def _process_tarballs(
         transform_futures = [
             transform_pool.submit(
                 _transform_worker,
-                lmdb_path,
+                accessions,
                 transform_queue,
                 write_queue,
             )
