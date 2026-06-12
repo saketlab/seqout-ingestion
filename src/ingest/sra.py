@@ -100,7 +100,7 @@ def ingest_sra(
         better_downloader, retries=retries, timeout=timeout, max_timeout=max_timeout
     )
 
-    logging.debug("downloading accessions tab file")
+    logging.info("downloading accessions tab file")
     tab_path, is_freshly_downloaded = _download_accessions_tab_file(
         downloader,
         output_dir,
@@ -115,15 +115,15 @@ def ingest_sra(
     )
 
     if to_reprocess_csv:
-        logging.debug("converting accessions tab file into csv")
+        logging.info("converting accessions tab file into csv")
         _convert_tab_to_csv(accessions_csv_path, tab_path, chunk_size)
 
-    logging.debug("downloading sra file dumps")
+    logging.info("downloading sra file dumps")
     dumps_dir = _download_sra_file_dumps(
         downloader, file_dumps, output_dir, num_workers, chunk_size
     )
 
-    logging.debug("building accession lookup dict")
+    logging.info("building accession lookup dict")
     accessions_dict = _build_accessions_dict(
         accessions_csv_path, to_reprocess_csv, output_dir
     )
@@ -294,7 +294,7 @@ def _build_accessions_dict(
         with open(pickle_path, "rb") as f:
             return pickle.load(f)
 
-    logging.debug("building accessions dict from csv")
+    logging.info("building accessions dict from csv")
     accessions: dict[str, str] = {}
     with open(accessions_csv_path, newline="") as f:
         reader = csv.reader(f)
@@ -305,7 +305,7 @@ def _build_accessions_dict(
             val = row[col["updated_at"]] + "|" + row[col["published_at"]]
             accessions[key] = val
 
-    logging.debug("saving accessions dict to pickle")
+    logging.info("saving accessions dict to pickle")
     with open(pickle_path, "wb") as f:
         pickle.dump(accessions, f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -381,6 +381,12 @@ def _process_studies(
                     continue
                 updated_at, published_at = dates_str.split("|")
 
+                study_type_raw = descriptor.get("STUDY_TYPE", {})
+                if isinstance(study_type_raw, dict):
+                    study_type = study_type_raw.get("existing_study_type")
+                else:
+                    study_type = None
+
                 yield (
                     accession,
                     study.get("alias"),
@@ -388,7 +394,7 @@ def _process_studies(
                     descriptor.get("STUDY_ABSTRACT"),
                     descriptor.get("STUDY_TITLE"),
                     _parse_external_ids(external_ids),
-                    descriptor.get("STUDY_TYPE", {}).get("existing_study_type"),
+                    study_type,
                     _parse_attributes(attrs),
                     _parse_links(links),
                     descriptor.get("CENTER_PROJECT_NAME"),
@@ -455,10 +461,16 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
                 design_elem = experiment.find("DESIGN")
                 design_dict = _xml_elem_to_dict(design_elem)
                 library_descriptor = design_dict.get("LIBRARY_DESCRIPTOR", {})
+                if not isinstance(library_descriptor, dict):
+                    library_descriptor = {}
                 design_description = design_dict.get("DESIGN_DESCRIPTION")
 
                 library_layout_raw = library_descriptor.get("LIBRARY_LAYOUT", {})
-                library_layout = next(iter(library_layout_raw), None)
+                library_layout = (
+                    next(iter(library_layout_raw), None)
+                    if isinstance(library_layout_raw, dict)
+                    else None
+                )
 
                 library_name = library_descriptor.get("LIBRARY_NAME")
                 library_selection = library_descriptor.get("LIBRARY_SELECTION")
@@ -475,9 +487,10 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
                 platform_elem = experiment.find("PLATFORM")
                 platform_dict = _xml_elem_to_dict(platform_elem)
                 platform = next(iter(platform_dict), None)
+                platform_val = platform_dict.get(platform, {}) if platform else {}
                 instrument_model = (
-                    platform_dict.get(platform, {}).get("INSTRUMENT_MODEL")
-                    if platform
+                    platform_val.get("INSTRUMENT_MODEL")
+                    if isinstance(platform_val, dict)
                     else None
                 )
 
@@ -543,7 +556,6 @@ def _process_runs(submission_accession: str, content: typing.BinaryIO):
 def _reader_worker(
     tarball: Path,
     transform_queue: queue.Queue,
-    pbar: tqdm,
     read_batch_size: int,
 ):
     batch: list = []
@@ -570,7 +582,6 @@ def _reader_worker(
 
                     content = io.BytesIO(f.read())
                     batch.append((submission_accession, file_type, content))
-                    pbar.update(1)
 
                     if len(batch) >= read_batch_size:
                         transform_queue.put(batch)
@@ -590,6 +601,7 @@ def _transform_worker(
     accessions: dict[str, str],
     transform_queue: queue.Queue,
     write_queue: queue.Queue,
+    pbar: tqdm,
 ):
     while True:
         try:
@@ -630,6 +642,8 @@ def _transform_worker(
                 logging.error(
                     f"[transform] failed to process {submission_accession}: {e}"
                 )
+            finally:
+                pbar.update(1)
 
 
 def _writer_worker(
@@ -640,7 +654,9 @@ def _writer_worker(
 ):
     conn = sqlite3.connect(str(db_file))
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA synchronous=OFF")
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA cache_size=-800000")
     cursor = conn.cursor()
     sentinels_received = 0
     rows_written = 0
@@ -720,15 +736,18 @@ def _process_tarballs(
     num_writer = 1
     num_transform = max(1, num_workers - num_readers - num_writer)
 
-    transform_queue: queue.Queue = queue.Queue(maxsize=num_transform * 16)
-    write_queue: queue.Queue = queue.Queue(maxsize=num_writer * 32)
+    # note: the memory consumption of sra ingestion can be further optimized by converting these into bounded queues
+    # but it requires a lot of fine tuning with the queue's max size based on the systems' constraints, number of workers, read/write batch size and a lot of other factors
+    # by which you can design a proper number which wouldn't get up in a deadlock
+    transform_queue: queue.Queue = queue.Queue()
+    write_queue: queue.Queue = queue.Queue()
 
     total = len(accessions)
 
     pbar = tqdm(
         total=total,
-        unit="file",
-        desc="processing tarballs",
+        unit="acc",
+        desc="processing accessions",
         mininterval=2.0,
     )
 
@@ -746,13 +765,12 @@ def _process_tarballs(
                 accessions,
                 transform_queue,
                 write_queue,
+                pbar,
             )
             for _ in range(num_transform)
         ]
         reader_futures = [
-            reader_pool.submit(
-                _reader_worker, tb, transform_queue, pbar, read_batch_size
-            )
+            reader_pool.submit(_reader_worker, tb, transform_queue, read_batch_size)
             for tb in tarballs
         ]
 

@@ -2,7 +2,6 @@ import logging
 import sqlite3
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from importlib.resources import files
 from pathlib import Path
 
 import requests
@@ -328,7 +327,8 @@ def exec_query_from_file(
         conn = sqlite3.connect(db_file)
 
     cursor = conn.cursor()
-    query = files("sql").joinpath(query_file).read_text()
+    sql_dir = Path(__file__).resolve().parent.parent / "sql"
+    query = (sql_dir / query_file).read_text()
     cursor.executescript(query)
 
     if owns_conn:

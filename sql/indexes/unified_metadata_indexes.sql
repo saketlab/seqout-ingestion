@@ -1,0 +1,8 @@
+CREATE INDEX idx_um_source ON unified_metadata(source);
+CREATE INDEX idx_um_dominant_sci ON unified_metadata(dominant_scientific_name);
+CREATE INDEX idx_um_dominant_common ON unified_metadata(dominant_common_name);
+CREATE INDEX idx_um_dominant_l1 ON unified_metadata(dominant_assay_l1);
+CREATE INDEX idx_um_dominant_l2 ON unified_metadata(dominant_assay_l2);
+CREATE INDEX idx_um_pmid ON unified_metadata(pmid);
+CREATE INDEX idx_um_country ON unified_metadata(country);
+CREATE INDEX idx_um_country_code ON unified_metadata(country_code);

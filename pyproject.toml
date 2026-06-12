@@ -19,7 +19,7 @@ dependencies = [
 
 [tool.uv]
 override-dependencies = [
-    "lxml==7.0.0a1",
+    "lxml>=7.0.0a1", # experimental version which supports freethreading python
 ]
 
 [tool.uv.sources]
