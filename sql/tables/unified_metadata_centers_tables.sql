@@ -1,4 +1,4 @@
-CREATE TABLE unified_metadata_centers (
+CREATE TABLE IF NOT EXISTS unified_metadata_centers (
     canonical_accession TEXT NOT NULL,
     center_name         TEXT NOT NULL,
     position            INTEGER NOT NULL DEFAULT 0,
@@ -6,6 +6,9 @@ CREATE TABLE unified_metadata_centers (
     place_type          TEXT,
     short_label         TEXT,
     address_type        TEXT,
+    osm_id              TEXT,
+    osm_type            TEXT,
+    place_id            TEXT,
     longitude           REAL,
     latitude            REAL,
     city                TEXT,

@@ -32,6 +32,8 @@ def build_catalog(
 
 @unify_app.command()
 def build_metadata(
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    db_file: Optional[Path] = typer.Option(None),
     geo_db_file: Path = typer.Option(...),
     sra_db_file: Path = typer.Option(...),
     ena_db_file: Path = typer.Option(...),
@@ -40,8 +42,11 @@ def build_metadata(
     pubmed_metadata_db_file: Path = typer.Option(...),
     assay_mapping_csv_file: Path = typer.Option(...),
     taxonomy_mapping_csv_file: Path = typer.Option(...),
+    batch_size: int = typer.Option(2000),
 ):
     build_unified_metadata(
+        base_output_dir,
+        db_file,
         geo_db_file,
         sra_db_file,
         ena_db_file,
@@ -50,4 +55,5 @@ def build_metadata(
         pubmed_metadata_db_file,
         assay_mapping_csv_file,
         taxonomy_mapping_csv_file,
+        batch_size,
     )

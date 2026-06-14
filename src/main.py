@@ -4,6 +4,7 @@ from typing import Literal, Optional
 import typer
 
 from cli.backfill import backfill_app
+from cli.geocode import geocode_app
 from cli.ingest import ingest_app
 from cli.unify import unify_app
 
@@ -36,6 +37,7 @@ def main(
 cli.add_typer(ingest_app, name="ingest")
 cli.add_typer(backfill_app, name="backfill")
 cli.add_typer(unify_app, name="unify")
+cli.add_typer(geocode_app)
 
 if __name__ == "__main__":
     cli()

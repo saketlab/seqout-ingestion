@@ -27,10 +27,6 @@ def _is_retryable(exc: Exception) -> bool:
     )
 
 
-def _retry_delay(attempt: int, max_wait: int) -> float:
-    return min(2**attempt, max_wait)
-
-
 def better_downloader(
     url: str,
     dest_path: Path,
@@ -55,7 +51,7 @@ def better_downloader(
             if not _is_retryable(exc) or attempt == retries - 1:
                 raise
 
-            wait = _retry_delay(attempt, max_timeout)
+            wait = min(2**attempt, max_timeout)
             logging.warning(
                 "HEAD %s failed (attempt %d/%d): %s — retrying in %.0fs",
                 url,
@@ -146,7 +142,7 @@ def better_downloader(
 
                     cursor -= bytes_this_attempt
 
-                    wait = _retry_delay(attempt, max_timeout)
+                    wait = min(2**attempt, max_timeout)
                     logging.warning(
                         "chunk %d-%d failed (attempt %d/%d): %s — retrying in %.0fs",
                         chunk_start,
@@ -258,7 +254,7 @@ def simple_file_download(
 
             already_downloaded -= bytes_this_attempt
 
-            wait = _retry_delay(attempt, max_timeout)
+            wait = min(2**attempt, max_timeout)
             logging.warning(
                 "simple_file_download %s failed (attempt %d/%d): %s — retrying in %.0fs",
                 url,

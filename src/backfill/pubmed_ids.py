@@ -57,6 +57,7 @@ def backfill_pubmed_ids(
     num_workers: int,
     batch_size: int,
     is_dry_run: bool,
+    process_all: bool = False,
 ):
     if (
         (not geo_db_file)
@@ -92,6 +93,8 @@ def backfill_pubmed_ids(
             _add_col_if_not_exists(conn, table, "pubmed_last_checked", "TEXT")
 
             missing_query = MISSING_QUERIES[datasource]
+            if not process_all:
+                missing_query += " AND pubmed_last_checked IS NULL"
             has_original_query = HAS_ORIGINAL_PMID_QUERIES[datasource]
             backfilled_query = BACKFILLED_PMID_QUERIES[datasource]
 
@@ -141,6 +144,8 @@ def backfill_pubmed_ids(
         for i, accession in enumerate(accessions):
             worker_data[i % num_workers].append(accession)
 
+        pbar = tqdm(total=len(accessions), unit="acc", desc=datasource.value)
+
         with ThreadPoolExecutor(num_workers) as pool:
             futures = [
                 pool.submit(
@@ -150,13 +155,15 @@ def backfill_pubmed_ids(
                     worker_data[i],
                     db_file,
                     batch_size,
-                    i,
+                    pbar,
                 )
                 for i in range(num_workers)
             ]
 
             for f in as_completed(futures):
                 f.result()
+
+        pbar.close()
 
 
 def _worker(
@@ -165,56 +172,49 @@ def _worker(
     data: list[str],
     db_file: Path,
     batch_size: int,
-    worker_id: int = 0,
+    pbar: tqdm,
 ):
     sra = SRAweb(api_key, verbose=False)
     is_sra_related = datasource in (Datasource.Sra, Datasource.Ena)
     col_name = "srp_accession" if is_sra_related else "gse_accession"
 
-    with tqdm(
-        total=len(data),
-        desc=f"[W{worker_id}] {datasource.value}",
-        unit="acc",
-        position=worker_id,
-        leave=True,
-    ) as pbar:
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-        for batch in _chunked(data, batch_size):
-            try:
-                df = (
-                    sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
+    for batch in _chunked(data, batch_size):
+        try:
+            df = (
+                sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
+            )
+        except KeyError:
+            df = pd.DataFrame()
+
+        pmid_updates = []
+
+        for _, row in df.iterrows():
+            acc = row.get(col_name)
+            pmid = _parse_pmid(row.get("pmid"))
+            if acc and pmid:
+                pmid_updates.append((pmid, acc))
+
+        with sqlite3.Connection(db_file) as conn:
+            table = DATASOURCE_TABLE_MAPPING[datasource]
+            column = DATASOURCE_COLUMN_MAPPING[datasource]
+
+            accessions_in_batch = [a for a in batch if a]
+            placeholders = ",".join("?" for _ in accessions_in_batch)
+            conn.execute(
+                f"UPDATE {table} SET pubmed_last_checked = ? WHERE {column} IN ({placeholders})",
+                (now, *accessions_in_batch),
+            )
+
+            if pmid_updates:
+                conn.executemany(
+                    f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE {column} = ?",
+                    pmid_updates,
                 )
-            except KeyError:
-                df = pd.DataFrame()
+            conn.commit()
 
-            pmid_updates = []
-
-            for _, row in df.iterrows():
-                acc = row.get(col_name)
-                pmid = _parse_pmid(row.get("pmid"))
-                if acc and pmid:
-                    pmid_updates.append((pmid, acc))
-
-            with sqlite3.Connection(db_file) as conn:
-                table = DATASOURCE_TABLE_MAPPING[datasource]
-                column = DATASOURCE_COLUMN_MAPPING[datasource]
-
-                accessions_in_batch = [a for a in batch if a]
-                placeholders = ",".join("?" for _ in accessions_in_batch)
-                conn.execute(
-                    f"UPDATE {table} SET pubmed_last_checked = ? WHERE {column} IN ({placeholders})",
-                    (now, *accessions_in_batch),
-                )
-
-                if pmid_updates:
-                    conn.executemany(
-                        f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE {column} = ?",
-                        pmid_updates,
-                    )
-                conn.commit()
-
-            pbar.update(len(batch))
+        pbar.update(len(batch))
 
 
 def _add_col_if_not_exists(

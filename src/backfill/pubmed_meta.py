@@ -133,18 +133,18 @@ def backfill_pubmed_meta(
 
     exec_query_from_file("tables/pubmed_meta_tables.sql", db_file)
 
-    for datasource, ds_db_file in mapping.items():
-        if update_journal_metrics:
-            _process_via_per_journal_lookup(
-                db_file,
-                ncbi_keys_file,
-                openalex_keys_file,
-                num_workers,
-                batch_size,
-                refresh_all_journals_metrics,
-                is_dry_run,
-            )
-        else:
+    if update_journal_metrics:
+        _process_via_per_journal_lookup(
+            db_file,
+            ncbi_keys_file,
+            openalex_keys_file,
+            num_workers,
+            batch_size,
+            refresh_all_journals_metrics,
+            is_dry_run,
+        )
+    else:
+        for datasource, ds_db_file in mapping.items():
             _process_via_per_pmid_lookup(
                 datasource,
                 ds_db_file,
@@ -230,6 +230,13 @@ def _process_via_per_journal_lookup(
         openalex_keys,
         counters,
         pbar,
+    )
+
+    logging.info(
+        "journal lookup finished: %d updated, %d errors out of %d journals",
+        counters.updated.value,
+        counters.errors.value,
+        total,
     )
 
 
@@ -325,6 +332,13 @@ def _process_via_per_pmid_lookup(
         pbar,
     )
 
+    logging.info(
+        "pmid lookup finished: %d updated, %d errors out of %d pmids",
+        counters.updated.value,
+        counters.errors.value,
+        len(target),
+    )
+
 
 def _worker_loop(
     worker: functools.partial,
@@ -391,12 +405,12 @@ def _journal_lookup_worker(
                 rows = []
 
         def _pbar_update():
-            pbar.update(1)
             pbar.set_postfix(
                 updated=counters.updated.value,
                 errors=counters.errors.value,
                 refresh=False,
             )
+            pbar.update(1)
 
         for journal, issn in data:
             try:
@@ -434,13 +448,9 @@ def _journal_lookup_worker(
 
         if rows:
             _flush()
-            _pbar_update()
-    logging.info(
-        "finished: %d rows, %d errors out of %d journals",
-        local_updated,
-        local_errors,
-        len(data),
-    )
+    if data:
+        with counters.total.get_lock():
+            counters.total.value += len(data)
 
 
 def _pmid_lookup_worker(
@@ -460,12 +470,12 @@ def _pmid_lookup_worker(
     local_errors = 0
 
     def _pbar_update():
-        pbar.update(1)
         pbar.set_postfix(
             updated=counters.updated.value,
             errors=counters.errors.value,
             refresh=False,
         )
+        pbar.update(1)
 
     with sqlite3.Connection(db_file) as conn:
         _setup_wal(conn)
@@ -515,14 +525,6 @@ def _pmid_lookup_worker(
 
                 _pbar_update()
                 logging.exception("batch failed (%d pubmed ids): %s", len(batch), e)
-
-    logging.info(
-        "finished: %d metadata rows, %d errors out of %d pubmed ids",
-        local_updated,
-        local_errors,
-        len(data),
-    )
-
 
 def _collect_all_pmids(conn: sqlite3.Connection, datasource: Datasource) -> set[str]:
     all_pmids: set[str] = set()

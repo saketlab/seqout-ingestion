@@ -228,15 +228,15 @@ def _convert_tab_to_csv(
 
             for line in (leftover + chunk).split(b"\n")[:-1]:
                 f = line.split(b"\t", 7)
-                if len(f) > 6 and f[6] == b"SUBMISSION":
-                    outf.write(f[1] + b"," + f[3] + b"," + f[4] + b"\n")
+                if len(f) > 6 and f[6] in (b"SUBMISSION", b"STUDY"):
+                    outf.write(f[0] + b"," + f[3] + b"," + f[4] + b"\n")
 
             leftover = chunk[chunk.rfind(b"\n") + 1 :]
 
         if leftover:
             f = leftover.split(b"\t", 7)
-            if len(f) > 6 and f[6] == b"SUBMISSION":
-                outf.write(f[1] + b"," + f[3] + b"," + f[4] + b"\n")
+            if len(f) > 6 and f[6] in (b"SUBMISSION", b"STUDY"):
+                outf.write(f[0] + b"," + f[3] + b"," + f[4] + b"\n")
 
 
 def _download_sra_file_dumps(

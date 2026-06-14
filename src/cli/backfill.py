@@ -22,6 +22,7 @@ def pm_ids(
     num_workers: int = _NUM_WORKERS_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
     is_dry_run: bool = typer.Option(False),
+    process_all: bool = typer.Option(False),
 ):
     backfill_pubmed_ids(
         geo_db_file,
@@ -32,6 +33,7 @@ def pm_ids(
         num_workers,
         batch_size,
         is_dry_run,
+        process_all,
     )
 
 

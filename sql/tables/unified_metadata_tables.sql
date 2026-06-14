@@ -1,4 +1,4 @@
-CREATE TABLE unified_metadata (
+CREATE TABLE IF NOT EXISTS unified_metadata (
     canonical_accession      TEXT PRIMARY KEY,
     source                   TEXT NOT NULL,
     title                    TEXT,
@@ -25,6 +25,9 @@ CREATE TABLE unified_metadata (
     place_type               TEXT,
     short_label              TEXT,
     address_type             TEXT,
+    osm_id                   TEXT,
+    osm_type                 TEXT,
+    place_id                 TEXT,
     longitude                REAL,
     latitude                 REAL,
     city                     TEXT,

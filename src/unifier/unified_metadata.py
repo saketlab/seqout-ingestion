@@ -230,6 +230,8 @@ def _scan_geo(db_file: Path) -> SourceMap:
     sample_organisms: dict[str, set[str]] = defaultdict(set[str])
     series_sample_count: Counter[str] = Counter()
     series_organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
+    series_library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
+    pmids: dict[str, set[str]] = defaultdict(set)
 
     # scanning geo_samples
     rows = conn.execute(
@@ -282,55 +284,55 @@ def _scan_geo(db_file: Path) -> SourceMap:
                     for st in parsed_series_type:
                         if not str(st):
                             continue
-                        m.library[accession][str(st)] += 1
+                        series_library_count[accession][str(st)] += 1
             except (json.JSONDecodeError, TypeError):
-                m.library[accession][series_type] = 1
+                series_library_count[accession][series_type] += 1
 
         if published_at:
             m.published[accession] = published_at
 
         if pubmed_id_json:
             try:
-                pmids = json.loads(pubmed_id_json)
-                if isinstance(pmids, list):
-                    for p in pmids:
+                parsed = json.loads(pubmed_id_json)
+                if isinstance(parsed, list):
+                    for p in parsed:
                         s = str(p).strip()
                         if s:
-                            m.pmids[accession].add(s)
-                elif pmids:
-                    s = str(pmids).strip()
-                    m.pmids[accession].add(s)
+                            pmids[accession].add(s)
+                elif parsed:
+                    s = str(parsed).strip()
+                    if s:
+                        pmids[accession].add(s)
             except (json.JSONDecodeError, TypeError):
                 pass
 
         if pubmed_id_pysradb:
             s = str(pubmed_id_pysradb).strip()
             if s:
-                m.pmids[accession].add(s)
+                pmids[accession].add(s)
 
     # scanning geo_contributors
     rows = conn.execute(
         "SELECT accession, organization FROM geo_contributors WHERE organization IS NOT NULL AND organization != '' AND organization != 'GEO' AND organization != 'NCBI/NLM/NIH' ORDER BY accession"
     ).fetchall()
 
-    center_orgs: dict[str, list[str]] = {}
-    seen_orgs: dict[str, set[str]] = {}
+    center_orgs: dict[str, list[str]] = defaultdict(list)
+    seen_orgs: dict[str, set[str]] = defaultdict(set)
     for accession, organization in rows:
         organization = organization.strip()
         if not organization:
             continue
-        if accession not in center_orgs:
-            center_orgs[accession] = []
-            seen_orgs[accession] = set()
         org_lower = organization.lower()
         if org_lower not in seen_orgs[accession]:
             seen_orgs[accession].add(org_lower)
             center_orgs[accession].append(organization)
 
     m.organism = {k: dict(v) for k, v in series_organism_count.items()}
+    m.library = {k: dict(v) for k, v in series_library_count.items()}
     m.n_exp = dict(series_sample_count)
     m.n_samp = dict(series_sample_count)
-    m.center = center_orgs
+    m.center = dict(center_orgs)
+    m.pmids = dict(pmids)
 
     conn.close()
     return m
@@ -346,6 +348,8 @@ def _scan_sra(db_file: Path) -> SourceMap:
     study_library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     study_to_submission: dict[str, str] = defaultdict(str)
     study_to_center: dict[str, str] = defaultdict(str)
+    pmids: dict[str, set[str]] = defaultdict(set)
+    sub_center: dict[str, str] = {}
 
     # scanning sra_samples
     rows = conn.execute(
@@ -433,23 +437,24 @@ def _scan_sra(db_file: Path) -> SourceMap:
                 if isinstance(xref, dict) and xref.get("DB") == "pubmed":
                     pid = xref.get("ID", "")
                     if pid:
-                        m.pmids[accession].add(str(pid).strip())
+                        pmids[accession].add(str(pid).strip())
                 elif isinstance(xref, list):
                     for x in xref:
                         if isinstance(x, dict) and x.get("DB") == "pubmed":
                             pid = x.get("ID", "")
                             if pid:
-                                m.pmids[accession].add(str(pid).strip())
+                                pmids[accession].add(str(pid).strip())
             except (json.JSONDecodeError, TypeError):
                 pass
 
         if pubmed_id_pysradb:
             s = str(pubmed_id_pysradb).strip()
             if s:
-                m.pmids[accession].add(s)
+                pmids[accession].add(s)
+
+    m.pmids = dict(pmids)
 
     # scanning sra_submissions for center (fallback to study center_name)
-    sub_center: dict[str, str] = {}
     cursor = conn.execute(
         "SELECT accession, center_name FROM sra_submissions WHERE center_name IS NOT NULL AND center_name != ''"
     )
@@ -483,6 +488,7 @@ def _scan_ae(db_file: Path) -> SourceMap:
     experiment_organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     experiment_library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     experiment_sample_count: Counter[str] = Counter()
+    pmids: dict[str, set[str]] = defaultdict(set)
 
     # scanning arrayexpress_samples
     rows = conn.execute(
@@ -561,17 +567,18 @@ def _scan_ae(db_file: Path) -> SourceMap:
         if pubmed_id:
             s = str(pubmed_id).strip()
             if s:
-                m.pmids[accession].add(s)
+                pmids[accession].add(s)
 
         if pubmed_id_pysradb:
             s = str(pubmed_id_pysradb).strip()
             if s:
-                m.pmids[accession].add(s)
+                pmids[accession].add(s)
 
     m.organism = {k: dict(v) for k, v in experiment_organism_count.items()}
     m.library = {k: dict(v) for k, v in experiment_library_count.items()}
     m.n_exp = dict(experiment_sample_count)
     m.n_samp = dict(experiment_sample_count)
+    m.pmids = dict(pmids)
 
     conn.close()
     return m
@@ -586,6 +593,8 @@ def _scan_ena(db_file: Path) -> SourceMap:
     study_center_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     study_sample_count: Counter[str] = Counter()
     study_experiment_count: Counter[str] = Counter()
+    ena_center_orgs: dict[str, list[str]] = defaultdict(list)
+    pmids: dict[str, set[str]] = defaultdict(set)
 
     # scanning ena_samples
     rows = conn.execute(
@@ -618,11 +627,6 @@ def _scan_ena(db_file: Path) -> SourceMap:
             if center_name:
                 study_center_count[study_accession][center_name] += 1
 
-    m.center = {
-        acc: [name for name, _ in counts.most_common()]
-        for acc, counts in study_center_count.items()
-    }
-
     # scanning ena_studies
     rows = conn.execute(
         "SELECT study_accession, first_public, pubmed_id_pysradb, center_name FROM ena_studies"
@@ -635,21 +639,26 @@ def _scan_ena(db_file: Path) -> SourceMap:
         if pubmed_id_pysradb:
             s = str(pubmed_id_pysradb).strip()
             if s:
-                m.pmids[study_accession].add(s)
+                pmids[study_accession].add(s)
 
         if center_name:
             cn = center_name.strip()
-            if cn:
-                existing = m.center.get(study_accession)
-                if existing is None:
-                    m.center[study_accession] = [cn]
-                elif cn.lower() not in {c.lower() for c in existing}:
-                    existing.append(cn)
+            if cn and cn.lower() not in {
+                c.lower() for c in ena_center_orgs[study_accession]
+            }:
+                ena_center_orgs[study_accession].append(cn)
+
+    for acc, counts in study_center_count.items():
+        for name, _ in counts.most_common():
+            if name.lower() not in {c.lower() for c in ena_center_orgs[acc]}:
+                ena_center_orgs[acc].append(name)
 
     m.organism = {k: dict(v) for k, v in study_organism_count.items()}
     m.library = {k: dict(v) for k, v in study_library_count.items()}
     m.n_samp = dict(study_sample_count)
     m.n_exp = dict(study_experiment_count)
+    m.center = dict(ena_center_orgs)
+    m.pmids = dict(pmids)
 
     conn.close()
     return m
