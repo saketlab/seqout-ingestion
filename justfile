@@ -82,7 +82,7 @@ geocode_missing:
         --db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
         --cache-file ./data/geocode_cache.json \
         --save-every 1 \
-        --rate-limit 1.0
+        --rate-limit 3.0
 
 sc_enrich:
     {{ PYTHON }} ./src/main.py sc_enrich \

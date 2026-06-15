@@ -1,3 +1,6 @@
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
 CREATE TABLE IF NOT EXISTS pubmed_metadata (
     pmid                       TEXT PRIMARY KEY,
     title                      TEXT,

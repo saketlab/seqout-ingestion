@@ -1,3 +1,6 @@
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
 CREATE TABLE IF NOT EXISTS arrayexpress_experiments (
     accession                   TEXT PRIMARY KEY,
     title                       TEXT,

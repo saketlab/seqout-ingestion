@@ -2,15 +2,23 @@ import json
 import logging
 import re
 import sqlite3
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Optional
 
 import pycountry
+from geopy import ArcGIS
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import Nominatim
 from geopy.location import Location
 
-_CENTERS_TABLE = "unified_metadata_centers"
+
+class GeocodingProviders(StrEnum):
+    Nominatim = "nominatim"
+    Arcgis = "arcgis"
+
+
+_CENTERS_TABLE = "unified_centers"
 _METADATA_TABLE = "unified_metadata"
 _NAME_COL = "center_name"
 
@@ -93,8 +101,11 @@ def geocode_missing(
         return
 
     cache = _load_cache(cache_file)
-    nominatim = Nominatim(user_agent="seqout-ingestion-v2")
-    geocoder = RateLimiter(nominatim.geocode, min_delay_seconds=rate_limit)
+    nominatim = RateLimiter(
+        Nominatim(user_agent="seqout-ingestion-v2").geocode,
+        min_delay_seconds=rate_limit,
+    )
+    arcgis = RateLimiter(ArcGIS().geocode, min_delay_seconds=rate_limit)
 
     updated = 0
     total = len(missing)
@@ -107,7 +118,12 @@ def geocode_missing(
         else:
             cleaned = clean_text(center_name)
             if cleaned:
-                result = _geocode(geocoder, cleaned, input_country)
+                result = _geocode(
+                    cleaned, nominatim, GeocodingProviders.Nominatim, input_country
+                )
+
+                if result is None:
+                    result = _geocode(cleaned, arcgis, GeocodingProviders.Arcgis)
 
         if result:
             cache[center_name] = result
@@ -141,6 +157,7 @@ def _first(*values):
 def clean_text(text):
     if text is None or text == "" or text == "NA":
         return None
+
     text = str(text)
     text = re.sub(r'\\+"', "", text)
     text = re.sub(r'"{2,}', "", text)
@@ -154,9 +171,8 @@ def clean_text(text):
     text = re.sub(r",\s*$", "", text)
     text = re.sub(r"\s+", " ", text)
     text = text.strip()
+    text = text.split(",")[-1].strip()
 
-    if len(text) > 200:
-        text = text.split(",")[0].strip()
     return text or None
 
 
@@ -252,8 +268,9 @@ def _parse_osm(query: str, location: Location | None) -> dict:
 
 
 def _geocode(
-    geocoder: RateLimiter,
     query: str,
+    geocoder: RateLimiter,
+    provider: GeocodingProviders,
     input_country: Optional[str] = None,
 ) -> Optional[dict]:
     try:
@@ -264,12 +281,19 @@ def _geocode(
             namedetails=True,
             language="en",
         )
+
         if location is not None:
-            result = _parse_osm(query, location)
+            match provider:
+                case GeocodingProviders.Nominatim:
+                    result = _parse_osm(query, location)
+                case GeocodingProviders.Arcgis:
+                    pass
+
             if input_country and result.get("country"):
                 result["country_mismatch"] = countries_mismatch(
                     result["country"], input_country
                 )
+
             return result
     except Exception as e:
         logging.debug("geocoding failed for '%s': %s", query, e)
@@ -294,21 +318,13 @@ def _save_cache(cache_file: Optional[Path], cache: dict[str, dict[str, Any]]):
 def _find_missing(
     conn: sqlite3.Connection,
     limit: Optional[int] = None,
-) -> list[tuple[str, Optional[str]]]:
-    rows = conn.execute(
-        f"SELECT DISTINCT {_NAME_COL}, country "
-        f"FROM {_CENTERS_TABLE} "
-        f"WHERE ({_NAME_COL} IS NOT NULL AND {_NAME_COL} != '') "
-        f"AND (latitude IS NULL OR longitude IS NULL)"
-    ).fetchall()
-    seen: set[str] = set()
-    result: list[tuple[str, Optional[str]]] = []
-    for name, country in rows:
-        if name in seen:
-            continue
-        result.append((name, country))
-        seen.add(name)
-    return result
+) -> list[str]:
+    query = f"SELECT DISTINCT {_NAME_COL} FROM {_CENTERS_TABLE} WHERE ({_NAME_COL} IS NOT NULL AND {_NAME_COL} != '') AND (latitude IS NULL OR longitude IS NULL)"
+    if limit:
+        query += f"LIMIT {limit}"
+
+    rows = conn.execute(query).fetchall()
+    return list(set(r[0] for r in rows))
 
 
 def _update_by_name(

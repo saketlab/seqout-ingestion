@@ -1,3 +1,6 @@
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
 CREATE TABLE IF NOT EXISTS geo_contributors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     accession TEXT NOT NULL,

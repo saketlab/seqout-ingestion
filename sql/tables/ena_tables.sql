@@ -1,3 +1,6 @@
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
 CREATE TABLE IF NOT EXISTS ena_studies (
     study_accession             TEXT PRIMARY KEY,
     secondary_study_accession   TEXT,

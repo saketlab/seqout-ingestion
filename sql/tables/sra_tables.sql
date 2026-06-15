@@ -1,3 +1,6 @@
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
 CREATE TABLE IF NOT EXISTS sra_submissions (
     accession    TEXT PRIMARY KEY,
     alias        TEXT,

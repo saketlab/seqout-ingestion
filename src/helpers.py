@@ -10,7 +10,7 @@ from tqdm import tqdm
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
-def _is_retryable(exc: Exception) -> bool:
+def __is_retryable(exc: Exception) -> bool:
     if isinstance(exc, requests.HTTPError):
         return (
             exc.response is not None
@@ -48,7 +48,7 @@ def better_downloader(
                 accepts_range = r.headers.get("Accept-Ranges", "")
             break
         except Exception as exc:
-            if not _is_retryable(exc) or attempt == retries - 1:
+            if not __is_retryable(exc) or attempt == retries - 1:
                 raise
 
             wait = min(2**attempt, max_timeout)
@@ -137,7 +137,7 @@ def better_downloader(
                     return
 
                 except Exception as exc:
-                    if not _is_retryable(exc) or attempt == retries - 1:
+                    if not __is_retryable(exc) or attempt == retries - 1:
                         raise
 
                     cursor -= bytes_this_attempt
@@ -249,7 +249,7 @@ def simple_file_download(
             return
 
         except Exception as exc:
-            if not _is_retryable(exc) or attempt == retries - 1:
+            if not __is_retryable(exc) or attempt == retries - 1:
                 raise
 
             already_downloaded -= bytes_this_attempt

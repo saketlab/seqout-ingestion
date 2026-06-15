@@ -1,6 +1,7 @@
 import csv
 import json
 import logging
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -22,6 +23,8 @@ class SourceMap:
 
 
 _UNIFIED_METADATA_OUTPUT_DIR = "unified_metadata"
+_SPLIT_INSTITUTES_PAT = r"[,;]?\s*\d+[.\-)]\s*"
+_CLEAN_CENTER_PREFIX = re.compile(r"^[\s(,;]*\d+[.\-)]\s*")
 
 
 def build_unified_metadata(
@@ -89,9 +92,25 @@ def build_unified_metadata(
         n_samples = sm.n_samp.get(acc)
 
         center_list = sm.center.get(acc)
-        center = center_list[0] if center_list else None
         if center_list:
-            stats["center"] += 1
+            if len(center_list) == 1:
+                center_list = [
+                    x.strip()
+                    for x in re.split(_SPLIT_INSTITUTES_PAT, center_list[0])
+                    if x.strip()
+                ]
+
+            center_list = [
+                _CLEAN_CENTER_PREFIX.sub("", cn).strip()
+                for cn in center_list
+                if cn.strip()
+            ]
+            center_list = [
+                cn for cn in center_list if cn and not cn.startswith(("(", ")", ","))
+            ]
+            center_list = [cn[0].upper() + cn[1:] for cn in center_list if cn]
+
+            stats["center"] += len(center_list)
             for pos, cn in enumerate(center_list):
                 centers_rows.append((acc, cn, pos))
 
@@ -119,7 +138,7 @@ def build_unified_metadata(
             "dominant_assay_l2": dominant_l2,
             "n_experiments": n_experiments,
             "n_samples": n_samples,
-            "center_name": center,
+            "center_name": center_list[0] if center_list else None,
             "center_names": _json_or_none(center_list),
             "pmid": pmid,
             "journal": journal,
@@ -151,13 +170,13 @@ def build_unified_metadata(
                 [tuple(r[c] for c in cols) for r in batch],
             )
 
-        exec_query_from_file("tables/unified_metadata_centers_tables.sql", conn=conn)
-        exec_query_from_file("indexes/unified_metadata_centers_indexes.sql", conn=conn)
+        exec_query_from_file("tables/unified_centers_tables.sql", conn=conn)
+        exec_query_from_file("indexes/unified_centers_indexes.sql", conn=conn)
 
         for start in range(0, len(centers_rows), batch_size):
             batch = centers_rows[start : start + batch_size]
             conn.executemany(
-                "INSERT OR IGNORE INTO unified_metadata_centers "
+                "INSERT OR IGNORE INTO unified_centers "
                 "(canonical_accession, center_name, position) VALUES (?, ?, ?)",
                 batch,
             )
@@ -643,13 +662,18 @@ def _scan_ena(db_file: Path) -> SourceMap:
 
         if center_name:
             cn = center_name.strip()
-            if cn and cn.lower() not in {
-                c.lower() for c in ena_center_orgs[study_accession]
-            }:
+            if (
+                cn
+                and not cn.startswith("SUB")
+                and cn.lower()
+                not in {c.lower() for c in ena_center_orgs[study_accession]}
+            ):
                 ena_center_orgs[study_accession].append(cn)
 
     for acc, counts in study_center_count.items():
         for name, _ in counts.most_common():
+            if name.startswith("SUB"):
+                continue
             if name.lower() not in {c.lower() for c in ena_center_orgs[acc]}:
                 ena_center_orgs[acc].append(name)
 

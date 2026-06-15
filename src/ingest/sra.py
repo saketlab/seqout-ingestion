@@ -657,6 +657,7 @@ def _writer_worker(
     conn.execute("PRAGMA synchronous=OFF")
     conn.execute("PRAGMA journal_mode=OFF")
     conn.execute("PRAGMA cache_size=-800000")
+
     cursor = conn.cursor()
     sentinels_received = 0
     rows_written = 0

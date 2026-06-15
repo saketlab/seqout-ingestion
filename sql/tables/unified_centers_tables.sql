@@ -1,4 +1,7 @@
-CREATE TABLE IF NOT EXISTS unified_metadata_centers (
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+
+CREATE TABLE IF NOT EXISTS unified_centers (
     canonical_accession TEXT NOT NULL,
     center_name         TEXT NOT NULL,
     position            INTEGER NOT NULL DEFAULT 0,

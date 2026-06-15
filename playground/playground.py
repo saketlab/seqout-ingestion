@@ -1,18 +1,6 @@
-import json
+import re
 
-from geopy.extra.rate_limiter import RateLimiter
-from geopy.geocoders import Nominatim
-from geopy.location import Location
-
-arcgis = Nominatim(user_agent="seqout-ingestion-v2")
-geocoder = RateLimiter(func=arcgis.geocode)
-location: Location = geocoder(
-    "Harvard University",
-    addressdetails=True,
-    extratags=True,
-    namedetails=True,
-    language="en",
-)
-
-
-print(json.dumps(location.raw, indent=4))
+# s = "1-Education and Extension Organization (AREEO),2- Lorestan University"
+s = "AARHUS UNIVERSITY, DENMARK"
+result = [x.strip() for x in re.split(r"[,;]?\s*\d+[.\-]\s*", s) if x]
+print(result)
