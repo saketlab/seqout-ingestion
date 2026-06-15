@@ -85,6 +85,6 @@ geocode_missing:
         --save-every 1 \
         --rate-limit 3.0
 
-sc_enrich:
-    {{ PYTHON }} ./src/main.py sc_enrich \
-        --db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db
+sc_regex_enrich:
+    {{ PYTHON }} ./src/main.py sc_enrich regex \
+        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \

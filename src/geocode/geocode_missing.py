@@ -18,11 +18,6 @@ class GeocodingProviders(StrEnum):
     Arcgis = "arcgis"
 
 
-_CENTERS_TABLE = "unified_centers"
-_METADATA_TABLE = "unified_metadata"
-_NAME_COL = "center_name"
-_ACCESSION_COL = "canonical_accession"
-
 _FIELD_KEYS = [
     "geocode_query",
     "official_address",
@@ -149,8 +144,8 @@ def geocode_missing(
 
         if result:
             cache[center_name] = result
-            _update_by_name(conn, _CENTERS_TABLE, center_name, result)
-            _update_by_name(conn, _METADATA_TABLE, center_name, result)
+            _update_by_name(conn, "unified_centers", center_name, result)
+            _update_by_name(conn, "unified_metadata", center_name, result)
             updated += 1
 
         if (idx + 1) % save_every == 0:
@@ -340,7 +335,7 @@ def _find_missing(
     conn: sqlite3.Connection,
     limit: Optional[int] = None,
 ) -> list[tuple[str, str]]:
-    query = f"SELECT DISTINCT {_NAME_COL}, {_ACCESSION_COL} FROM {_CENTERS_TABLE} WHERE ({_NAME_COL} IS NOT NULL AND {_NAME_COL} != '') AND (latitude IS NULL OR longitude IS NULL)"
+    query = "SELECT DISTINCT center_name, canonical_accession FROM unified_centers WHERE (center_name IS NOT NULL AND center_name != '') AND (latitude IS NULL OR longitude IS NULL)"
     if limit:
         query += f"LIMIT {limit}"
 
@@ -358,7 +353,7 @@ def _update_by_name(
     values = [result.get(c) for c in _UPDATE_COLS] + [center_name]
     conn.execute(
         f"UPDATE {table} SET {set_clauses} "
-        f"WHERE {_NAME_COL} = ? "
+        f"WHERE {center_name} = ? "
         f"AND (latitude IS NULL OR longitude IS NULL)",
         values,
     )
