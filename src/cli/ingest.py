@@ -19,7 +19,7 @@ ingest_app = typer.Typer()
 
 _BASE_OUTPUT_DIR_FLAG = typer.Option(..., "--output-dir")
 _DB_FILE_FLAG = typer.Option(None, "--db-file")
-_NUM_WORKERS_FLAG = typer.Option(4, "--workers", "-w")
+_NUM_WORKERS_FLAG = typer.Option(4, "--workers")
 _DATE_FLAG = typer.Option(
     datetime.datetime.now().strftime("%Y-%m-%d"),
     parser=_parse_date,

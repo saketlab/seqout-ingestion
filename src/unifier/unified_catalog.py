@@ -88,7 +88,7 @@ def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
     result = {}
     for study_acc, sec_acc, geo_acc, title, description in rows:
         result[study_acc] = (
-            _clean_string(study_acc),
+            _clean_string(sec_acc),
             _clean_string(geo_acc),
             _clean_string(title),
             _strip_html(description),
@@ -209,10 +209,14 @@ def _build_catalog_tuples(
         for srp in srps:
             aliases.setdefault("sra", srp)  # store first srp
             claimed.add(srp)
-            # sra entry has a bioproject alias (prjna) -> store and claim from ena
+            # sra entry alias may be a bioproject (prjna), geo (gse), or garbage
             bp_alias = srp_to_alias.get(srp, "")
             if bp_alias and bp_alias != gse and bp_alias != srp:
-                aliases.setdefault("bioproject", bp_alias)
+                if re.match(r"^PRJN[AEBDC]\d+$", bp_alias):
+                    aliases.setdefault("bioproject", bp_alias)
+                elif re.match(r"^GSE\d+$", bp_alias):
+                    aliases.setdefault("geo", bp_alias)
+
             # if this srp maps to an ena prj, claim it
             if srp in srp_to_ena:
                 prj = srp_to_ena[srp]
@@ -251,10 +255,14 @@ def _build_catalog_tuples(
 
         aliases = {}
 
-        # sra alias is typically prjna -> check if that prjna is in ena
+        # sra alias may be a bioproject (prjna), geo (gse), or garbage
         # skip self-aliases (drp/erp entries where alias == accession)
         if alias and alias != srp:
-            aliases["bioproject"] = alias
+            if re.match(r"^PRJN[AEBDC]\d+$", alias):
+                aliases["bioproject"] = alias
+            elif re.match(r"^GSE\d+$", alias):
+                aliases["geo"] = alias
+
             # find ena entry via the srp's secondary accession reverse lookup
             ena_prj = srp_to_ena.get(srp)
             if ena_prj:
@@ -349,6 +357,12 @@ def _build_catalog_tuples(
             # if the secondary srp is in sra but wasn't claimed (edge case), claim it
             if secondary in sra_dict and secondary not in claimed:
                 claimed.add(secondary)
+
+        if geo_acc:
+            if geo_acc.startswith("GSE"):
+                aliases["geo"] = geo_acc
+            elif geo_acc.startswith("E-"):
+                aliases["arrayexpress"] = geo_acc
 
         combined_text = f"{title}. {desc}".strip(". ")
         if combined_text:
