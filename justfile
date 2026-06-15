@@ -79,7 +79,8 @@ unify_build_metadata:
 
 geocode_missing:
     {{ PYTHON }} ./src/main.py geocode \
-        --db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
+        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
+        --geo-db-file $(just _latest_db geo) \
         --cache-file ./data/geocode_cache.json \
         --save-every 1 \
         --rate-limit 3.0

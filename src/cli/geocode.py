@@ -10,7 +10,8 @@ geocode_app = typer.Typer()
 
 @geocode_app.command()
 def geocode(
-    db_file: Path = typer.Option(..., "--db-file"),
+    unified_metadata_db_file: Path = typer.Option(...),
+    geo_db_file: Path = typer.Option(...),
     limit: Optional[int] = typer.Option(None, "--limit", "-n"),
     cache_file: Optional[Path] = typer.Option(None, "--cache-file"),
     save_every: int = typer.Option(50, "--save-every"),
@@ -18,10 +19,11 @@ def geocode(
     is_dry_run: bool = typer.Option(False, "--dry-run"),
 ):
     geocode_missing(
-        db_file=db_file,
-        limit=limit,
-        cache_file=cache_file,
-        save_every=save_every,
-        rate_limit=rate_limit,
-        is_dry_run=is_dry_run,
+        unified_metadata_db_file,
+        geo_db_file,
+        cache_file,
+        save_every,
+        rate_limit,
+        limit,
+        is_dry_run,
     )

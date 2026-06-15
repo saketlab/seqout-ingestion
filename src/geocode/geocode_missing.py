@@ -21,6 +21,7 @@ class GeocodingProviders(StrEnum):
 _CENTERS_TABLE = "unified_centers"
 _METADATA_TABLE = "unified_metadata"
 _NAME_COL = "center_name"
+_ACCESSION_COL = "canonical_accession"
 
 _FIELD_KEYS = [
     "geocode_query",
@@ -85,20 +86,32 @@ _UPDATE_COLS = [
 
 
 def geocode_missing(
-    db_file: Path,
+    unified_metadata_db_file: Path,
+    geo_db_file: Path,
     cache_file: Optional[Path],
     save_every: int,
     rate_limit: float,
     limit: Optional[int],
     is_dry_run: bool,
 ):
-    conn = sqlite3.connect(str(db_file))
+    conn = sqlite3.connect(str(unified_metadata_db_file))
     missing = _find_missing(conn, limit)
     logging.info("found %d records with missing geocoded information", len(missing))
 
     if is_dry_run or not missing:
         conn.close()
         return
+
+    geo_accessions = [acc for (_, acc) in missing if acc.startswith("GSE")]
+
+    with sqlite3.Connection(geo_db_file) as geo_conn:
+        accessions = ", ".join(f"'{acc}'" for acc in geo_accessions)
+        query = f"SELECT accession, address_country from geo_contributors WHERE accession IN ({accessions}) AND address_country IS NOT NULL GROUP BY accession;"
+        rows = geo_conn.execute(query).fetchall()
+
+        geo_country_mapping = {
+            accession: address_country for accession, address_country in rows
+        }
 
     cache = _load_cache(cache_file)
     nominatim = RateLimiter(
@@ -110,20 +123,29 @@ def geocode_missing(
     updated = 0
     total = len(missing)
 
-    for idx, (center_name, input_country) in enumerate(missing):
+    for idx, (center_name, accession) in enumerate(missing):
         result = None
 
         if center_name in cache:
             result = cache[center_name]
         else:
             cleaned = clean_text(center_name)
-            if cleaned:
-                result = _geocode(
-                    cleaned, nominatim, GeocodingProviders.Nominatim, input_country
-                )
+            if not cleaned:
+                continue
 
-                if result is None:
-                    result = _geocode(cleaned, arcgis, GeocodingProviders.Arcgis)
+            result = _geocode(cleaned, nominatim, GeocodingProviders.Nominatim)
+
+            if result is None:
+                result = _geocode(cleaned, arcgis, GeocodingProviders.Arcgis)
+
+            # check if the country present on GEO and country returned by geocoder are the same or not
+            # if no, then remove all the data returned by geocoder and just pass forward country field
+            if result and accession.startswith("GSE"):
+                if result["country"] != geo_country_mapping[accession]:
+                    result = {
+                        "geocode_query": query,
+                        "country": geo_country_mapping[accession],
+                    }
 
         if result:
             cache[center_name] = result
@@ -271,7 +293,6 @@ def _geocode(
     query: str,
     geocoder: RateLimiter,
     provider: GeocodingProviders,
-    input_country: Optional[str] = None,
 ) -> Optional[dict]:
     try:
         location = geocoder(
@@ -289,10 +310,10 @@ def _geocode(
                 case GeocodingProviders.Arcgis:
                     pass
 
-            if input_country and result.get("country"):
-                result["country_mismatch"] = countries_mismatch(
-                    result["country"], input_country
-                )
+            # if input_country and result.get("country"):
+            #     result["country_mismatch"] = countries_mismatch(
+            #         result["country"], input_country
+            #     )
 
             return result
     except Exception as e:
@@ -318,13 +339,13 @@ def _save_cache(cache_file: Optional[Path], cache: dict[str, dict[str, Any]]):
 def _find_missing(
     conn: sqlite3.Connection,
     limit: Optional[int] = None,
-) -> list[str]:
-    query = f"SELECT DISTINCT {_NAME_COL} FROM {_CENTERS_TABLE} WHERE ({_NAME_COL} IS NOT NULL AND {_NAME_COL} != '') AND (latitude IS NULL OR longitude IS NULL)"
+) -> list[tuple[str, str]]:
+    query = f"SELECT DISTINCT {_NAME_COL}, {_ACCESSION_COL} FROM {_CENTERS_TABLE} WHERE ({_NAME_COL} IS NOT NULL AND {_NAME_COL} != '') AND (latitude IS NULL OR longitude IS NULL)"
     if limit:
         query += f"LIMIT {limit}"
 
     rows = conn.execute(query).fetchall()
-    return list(set(r[0] for r in rows))
+    return rows
 
 
 def _update_by_name(
