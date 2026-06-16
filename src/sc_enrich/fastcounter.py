@@ -1,6 +1,8 @@
+import csv
 import dataclasses
 import functools
 import gzip
+import io
 import json
 import sqlite3
 import tarfile
@@ -21,6 +23,7 @@ class _FileType(StrEnum):
     H5 = "h5"
     H5ad = "h5ad"
     Tar = "tar"
+    Tsv = "tsv"
     Unknown = "unknown"
 
 
@@ -43,6 +46,7 @@ def sc_fastcounter(
     base_output_dir: Path,
     unified_metadata_db_file: Path,
     geo_db_file: Path,
+    ae_db_file: Path,
     num_workers: int,
     chunk_size: int,
     retries: int,
@@ -54,6 +58,12 @@ def sc_fastcounter(
 
     conn = sqlite3.connect(unified_metadata_db_file)
     geo_conn = sqlite3.connect(geo_db_file)
+    ae_conn = sqlite3.connect(ae_db_file)
+
+    def _db_flush():
+        ae_conn.close()
+        geo_conn.close()
+        conn.close()
 
     rows: list[tuple[str, str]] = conn.execute(
         "SELECT canonical_accession, source FROM unified_metadata WHERE is_single_cell = '1';"
@@ -158,18 +168,40 @@ def sc_fastcounter(
                     url = item.get("#text")
                     if url is None:
                         continue
-                    url_type = _classify_file(url)
+                    file_type = _classify_file(url)
 
                     # if no supplementary data is found in samples-level then just analyze a single tar file on series-level
-                    if url_type == _FileType.Tar:
+                    if file_type == _FileType.Tar:
                         download_links_mapping[series_accession].append(
-                            _DownloadLink(type=url_type, url=url)
+                            _DownloadLink(type=file_type, url=url)
                         )
                         break
         else:
-            pass
+            row = ae_conn.execute(
+                "SELECT processed_data_files FROM arrayexpress_experiments WHERE accession = ?",
+                (series_accession,),
+            ).fetchone()
+            if row is None:
+                continue
 
-    accession_num_cells_mapping: dict[str, int] = {}
+            processed_data_files_json = row[0]
+            if processed_data_files_json is None:
+                continue
+
+            processed_data_files = json.loads(processed_data_files_json)
+
+            for item in processed_data_files:
+                url = item.get("url")
+                if url is None:
+                    continue
+                file_type = _classify_file(url)
+
+                download_links_mapping[series_accession].append(
+                    _DownloadLink(type=file_type, url=url)
+                )
+
+    accession_sc_result: dict[str, bool] = {}
+    accession_dest_path_mapping: dict[str, tuple[Path, _FileType]] = {}
 
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
         futures = {}
@@ -182,10 +214,6 @@ def sc_fastcounter(
             with_pbar=True,
         )
 
-        def _process_file(dest_path: Path, file_type: _FileType):
-            is_sc = _is_sc(dest_path, file_type)
-            print(accession, is_sc, file_type, dest_path)
-
         for accession, links in download_links_mapping.items():
             if len(links) == 0:
                 continue
@@ -195,7 +223,7 @@ def sc_fastcounter(
                 file_type = link.type
 
                 if dest_path.exists():
-                    _process_file(dest_path, file_type)
+                    accession_dest_path_mapping[accession] = (dest_path, file_type)
                     continue
 
                 future = pool.submit(
@@ -208,9 +236,24 @@ def sc_fastcounter(
         for f in as_completed(futures):
             dest_path = f.result()
             accession, file_type = futures[f]
-            _process_file(dest_path, file_type)
+            accession_dest_path_mapping[accession] = (dest_path, file_type)
 
-    conn.close()
+    del download_links_mapping
+
+    with ThreadPoolExecutor(max_workers=num_workers) as pool:
+        futures = {}
+
+        for accession, (dest_path, file_type) in accession_dest_path_mapping.items():
+            future = pool.submit(_is_sc, dest_path, file_type)
+            futures[future] = accession
+
+        for f in as_completed(futures):
+            is_sc = f.result()
+            accession = futures[f]
+            print(f"{accession}: {is_sc}")
+            accession_sc_result[accession] = is_sc
+
+    _db_flush()
 
 
 def _classify_file(path: str) -> _FileType:
@@ -220,6 +263,8 @@ def _classify_file(path: str) -> _FileType:
         return _FileType.H5ad
     elif ".h5" in path:
         return _FileType.H5
+    elif ".coutt" in path:
+        return _FileType.Tsv
     elif (".tar" in path) or (".tar.gz" in path) or (".tgz" in path):
         return _FileType.Tar
     else:
@@ -239,6 +284,10 @@ def _is_sc(dest_path: Path, file_type: _FileType, raw: Optional[bytes] = None) -
                 return _process_barcodes(raw)
             case _FileType.H5:
                 return _process_h5(raw)
+            case _FileType.H5ad:
+                return _process_h5ad(raw)
+            case _FileType.Tsv:
+                return _process_tsv(raw)
 
     return False
 
@@ -290,12 +339,35 @@ def _process_h5(raw: bytes) -> bool:
 
             f.visititems(find_barcodes)
 
-            if n_cells is None and "obs/_index" in f:
+        return n_cells > 1 if n_cells is not None else False
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def _process_h5ad(raw: bytes) -> bool:
+    with tempfile.NamedTemporaryFile(suffix=".h5ad", delete=False) as tmp:
+        tmp.write(raw)
+        tmp_path = tmp.name
+
+    try:
+        n_cells = None
+
+        with h5py.File(tmp_path, "r") as f:
+            if "obs/_index" in f:
                 n_cells = len(f["obs/_index"])
 
-            if n_cells is None and "X" in f:
+            if "X" in f:
                 n_cells = f["X"].shape[0]
 
         return n_cells > 1 if n_cells is not None else False
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def _process_tsv(raw: bytes) -> bool:
+    with io.StringIO(raw.decode()) as f:
+        reader = csv.reader(f, delimiter="\t")
+        header = next(reader)
+        n_cells = len(header) - 1
+
+    return n_cells > 1

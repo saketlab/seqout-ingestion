@@ -96,4 +96,5 @@ sc_enrich_fastcounter:
             --output-dir {{ DATA_DIR }} \
             --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
             --geo-db-file $(just _latest_db geo) \
+            --ae-db-file $(just _latest_db ae) \
             --workers 10 \
