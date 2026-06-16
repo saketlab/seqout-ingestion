@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Optional
 
 import humanfriendly
+import requests
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
 
-_AE_OUTPUT_DIR = "AE"
+_AE_OUTPUT_DIR = "ae"
 _BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
 _BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
 
@@ -44,7 +45,7 @@ def ingest_ae(
     logging.info(
         """starting ae ingest with following config:
 - num workers: %d
-- batch sizze: %d
+- batch size: %d
 - retries: %d
 - timeout: %s
 - max timeout: %s""",
@@ -254,9 +255,31 @@ def _download_magetab_files(
             return
 
         url = f"{_BIOSTUDIES_FILES_BASE_URL}/{accession}/{filename}"
-        r = send_req("GET", url, num_retries=retries, timeout=timeout, max_wait=timeout)
-        if r is None:
-            return
+        try:
+            r = send_req(
+                "GET", url, num_retries=retries, timeout=timeout, max_wait=timeout
+            )
+            if r is None:
+                return
+        except requests.RequestException as e:
+            if (
+                isinstance(e, requests.HTTPError)
+                and e.response is not None
+                and e.response.status_code == 404
+            ):
+                dest_path.touch()
+                return None
+
+            logging.warning(
+                "magetab download failed for %s: %s (response=%s, status=%s)",
+                url,
+                e,
+                e.response,
+                e.response.status_code
+                if isinstance(e, requests.HTTPError) and e.response is not None
+                else None,
+            )
+            raise
 
         with open(dest_path, "wb") as f:
             f.write(r.content)
@@ -624,51 +647,54 @@ def _parse_sdrf(filepath: Path, accession: str):
         "unit",
     ]
 
-    with open(filepath) as f:
-        reader = csv.reader(f, delimiter="\t")
-        raw_header = next(reader, None)
-        if not raw_header:
-            return None
+    try:
+        with open(filepath) as f:
+            reader = csv.reader(f, delimiter="\t")
+            raw_header = next(reader, None)
+            if not raw_header:
+                return None
 
-        headers = [normalize_sdrf_col(h) for h in raw_header]
+            headers = [normalize_sdrf_col(h) for h in raw_header]
 
-        for row in reader:
-            if not row or not any(s.strip() for s in row):
-                continue
-
-            sample: dict[str, str | None] = {"experiment_accession": accession}
-            overflow = {}
-
-            for db_col in sample_col_mapping.values():
-                sample[db_col] = None
-
-            for i, clean_col in enumerate(headers):
-                if i >= len(row):
-                    break
-
-                value = row[i].strip()
-                if not value:
+            for row in reader:
+                if not row or not any(s.strip() for s in row):
                     continue
 
-                if clean_col in sample_col_mapping:
-                    db_col = sample_col_mapping[clean_col]
-                    sample[db_col] = value
-                else:
-                    base = (
-                        clean_col.split("[")[0].strip()
-                        if "[" in clean_col
-                        else clean_col
-                    )
+                sample: dict[str, str | None] = {"experiment_accession": accession}
+                overflow = {}
 
-                    if base in cols_to_skip or clean_col.startswith("unit["):
+                for db_col in sample_col_mapping.values():
+                    sample[db_col] = None
+
+                for i, clean_col in enumerate(headers):
+                    if i >= len(row):
+                        break
+
+                    value = row[i].strip()
+                    if not value:
                         continue
 
-                    overflow[clean_col] = value
+                    if clean_col in sample_col_mapping:
+                        db_col = sample_col_mapping[clean_col]
+                        sample[db_col] = value
+                    else:
+                        base = (
+                            clean_col.split("[")[0].strip()
+                            if "[" in clean_col
+                            else clean_col
+                        )
 
-            sample["attributes_json"] = json.dumps(overflow)
-            samples.append(sample)
+                        if base in cols_to_skip or clean_col.startswith("unit["):
+                            continue
 
-    return samples if samples else None
+                        overflow[clean_col] = value
+
+                sample["attributes_json"] = json.dumps(overflow)
+                samples.append(sample)
+
+        return samples if samples else None
+    except FileNotFoundError:
+        return None
 
 
 def _process_accession(accession: str, data_dir: Path):

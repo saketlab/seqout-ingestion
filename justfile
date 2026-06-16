@@ -19,7 +19,8 @@ ingest_sra:
 ingest_geo:
     {{ PYTHON }} ./src/main.py ingest geo \
         --output-dir {{ DATA_DIR }} \
-        --series-limit 1
+        --series-limit 10 \
+        --workers 10
 
 ingest_ena:
     {{ PYTHON }} ./src/main.py ingest ena \
@@ -31,8 +32,8 @@ ingest_ena:
 ingest_ae:
     {{ PYTHON }} ./src/main.py ingest ae \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-01-01 \
-        --end-date 2026-01-10 \
+        --start-date 2025-01-01 \
+        --end-date 2026-01-01 \
         --workers 10
 
 backfill_pm_ids:
@@ -81,7 +82,7 @@ geocode_missing:
     {{ PYTHON }} ./src/main.py geocode \
         --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
         --geo-db-file $(just _latest_db geo) \
-        --cache-file ./data/geocode_cache.json \
+        --cache-file ./data/geocoding/geocode_cache.json \
         --save-every 1 \
         --rate-limit 3.0
 
@@ -91,6 +92,7 @@ sc_enrich_regex:
 
 sc_enrich_fastcounter:
     {{ PYTHON }} ./src/main.py sc_enrich fastcounter \
+        --output-dir {{ DATA_DIR }} \
         --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
         --geo-db-file $(just _latest_db geo) \
-        --workers 6
+        --workers 6 \

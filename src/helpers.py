@@ -82,7 +82,7 @@ def better_downloader(
         initial=already_downloaded,
         unit="B",
         unit_scale=True,
-        desc=f"downloading {url}",
+        desc=f"downloading {url[:100]}",
         mininterval=1.0,
     ) as pbar:
 
@@ -221,7 +221,7 @@ def simple_file_download(
                     initial=resumed_from,
                     unit="B",
                     unit_scale=True,
-                    desc=f"downloading {url}",
+                    desc=f"downloading {url[:100]}",
                 )
                 if with_pbar
                 else None
