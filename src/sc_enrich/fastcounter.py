@@ -1,21 +1,27 @@
 import dataclasses
 import functools
+import gzip
 import json
-import logging
 import sqlite3
+import tarfile
+import tempfile
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
+from typing import Optional
 
-from helpers import better_downloader
+import h5py
+
+from helpers import simple_file_download
 
 
 class _FileType(StrEnum):
-    barcodes = "barcodes"
-    h5 = "h5"
-    h5ad = "h5ad"
-    tar = "tar"
+    Barcodes = "barcodes"
+    H5 = "h5"
+    H5ad = "h5ad"
+    Tar = "tar"
+    Unknown = "unknown"
 
 
 @dataclasses.dataclass
@@ -127,18 +133,13 @@ def sc_fastcounter(
                     if not url:
                         continue
 
-                    if "barcodes.tsv" in url:
-                        download_links_mapping[series_accession].append(
-                            _DownloadLink(type=_FileType.barcodes, url=url)
-                        )
-                    elif ".h5ad" in url:
-                        download_links_mapping[series_accession].append(
-                            _DownloadLink(type=_FileType.h5ad, url=url)
-                        )
-                    elif ".h5" in url:
-                        download_links_mapping[series_accession].append(
-                            _DownloadLink(type=_FileType.h5, url=url)
-                        )
+                    file_type = _classify_file(url)
+                    if file_type == _FileType.Unknown:
+                        continue
+
+                    download_links_mapping[series_accession].append(
+                        _DownloadLink(type=file_type, url=url)
+                    )
 
             if len(download_links_mapping[series_accession]) == 0:
                 rows = geo_conn.execute(
@@ -157,10 +158,12 @@ def sc_fastcounter(
                     url = item.get("#text")
                     if url is None:
                         continue
+                    url_type = _classify_file(url)
 
-                    if ".tar" in url or ".tar.gz" in url or ".tgz" in url:
+                    # if no supplementary data is found in samples-level then just analyze a single tar file on series-level
+                    if url_type == _FileType.Tar:
                         download_links_mapping[series_accession].append(
-                            _DownloadLink(type=_FileType.tar, url=url)
+                            _DownloadLink(type=url_type, url=url)
                         )
                         break
         else:
@@ -168,51 +171,131 @@ def sc_fastcounter(
 
     accession_num_cells_mapping: dict[str, int] = {}
 
-    for accession, links in download_links_mapping.items():
-        if len(links) == 0:
-            logging.warning(
-                "could not find any relevant single-cell countable files for %s accession",
-                accession,
-            )
-            continue
-
-        num_workers_per_link = num_workers // len(links)
-
+    with ThreadPoolExecutor(max_workers=num_workers) as pool:
+        futures = {}
         downloader = functools.partial(
-            better_downloader,
-            num_workers=num_workers_per_link,
+            simple_file_download,
             chunk_size=chunk_size,
             retries=retries,
             timeout=timeout,
             max_timeout=max_timeout,
+            with_pbar=True,
         )
 
-        if len(links) == 1:
-            link = links[0]
-            url = link._parse_url()
-            dest_path = output_dir / link._extract_filename()
+        def _process_file(dest_path: Path, file_type: _FileType):
+            is_sc = _is_sc(dest_path, file_type)
+            print(accession, is_sc, file_type, dest_path)
 
-            downloader(
-                url=url,
-                dest_path=dest_path,
-            )
-        else:
-            with ThreadPoolExecutor(max_workers=len(links)) as pool:
-                futures = []
+        for accession, links in download_links_mapping.items():
+            if len(links) == 0:
+                continue
 
-                for link in links:
-                    url = link._parse_url()
-                    dest_path = output_dir / link._extract_filename()
+            for link in links:
+                dest_path = output_dir / link._extract_filename()
+                file_type = link.type
 
-                    futures.append(
-                        pool.submit(
-                            downloader,
-                            url=url,
-                            dest_path=dest_path,
-                        )
-                    )
+                if dest_path.exists():
+                    _process_file(dest_path, file_type)
+                    continue
 
-                for f in futures:
-                    f.result()
+                future = pool.submit(
+                    downloader,
+                    url=link._parse_url(),
+                    dest_path=dest_path,
+                )
+                futures[future] = (accession, link.type)
+
+        for f in as_completed(futures):
+            dest_path = f.result()
+            accession, file_type = futures[f]
+            _process_file(dest_path, file_type)
 
     conn.close()
+
+
+def _classify_file(path: str) -> _FileType:
+    if "barcodes.tsv" in path:
+        return _FileType.Barcodes
+    elif ".ha5d" in path:
+        return _FileType.H5ad
+    elif ".h5" in path:
+        return _FileType.H5
+    elif (".tar" in path) or (".tar.gz" in path) or (".tgz" in path):
+        return _FileType.Tar
+    else:
+        return _FileType.Unknown
+
+
+def _is_sc(dest_path: Path, file_type: _FileType, raw: Optional[bytes] = None) -> bool:
+    if file_type == _FileType.Tar:
+        return _process_tar(dest_path)
+    else:
+        if raw is None:
+            with open(dest_path, "rb") as f:
+                raw = f.read()
+
+        match file_type:
+            case _FileType.Barcodes:
+                return _process_barcodes(raw)
+            case _FileType.H5:
+                return _process_h5(raw)
+
+    return False
+
+
+def _process_tar(dest_path: Path) -> bool:
+    with tarfile.open(dest_path, "r:*") as tar:
+        for member in tar.getmembers():
+            name = member.name.lower()
+            file_type = _classify_file(name)
+            if file_type == _FileType.Unknown:
+                continue
+
+            f = tar.extractfile(member)
+            if f is None:
+                continue
+
+            raw = f.read()
+            if name.endswith(".gz"):
+                raw = gzip.decompress(raw)
+
+            is_sc = _is_sc(dest_path, file_type, raw)
+            if is_sc:
+                return True
+
+    return False
+
+
+def _process_barcodes(raw: bytes) -> bool:
+    lines = raw.decode().splitlines()
+    return len(lines) > 1
+
+
+def _process_h5(raw: bytes) -> bool:
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as tmp:
+        tmp.write(raw)
+        tmp_path = tmp.name
+
+    try:
+        n_cells = None
+
+        with h5py.File(tmp_path, "r") as f:
+            # recursively try to find barcodes
+            def find_barcodes(name, obj):
+                nonlocal n_cells
+                if n_cells is not None:
+                    return
+                if isinstance(obj, h5py.Dataset) and name.endswith("/barcodes"):
+                    n_cells = len(obj)
+
+            f.visititems(find_barcodes)
+
+            if n_cells is None and "obs/_index" in f:
+                n_cells = len(f["obs/_index"])
+
+            if n_cells is None and "X" in f:
+                n_cells = f["X"].shape[0]
+
+        return n_cells > 1 if n_cells is not None else False
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)

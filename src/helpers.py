@@ -187,9 +187,8 @@ def simple_file_download(
     timeout: int,
     max_timeout: int,
     with_pbar: bool = True,
-) -> None:
+) -> Path:
     dest_path.parent.mkdir(exist_ok=True, parents=True)
-
     already_downloaded = dest_path.stat().st_size if dest_path.exists() else 0
 
     for attempt in range(retries):
@@ -243,10 +242,12 @@ def simple_file_download(
                 raise IOError(
                     f"downloaded {actual_size} bytes, expected {total} for {url}"
                 )
+
             if pbar:
                 pbar.close()
             r.close()
-            return
+
+            return dest_path
 
         except Exception as exc:
             if not __is_retryable(exc) or attempt == retries - 1:
@@ -264,6 +265,8 @@ def simple_file_download(
                 wait,
             )
             time.sleep(wait)
+
+    return dest_path
 
 
 def send_req(

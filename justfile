@@ -91,8 +91,9 @@ sc_enrich_regex:
         --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
 
 sc_enrich_fastcounter:
-    {{ PYTHON }} ./src/main.py sc_enrich fastcounter \
-        --output-dir {{ DATA_DIR }} \
-        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
-        --geo-db-file $(just _latest_db geo) \
-        --workers 6 \
+    {{ PYTHON }} ./src/main.py --log-level debug \
+        sc_enrich fastcounter \
+            --output-dir {{ DATA_DIR }} \
+            --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
+            --geo-db-file $(just _latest_db geo) \
+            --workers 10 \

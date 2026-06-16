@@ -17,6 +17,7 @@ dependencies = [
     "requests>=2.34.2",
     "tqdm>=4.67.3",
     "typer>=0.26.7",
+    "h5py>=3.16.0",
 ]
 
 [tool.uv]
