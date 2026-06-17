@@ -13,6 +13,7 @@ import queue
 import re
 import sqlite3
 import tarfile
+import threading
 import time
 import typing
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,13 +29,6 @@ from typing_extensions import Optional
 
 from helpers import better_downloader, exec_query_from_file
 
-_SRA_OUTPUT_DIR = "sra"
-_SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
-_SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
-_SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
-_SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
-_STOP = object()
-
 
 class FileType(enum.StrEnum):
     Submission = "submission"
@@ -42,6 +36,43 @@ class FileType(enum.StrEnum):
     Study = "study"
     Experiment = "experiment"
     Run = "run"
+
+
+_SRA_OUTPUT_DIR = "sra"
+_SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
+_SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
+_SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
+_SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
+_STOP = object()
+
+_SQL_STATEMENTS = {
+    FileType.Submission: (
+        "INSERT OR IGNORE INTO sra_submissions "
+        "(accession, alias, center_name, lab_name, broker_name, updated_at, published_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ),
+    FileType.Sample: (
+        "INSERT OR IGNORE INTO sra_samples "
+        "(accession, alias, description, title, scientific_name, taxon_id, "
+        "external_id, attributes_json, submission, links) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)"
+    ),
+    FileType.Study: (
+        "INSERT OR IGNORE INTO sra_studies "
+        "(accession, alias, center_name, abstract, title, external_id, study_type, "
+        "attributes_json, links, center_project_name, submission, published_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    ),
+    FileType.Experiment: (
+        "INSERT OR IGNORE INTO sra_experiments "
+        "(accession, design_description, library_layout, library_name, library_selection, "
+        "library_source, library_strategy, samples, platform, instrument_model, study, title, submission) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+    ),
+    FileType.Run: (
+        "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)"
+    ),
+}
 
 
 def ingest_sra(
@@ -601,52 +632,98 @@ def _reader_worker(
         raise
 
 
+def _process_xmls(
+    batch: list,
+    accessions: dict[str, str],
+    pbar: tqdm,
+):
+    for submission_accession, file_type, content in batch:
+        try:
+            bio = io.BytesIO(content)
+            if file_type == FileType.Submission:
+                processor = _process_submission(submission_accession, bio, accessions)
+            elif file_type == FileType.Study:
+                processor = _process_studies(submission_accession, bio, accessions)
+            elif file_type == FileType.Sample:
+                processor = _process_samples(submission_accession, bio)
+            elif file_type == FileType.Experiment:
+                processor = _process_experiments(submission_accession, bio)
+            elif file_type == FileType.Run:
+                processor = _process_runs(submission_accession, bio)
+            else:
+                logging.error(f"[transform] received invalid file type: {file_type}")
+                continue
+
+            for row in processor:
+                yield file_type, row
+
+        except Exception as e:
+            logging.error(f"[transform] failed to process {submission_accession}: {e}")
+        finally:
+            pbar.update(1)
+
+
+def _process_batch_to_queue(
+    batch: list,
+    accessions: dict[str, str],
+    write_queue: queue.Queue,
+    pbar: tqdm,
+):
+    for file_type, row in _process_xmls(batch, accessions, pbar):
+        write_queue.put((file_type, row))
+
+
+def _drain_batch_to_db(
+    batch: list,
+    accessions: dict[str, str],
+    cursor: sqlite3.Cursor,
+    write_batch_size: int,
+    pbar: tqdm,
+):
+    rows_by_type: dict[FileType, list] = {}
+    for file_type, row in _process_xmls(batch, accessions, pbar):
+        rows_by_type.setdefault(file_type, []).append(row)
+
+        if len(rows_by_type[file_type]) >= write_batch_size:
+            cursor.executemany(_SQL_STATEMENTS[file_type], rows_by_type[file_type])
+            rows_by_type[file_type] = []
+
+    for file_type, rows in rows_by_type.items():
+        if rows:
+            cursor.executemany(_SQL_STATEMENTS[file_type], rows)
+
+
 def _transform_worker(
     accessions: dict[str, str],
     transform_queue: queue.Queue,
     write_queue: queue.Queue,
     pbar: tqdm,
+    stop_event: threading.Event,
+    db_file: Path,
+    write_batch_size: int,
 ):
     while True:
         try:
-            batch = transform_queue.get(timeout=10.0)
+            batch = transform_queue.get(timeout=1.0)
         except queue.Empty:
-            continue
+            if not stop_event.is_set():
+                continue
 
-        if batch is _STOP:
-            write_queue.put(_STOP)
-            break
+            conn = sqlite3.connect(str(db_file))
+            cursor = conn.cursor()
+            while True:
+                try:
+                    batch = transform_queue.get_nowait()
+                except queue.Empty:
+                    conn.commit()
+                    conn.close()
+                    write_queue.put(_STOP)
+                    return
 
-        for submission_accession, file_type, content in batch:
-            try:
-                bio = io.BytesIO(content)
-                if file_type == FileType.Submission:
-                    processor = _process_submission(
-                        submission_accession, bio, accessions
-                    )
-                elif file_type == FileType.Study:
-                    processor = _process_studies(submission_accession, bio, accessions)
-                elif file_type == FileType.Sample:
-                    processor = _process_samples(submission_accession, bio)
-                elif file_type == FileType.Experiment:
-                    processor = _process_experiments(submission_accession, bio)
-                elif file_type == FileType.Run:
-                    processor = _process_runs(submission_accession, bio)
-                else:
-                    logging.error(
-                        f"[transform] received invalid file type: {file_type}"
-                    )
-                    continue
+                _drain_batch_to_db(batch, accessions, cursor, write_batch_size, pbar)
+                conn.commit()
 
-                for row in processor:
-                    write_queue.put((file_type, row))
-
-            except Exception as e:
-                logging.error(
-                    f"[transform] failed to process {submission_accession}: {e}"
-                )
-            finally:
-                pbar.update(1)
+        _process_batch_to_queue(batch, accessions, write_queue, pbar)
 
 
 def _writer_worker(
@@ -666,39 +743,10 @@ def _writer_worker(
     rows_written = 0
     batch_by_type: dict[FileType, list] = {}
 
-    sql_statements = {
-        FileType.Submission: (
-            "INSERT OR IGNORE INTO sra_submissions "
-            "(accession, alias, center_name, lab_name, broker_name, updated_at, published_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)"
-        ),
-        FileType.Sample: (
-            "INSERT OR IGNORE INTO sra_samples "
-            "(accession, alias, description, title, scientific_name, taxon_id, "
-            "external_id, attributes_json, submission, links) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?)"
-        ),
-        FileType.Study: (
-            "INSERT OR IGNORE INTO sra_studies "
-            "(accession, alias, center_name, abstract, title, external_id, study_type, "
-            "attributes_json, links, center_project_name, submission, published_at, updated_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
-        ),
-        FileType.Experiment: (
-            "INSERT OR IGNORE INTO sra_experiments "
-            "(accession, design_description, library_layout, library_name, library_selection, "
-            "library_source, library_strategy, samples, platform, instrument_model, study, title, submission) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
-        ),
-        FileType.Run: (
-            "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)"
-        ),
-    }
-
     def _flush(batch: list, file_type: FileType):
         nonlocal rows_written
         if batch:
-            cursor.executemany(sql_statements[file_type], batch)
+            cursor.executemany(_SQL_STATEMENTS[file_type], batch)
             conn.commit()
             rows_written += len(batch)
             batch_by_type[file_type] = []
@@ -743,7 +791,8 @@ def _process_tarballs(
     num_transform = max(1, num_workers - num_readers - num_writer)
 
     transform_queue: queue.Queue = queue.Queue(maxsize=transform_queue_size)
-    write_queue: queue.Queue = queue.Queue()
+    write_queue: queue.Queue = queue.Queue(maxsize=write_queue_size)
+    stop_event = threading.Event()
 
     total = len(accessions) * 5
 
@@ -769,6 +818,9 @@ def _process_tarballs(
                 transform_queue,
                 write_queue,
                 pbar,
+                stop_event,
+                db_file,
+                write_batch_size,
             )
             for _ in range(num_transform)
         ]
@@ -780,8 +832,7 @@ def _process_tarballs(
         for f in as_completed(reader_futures):
             f.result()
 
-        for _ in range(num_transform):
-            transform_queue.put(_STOP)
+        stop_event.set()
 
         for f in as_completed(transform_futures):
             f.result()

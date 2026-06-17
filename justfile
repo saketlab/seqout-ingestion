@@ -12,10 +12,7 @@ ingest_sra:
         --output-dir {{ DATA_DIR }} \
         --start-date 2026-05-15 \
         --end-date 2026-05-20 \
-        --workers 10 \
-        --read-batch-size 500 \
-        --write-batch-size 2000 \
-        --transform-queue-size 1000
+        --workers 8 \
 
 ingest_geo:
     {{ PYTHON }} ./src/main.py ingest geo \
