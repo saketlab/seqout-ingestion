@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
 
-# to disable debug messages by urllib
+# to redirect urllib3 logs to warning instead of info level
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 _ENA_OUTPUT_DIR = "ena"
@@ -211,6 +211,9 @@ def ingest_ena(
     output_dir = base_output_dir / _ENA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
+    data_dir = output_dir / "data"
+    data_dir.mkdir(exist_ok=True, parents=True)
+
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
@@ -245,7 +248,7 @@ def ingest_ena(
         study_accessions=study_accessions,
         num_workers=num_workers,
         fields=_STUDY_FIELDS,
-        output_dir=output_dir / "studies",
+        output_dir=data_dir / "studies",
         result_type="study",
         desc="downloading per-study metadata",
         retries=retries,
@@ -258,7 +261,7 @@ def ingest_ena(
             study_accessions=study_accessions,
             num_workers=num_workers,
             fields=_EXPERIMENT_FIELDS,
-            output_dir=output_dir / "experiments",
+            output_dir=data_dir / "experiments",
             result_type="read_experiment",
             desc="downloading experiments per study",
             retries=retries,
@@ -271,7 +274,7 @@ def ingest_ena(
             study_accessions=study_accessions,
             num_workers=num_workers,
             fields=_SAMPLE_FIELDS,
-            output_dir=output_dir / "samples",
+            output_dir=data_dir / "samples",
             result_type="sample",
             desc="downloading samples per study",
             retries=retries,
@@ -280,7 +283,7 @@ def ingest_ena(
         )
 
     exec_query_from_file("tables/ena_tables.sql", db_file)
-    _ingest_data(db_file, output_dir)
+    _ingest_data(db_file, data_dir)
     exec_query_from_file("indexes/ena_indexes.sql", db_file)
 
 
@@ -368,6 +371,9 @@ def _run_per_study_download(
 
     def _worker(study_accession: str):
         output_file = output_dir / f"{study_accession}.json"
+        if output_file.exists():
+            return
+
         data = _fetch_per_study(
             study_accession, result_type, fields, retries, timeout, max_timeout
         )
@@ -381,7 +387,7 @@ def _run_per_study_download(
         ThreadPoolExecutor(num_workers) as pool,
         tqdm(
             total=len(study_accessions),
-            unit="accession",
+            unit="acc",
             desc=desc,
         ) as pbar,
     ):
@@ -459,7 +465,7 @@ def _ingest_table_to_sqlite(
                 total += 1
     seen.clear()
 
-    with tqdm(total=total, unit="accession", desc=desc) as pbar:
+    with tqdm(total=total, unit="acc", desc=desc) as pbar:
         cursor = conn.cursor()
         table = key_col_to_table[key_col]
         sql = f"INSERT OR IGNORE INTO {table} ({', '.join(fields)}) VALUES ({', '.join('?' * len(fields))})"

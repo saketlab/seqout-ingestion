@@ -1,7 +1,7 @@
 export PYTHON_GIL := "0"
 
 PYTHON := ".venv/bin/python"
-DATA_DIR := "./data"
+DATA_DIR := "/data/share/seqout_may"
 
 _latest_db source:
     @latest=$(ls {{ DATA_DIR }}/{{ source }}/db/ | sort -r | head -1) && \
@@ -10,16 +10,17 @@ _latest_db source:
 ingest_sra:
     {{ PYTHON }} ./src/main.py ingest sra \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-01-15 \
-        --end-date 2026-01-20 \
-        --workers 6 \
+        --start-date 2026-05-15 \
+        --end-date 2026-05-20 \
+        --workers 10 \
         --read-batch-size 500 \
-        --write-batch-size 5000
+        --write-batch-size 2000 \
+        --transform-queue-size 1000
 
 ingest_geo:
     {{ PYTHON }} ./src/main.py ingest geo \
         --output-dir {{ DATA_DIR }} \
-        --series-limit 10 \
+        --series-limit 2 \
         --workers 10
 
 ingest_ena:

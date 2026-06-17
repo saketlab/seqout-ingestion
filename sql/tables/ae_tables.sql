@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS arrayexpress_experiments (
     contact_email               TEXT,
     contact_affiliation         TEXT,
     pubmed_id                   TEXT,
+    pubmed_id_pysradb           TEXT,
+    pubmed_last_checked         DATE,
     protocol_names              TEXT CHECK (protocol_names IS NULL OR json_valid(protocol_names)),
     protocol_types              TEXT CHECK (protocol_types IS NULL OR json_valid(protocol_types)),
     attributes_json             TEXT CHECK (attributes_json IS NULL OR json_valid(attributes_json)),

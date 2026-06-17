@@ -207,7 +207,7 @@ def _download_study_metadatas(
     with (
         ThreadPoolExecutor(num_workers) as pool,
         tqdm(
-            total=len(accessions), unit="accession", desc="downloading study metadata"
+            total=len(accessions), unit="acc", desc="downloading study metadata"
         ) as pbar,
     ):
         futures = [
@@ -722,8 +722,8 @@ def _process_accessions(
     with (
         tqdm(
             total=len(accessions),
-            unit="accession",
-            desc="ingesting accessions' data to sqlite",
+            unit="acc",
+            desc="ingesting data to sqlite",
         ) as pbar,
         sqlite3.Connection(db_file) as conn,
     ):

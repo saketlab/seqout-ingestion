@@ -89,9 +89,6 @@ def backfill_pubmed_ids(
         table = DATASOURCE_TABLE_MAPPING[datasource]
 
         with sqlite3.Connection(db_file) as conn:
-            _add_col_if_not_exists(conn, table, "pubmed_id_pysradb", "TEXT")
-            _add_col_if_not_exists(conn, table, "pubmed_last_checked", "TEXT")
-
             missing_query = MISSING_QUERIES[datasource]
             if not process_all:
                 missing_query += " AND pubmed_last_checked IS NULL"
@@ -182,9 +179,7 @@ def _worker(
 
     for batch in _chunked(data, batch_size):
         try:
-            df = (
-                sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
-            )
+            df = sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
         except KeyError:
             df = pd.DataFrame()
 
@@ -215,12 +210,3 @@ def _worker(
             conn.commit()
 
         pbar.update(len(batch))
-
-
-def _add_col_if_not_exists(
-    conn: sqlite3.Connection, table: str, column: str, col_type: str
-):
-    cursor = conn.execute(f"PRAGMA table_info({table})")
-    existing = {row[1] for row in cursor.fetchall()}
-    if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")

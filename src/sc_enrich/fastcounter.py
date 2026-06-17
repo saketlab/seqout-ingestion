@@ -7,6 +7,7 @@ import logging
 import shutil
 import sqlite3
 import tarfile
+import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Callable
 
 import h5py
+import pyreadr
 
 from helpers import simple_file_download
 
@@ -22,16 +24,14 @@ class _FileType(StrEnum):
     Barcodes = "barcodes"
     H5 = "h5"
     H5ad = "h5ad"
-    Csv = "csv"  # comma delimited
-    Tsv = "tsv"  # tab delimited
-    Txt = "txt"  # newline delimited
-    SpaceDelimited = "space_delimited"  # space delimited
-    SemicolonDelimited = "semicolon_delimited"  # semicolon delimited
+    Csv = "csv"
+    Tsv = "tsv"
+    Txt = "txt"
+    SpaceDelimited = "space_delimited"
+    SemicolonDelimited = "semicolon_delimited"
+    Rds = "rds"
     Tar = "tar"
     Unknown = "unknown"
-
-
-POSSIBLE_MINOMER_FILE_TYPES = [_FileType.Csv, _FileType.Tsv, _FileType.Txt]
 
 
 @dataclasses.dataclass
@@ -47,6 +47,7 @@ class _DownloadLink:
 
 
 _SC_ENRICH_OUTPUT_DIR = "sc_enrich"
+_POSSIBLE_MISNOMER_FILE_TYPES = [_FileType.Csv, _FileType.Tsv, _FileType.Txt]
 
 
 def sc_fastcounter(
@@ -215,8 +216,8 @@ def sc_fastcounter(
                     _DownloadLink(type=file_type, url=url)
                 )
 
-    accession_sc_result: dict[str, bool] = {}
     accession_dest_path_mapping: dict[str, tuple[Path, _FileType]] = {}
+    accessions_to_update: list[str] = []
 
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
         futures = {}
@@ -260,20 +261,26 @@ def sc_fastcounter(
         futures = {}
 
         for accession, (dest_path, file_type) in accession_dest_path_mapping.items():
-            if file_type in POSSIBLE_MINOMER_FILE_TYPES:
+            if file_type in _POSSIBLE_MISNOMER_FILE_TYPES:
                 file_type, dest_path = _file_type_sniffer(dest_path, chunk_size)
                 if file_type == _FileType.Unknown:
                     logging.debug("unable to find file type for %s", dest_path)
                     continue
 
             future = pool.submit(_is_sc, dest_path, file_type, chunk_size)
-            futures[future] = (accession, dest_path)
+            futures[future] = accession
 
         for f in as_completed(futures):
             is_sc = f.result()
-            accession, dest_path = futures[f]
-            print(f"{accession}: {is_sc} ({dest_path})")
-            accession_sc_result[accession] = is_sc
+            accession = futures[f]
+            if not is_sc:
+                accessions_to_update.append(accession)
+
+    if accessions_to_update:
+        placeholders = ", ".join(repr(acc) for acc in accessions_to_update)
+        query = f"UPDATE unified_metadata SET is_single_cell = 0, single_cell_modality = '' WHERE accession IN ({placeholders})"
+        conn.execute(query)
+        conn.commit()
 
     _db_flush()
 
@@ -283,7 +290,7 @@ def _contains_any(s: str, substrings: list[str]) -> bool:
 
 
 def _classify_file(path: str) -> _FileType:
-    # list of words to ignore while assignment csv, tsv and txt file types
+    # list of words to ignore while assigning csv, tsv and txt file types
     ignore_words = [
         "barcode",
         "feature",
@@ -298,15 +305,17 @@ def _classify_file(path: str) -> _FileType:
         return _FileType.Barcodes
     elif ".ha5d" in path:
         return _FileType.H5ad
-    elif ".h5" in path:
+    elif _contains_any(path, [".h5", ".hdf5"]):
         return _FileType.H5
+    elif ".txt" in path and not _contains_any(path, ignore_words):
+        return _FileType.Txt
     elif ".csv" in path and not _contains_any(path, ignore_words):
         return _FileType.Csv
     elif ".tsv" in path and not _contains_any(path, ignore_words):
         return _FileType.Tsv
-    elif ".txt" in path and not _contains_any(path, ignore_words):
-        return _FileType.Txt
-    elif (".tar" in path) or (".tar.gz" in path) or (".tgz" in path):
+    elif ".rds" in path:
+        return _FileType.Rds
+    elif _contains_any(path, [".tar", ".tar.gz", ".tgz"]):
         return _FileType.Tar
     else:
         return _FileType.Unknown
@@ -316,11 +325,9 @@ def _classify_file(path: str) -> _FileType:
 def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[_FileType, Path]:
     if path.suffix == ".gz":
         tmp_path = path.with_suffix("")
-
         if not tmp_path.exists():
             with gzip.open(path, "rb") as f_in, open(tmp_path, "wb") as f_out:
                 shutil.copyfileobj(f_in, f_out)
-
         path = tmp_path
 
     try:
@@ -367,6 +374,8 @@ def _is_sc(dest_path: Path, file_type: _FileType, chunk_size: int) -> bool:
                 return _process_h5(dest_path, chunk_size)
             case _FileType.H5ad:
                 return _process_h5ad(dest_path, chunk_size)
+            case _FileType.Txt:
+                return _process_txt(dest_path, chunk_size)
             case _FileType.Tsv:
                 return _process_delimiter_file_types("\t")(dest_path, chunk_size)
             case _FileType.Csv:
@@ -375,11 +384,13 @@ def _is_sc(dest_path: Path, file_type: _FileType, chunk_size: int) -> bool:
                 return _process_delimiter_file_types(" ")(dest_path, chunk_size)
             case _FileType.SemicolonDelimited:
                 return _process_delimiter_file_types(";")(dest_path, chunk_size)
+            case _FileType.Rds:
+                return _process_rds(dest_path, chunk_size)
 
     return False
 
 
-def safe_process(func):
+def safe_process(func: Callable[[Path, int], bool]) -> Callable[[Path, int], bool]:
     @functools.wraps(func)
     def wrapper(path: Path, chunk_size: int, *args, **kwargs):
         try:
@@ -404,11 +415,18 @@ def _process_tar(path: Path, chunk_size: int) -> bool:
                 if f is None:
                     continue
 
-                raw = f.read()
-                if name.endswith(".gz"):
-                    raw = gzip.decompress(raw)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as tmp:
+                    shutil.copyfileobj(f, tmp)
+                    tmp_path = Path(tmp.name)
 
-                is_sc = _is_sc(path, file_type, chunk_size)
+                if file_type in _POSSIBLE_MISNOMER_FILE_TYPES:
+                    file_type, dest_path = _file_type_sniffer(tmp_path, chunk_size)
+                    if file_type == _FileType.Unknown:
+                        logging.debug("unable to find file type for %s", dest_path)
+                        continue
+
+                is_sc = _is_sc(tmp_path, file_type, chunk_size)
+                Path(tmp_path).unlink(missing_ok=True)
                 if is_sc:
                     return True
 
@@ -458,6 +476,17 @@ def _process_h5ad(path: Path, _: int) -> bool:
     return n_cells is not None and n_cells > 1
 
 
+# assumes one cell/gene per line
+@safe_process
+def _process_txt(path: Path, chunk_size: int) -> bool:
+    with open(path, "rb") as f:
+        chunk = f.read(chunk_size)
+    chunk.strip()
+    lines = chunk.splitlines()
+    return len(lines) > 2
+
+
+# assumes that cell/gene related data is present in header
 def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], bool]:
     @safe_process
     def _wrapper(path: Path, chunk_size: int) -> bool:
@@ -473,3 +502,11 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], bool]
         return len(header) > 3
 
     return _wrapper
+
+
+@safe_process
+def _process_rds(path: Path, _: int) -> bool:
+    result = pyreadr.read_r(path)
+    df = list(result.values())[0]
+    n_cells = df.shape[1]
+    return n_cells > 1

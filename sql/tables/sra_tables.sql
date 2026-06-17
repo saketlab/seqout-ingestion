@@ -59,5 +59,7 @@ CREATE TABLE IF NOT EXISTS sra_studies (
     center_project_name TEXT,
     submission          TEXT,
     published_at        TEXT,
+    pubmed_id_pysradb   TEXT,
+    pubmed_last_checked DATE,
     updated_at          TEXT
 );

@@ -89,19 +89,6 @@ def sc_regex_enricher(
     unified_metadata_db_file: Path, batch_size: int, is_dry_run: bool
 ):
     conn = sqlite3.connect(unified_metadata_db_file)
-    existing_tables = [
-        r[1] for r in conn.execute("PRAGMA table_info(unified_metadata)").fetchall()
-    ]
-
-    if "is_single_cell" not in existing_tables:
-        conn.execute(
-            "ALTER TABLE unified_metadata ADD COLUMN is_single_cell INTEGER DEFAULT 0"
-        )
-    if "single_cell_modality" not in existing_tables:
-        conn.execute(
-            "ALTER TABLE unified_metadata ADD COLUMN single_cell_modality TEXT"
-        )
-
     rows = conn.execute(
         "SELECT canonical_accession, title, dominant_assay_l2 FROM unified_metadata"
     ).fetchall()

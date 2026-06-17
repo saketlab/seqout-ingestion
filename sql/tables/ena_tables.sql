@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS ena_studies (
     submission_tool             TEXT,
     parent_study_accession      TEXT,
     description                 TEXT,
-    status                      TEXT
+    status                      TEXT,
+    pubmed_id_pysradb           TEXT,
+    pubmed_last_checked         DATE
 );
 
 CREATE TABLE IF NOT EXISTS ena_experiments (

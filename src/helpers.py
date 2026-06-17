@@ -257,7 +257,7 @@ def simple_file_download(
 
             wait = min(2**attempt, max_timeout)
             logging.warning(
-                "simple_file_download %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                "failed to download %s (attempt %d/%d, retrying in %.0fs): %s",
                 url,
                 attempt + 1,
                 retries,

@@ -53,6 +53,8 @@ def ingest_sra(
     chunk_size: int,
     read_batch_size: int,
     write_batch_size: int,
+    transform_queue_size: int,
+    write_queue_size: int,
     accessions_ttl: int,
     retries: int,
     timeout: int,
@@ -119,7 +121,7 @@ def ingest_sra(
         _convert_tab_to_csv(accessions_csv_path, tab_path, chunk_size)
 
     logging.info("downloading sra file dumps")
-    dumps_dir = _download_sra_file_dumps(
+    data_dir = _download_sra_file_dumps(
         downloader, file_dumps, output_dir, num_workers, chunk_size
     )
 
@@ -127,7 +129,7 @@ def ingest_sra(
     accessions_dict = _build_accessions_dict(
         accessions_csv_path, to_reprocess_csv, output_dir
     )
-    tarballs = sorted(dumps_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
+    tarballs = sorted(data_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
 
     exec_query_from_file("tables/sra_tables.sql", db_file)
     _process_tarballs(
@@ -137,6 +139,8 @@ def ingest_sra(
         num_workers,
         read_batch_size,
         write_batch_size,
+        transform_queue_size,
+        write_queue_size,
     )
 
     logging.info("creating indexes on sra tables ...")
@@ -248,15 +252,15 @@ def _download_sra_file_dumps(
 ) -> Path:
     concurrent_files = min(len(file_dumps), isqrt(num_workers))
     workers_per_file = num_workers // concurrent_files
-    dumps_dir = output_dir / "dumps"
-    dumps_dir.mkdir(parents=True, exist_ok=True)
-    missing_files = [f for f in file_dumps if not (dumps_dir / f).exists()]
+    data_dir = output_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    missing_files = [f for f in file_dumps if not (data_dir / f).exists()]
 
     if not missing_files:
         logging.info(
             "skipped download for sra file dumps as all of them are already present"
         )
-        return dumps_dir
+        return data_dir
 
     logging.info(
         """starting downloading phase for sra file dumps with following config:
@@ -269,7 +273,7 @@ def _download_sra_file_dumps(
     )
 
     def _process_per_file(file: str):
-        dest_path = dumps_dir / file
+        dest_path = data_dir / file
         url = f"{_SRA_FTP_BASE_URL}/{file}"
         downloader(url, dest_path, workers_per_file, chunk_size)
 
@@ -281,7 +285,7 @@ def _download_sra_file_dumps(
             for future in as_completed(futures):
                 future.result()
 
-    return dumps_dir
+    return data_dir
 
 
 def _build_accessions_dict(
@@ -580,7 +584,7 @@ def _reader_worker(
                     if f is None:
                         continue
 
-                    content = io.BytesIO(f.read())
+                    content = f.read()
                     batch.append((submission_accession, file_type, content))
 
                     if len(batch) >= read_batch_size:
@@ -615,20 +619,19 @@ def _transform_worker(
 
         for submission_accession, file_type, content in batch:
             try:
+                bio = io.BytesIO(content)
                 if file_type == FileType.Submission:
                     processor = _process_submission(
-                        submission_accession, content, accessions
+                        submission_accession, bio, accessions
                     )
                 elif file_type == FileType.Study:
-                    processor = _process_studies(
-                        submission_accession, content, accessions
-                    )
+                    processor = _process_studies(submission_accession, bio, accessions)
                 elif file_type == FileType.Sample:
-                    processor = _process_samples(submission_accession, content)
+                    processor = _process_samples(submission_accession, bio)
                 elif file_type == FileType.Experiment:
-                    processor = _process_experiments(submission_accession, content)
+                    processor = _process_experiments(submission_accession, bio)
                 elif file_type == FileType.Run:
-                    processor = _process_runs(submission_accession, content)
+                    processor = _process_runs(submission_accession, bio)
                 else:
                     logging.error(
                         f"[transform] received invalid file type: {file_type}"
@@ -732,23 +735,22 @@ def _process_tarballs(
     num_workers: int,
     read_batch_size: int,
     write_batch_size: int,
+    transform_queue_size: int,
+    write_queue_size: int,
 ):
     num_readers = max(1, min(len(tarballs), num_workers // 4))
     num_writer = 1
     num_transform = max(1, num_workers - num_readers - num_writer)
 
-    # note: the memory consumption of sra ingestion can be further optimized by converting these into bounded queues
-    # but it requires a lot of fine tuning with the queue's max size based on the systems' constraints, number of workers, read/write batch size and a lot of other factors
-    # by which you can design a proper number which wouldn't get up in a deadlock
-    transform_queue: queue.Queue = queue.Queue()
+    transform_queue: queue.Queue = queue.Queue(maxsize=transform_queue_size)
     write_queue: queue.Queue = queue.Queue()
 
-    total = len(accessions)
+    total = len(accessions) * 5
 
     pbar = tqdm(
         total=total,
-        unit="acc",
-        desc="processing accessions",
+        unit="file",
+        desc="processing files",
         mininterval=2.0,
     )
 
