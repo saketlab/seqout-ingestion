@@ -2,16 +2,16 @@ import csv
 import dataclasses
 import functools
 import gzip
-import io
 import json
+import logging
+import shutil
 import sqlite3
 import tarfile
-import tempfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
-from typing import Optional
+from typing import Callable
 
 import h5py
 
@@ -22,9 +22,16 @@ class _FileType(StrEnum):
     Barcodes = "barcodes"
     H5 = "h5"
     H5ad = "h5ad"
+    Csv = "csv"  # comma delimited
+    Tsv = "tsv"  # tab delimited
+    Txt = "txt"  # newline delimited
+    SpaceDelimited = "space_delimited"  # space delimited
+    SemicolonDelimited = "semicolon_delimited"  # semicolon delimited
     Tar = "tar"
-    Tsv = "tsv"
     Unknown = "unknown"
+
+
+POSSIBLE_MINOMER_FILE_TYPES = [_FileType.Csv, _FileType.Tsv, _FileType.Txt]
 
 
 @dataclasses.dataclass
@@ -84,7 +91,6 @@ def sc_fastcounter(
     rows: list[tuple[str, str]] = conn.execute(
         f"SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession IN ({placeholders}) GROUP BY canonical_accession"
     ).fetchall()
-    del search_for_aliases
 
     for accession, aliases_json in rows:
         aliases: dict[str, str] = json.loads(aliases_json)
@@ -105,11 +111,11 @@ def sc_fastcounter(
         elif isinstance(v, tuple):
             accessions_to_process.add(v[1])
 
-    gse_to_gsm: dict[str, list[str]] = defaultdict(list[str])
+    gsm_to_gse: dict[str, str] = {}
+
     placeholders = ", ".join(
         repr(acc) for acc in accessions_to_process if acc.startswith("GSE")
     )
-
     rows: list[tuple[str, str]] = geo_conn.execute(
         f"SELECT accession, samples_ref FROM geo_series WHERE accession IN ({placeholders}) GROUP BY accession;"
     ).fetchall()
@@ -119,63 +125,70 @@ def sc_fastcounter(
             continue
 
         samples_ref: list[dict[str, str]] = json.loads(samples_ref_json)
-        gse_to_gsm[accession] = [v["@ref"] for v in samples_ref]
+        for v in samples_ref:
+            gsm_to_gse[v["@ref"]] = accession
 
     download_links_mapping: dict[str, list[_DownloadLink]] = defaultdict(
         list[_DownloadLink]
     )
 
+    all_gsms = list(gsm_to_gse.keys())
+    if all_gsms:
+        placeholders = ", ".join(repr(g) for g in all_gsms)
+        rows: list[tuple[str, str]] = geo_conn.execute(
+            f"SELECT accession, supplementary_data FROM geo_samples WHERE accession IN ({placeholders})"
+        ).fetchall()
+
+        for gsm_accession, supl_data_json in rows:
+            if not supl_data_json:
+                continue
+
+            gse = gsm_to_gse.get(gsm_accession)
+            if gse is None:
+                continue
+
+            supl_data: list[dict[str, str]] = json.loads(supl_data_json)
+            for item in supl_data:
+                url = item.get("#text")
+                if not url:
+                    continue
+
+                file_type = _classify_file(url)
+                if file_type == _FileType.Unknown:
+                    continue
+
+                download_links_mapping[gse].append(
+                    _DownloadLink(type=file_type, url=url)
+                )
+
     for series_accession in accessions_to_process:
         if series_accession.startswith("GSE"):
-            samples = gse_to_gsm[accession]
-            placeholders = ", ".join(repr(s) for s in samples)
-            rows: list[tuple[str]] = geo_conn.execute(
-                f"SELECT supplementary_data FROM geo_samples WHERE accession IN ({placeholders})"
-            ).fetchall()
+            if len(download_links_mapping.get(series_accession, [])) > 0:
+                continue
 
-            for (supl_data_json,) in rows:
-                if not supl_data_json:
+            rows = geo_conn.execute(
+                "SELECT supplementary_data FROM geo_series WHERE accession = ?",
+                (series_accession,),
+            ).fetchone()
+            if rows is None:
+                continue
+
+            supl_data_json = rows[0]
+            if supl_data_json is None:
+                continue
+
+            supl_data = json.loads(supl_data_json)
+            for item in supl_data:
+                url = item.get("#text")
+                if url is None:
                     continue
-                supl_data: list[dict[str, str]] = json.loads(supl_data_json)
 
-                for item in supl_data:
-                    url = item.get("#text")
-                    if not url:
-                        continue
-
-                    file_type = _classify_file(url)
-                    if file_type == _FileType.Unknown:
-                        continue
-
+                file_type = _classify_file(url)
+                if file_type == _FileType.Tar:
                     download_links_mapping[series_accession].append(
                         _DownloadLink(type=file_type, url=url)
                     )
-
-            if len(download_links_mapping[series_accession]) == 0:
-                rows = geo_conn.execute(
-                    "SELECT supplementary_data FROM geo_series WHERE accession = ?",
-                    (series_accession,),
-                ).fetchone()
-                if rows is None:
-                    continue
-
-                supl_data_json = rows[0]
-                if supl_data_json is None:
-                    continue
-
-                supl_data = json.loads(supl_data_json)
-                for item in supl_data:
-                    url = item.get("#text")
-                    if url is None:
-                        continue
-                    file_type = _classify_file(url)
-
-                    # if no supplementary data is found in samples-level then just analyze a single tar file on series-level
-                    if file_type == _FileType.Tar:
-                        download_links_mapping[series_accession].append(
-                            _DownloadLink(type=file_type, url=url)
-                        )
-                        break
+                    break
         else:
             row = ae_conn.execute(
                 "SELECT processed_data_files FROM arrayexpress_experiments WHERE accession = ?",
@@ -189,12 +202,14 @@ def sc_fastcounter(
                 continue
 
             processed_data_files = json.loads(processed_data_files_json)
-
             for item in processed_data_files:
                 url = item.get("url")
                 if url is None:
                     continue
+
                 file_type = _classify_file(url)
+                if file_type == _FileType.Unknown:
+                    continue
 
                 download_links_mapping[series_accession].append(
                     _DownloadLink(type=file_type, url=url)
@@ -231,143 +246,230 @@ def sc_fastcounter(
                     url=link._parse_url(),
                     dest_path=dest_path,
                 )
-                futures[future] = (accession, link.type)
+                futures[future] = (accession, link)
 
         for f in as_completed(futures):
-            dest_path = f.result()
-            accession, file_type = futures[f]
-            accession_dest_path_mapping[accession] = (dest_path, file_type)
-
-    del download_links_mapping
+            try:
+                dest_path = f.result()
+                accession, link = futures[f]
+                accession_dest_path_mapping[accession] = (dest_path, link.type)
+            except Exception as e:
+                logging.error("failed to download %s: %s", link.url, e)
 
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
         futures = {}
 
         for accession, (dest_path, file_type) in accession_dest_path_mapping.items():
-            future = pool.submit(_is_sc, dest_path, file_type)
-            futures[future] = accession
+            if file_type in POSSIBLE_MINOMER_FILE_TYPES:
+                file_type, dest_path = _file_type_sniffer(dest_path, chunk_size)
+                if file_type == _FileType.Unknown:
+                    logging.debug("unable to find file type for %s", dest_path)
+                    continue
+
+            future = pool.submit(_is_sc, dest_path, file_type, chunk_size)
+            futures[future] = (accession, dest_path)
 
         for f in as_completed(futures):
             is_sc = f.result()
-            accession = futures[f]
-            print(f"{accession}: {is_sc}")
+            accession, dest_path = futures[f]
+            print(f"{accession}: {is_sc} ({dest_path})")
             accession_sc_result[accession] = is_sc
 
     _db_flush()
 
 
+def _contains_any(s: str, substrings: list[str]) -> bool:
+    return any(sub in s for sub in substrings)
+
+
 def _classify_file(path: str) -> _FileType:
+    # list of words to ignore while assignment csv, tsv and txt file types
+    ignore_words = [
+        "barcode",
+        "feature",
+        "gene",
+        "readme",
+        "annotation",
+        "metadata",
+        "md5sum",
+    ]
+
     if "barcodes.tsv" in path:
         return _FileType.Barcodes
     elif ".ha5d" in path:
         return _FileType.H5ad
     elif ".h5" in path:
         return _FileType.H5
-    elif ".coutt" in path:
+    elif ".csv" in path and not _contains_any(path, ignore_words):
+        return _FileType.Csv
+    elif ".tsv" in path and not _contains_any(path, ignore_words):
         return _FileType.Tsv
+    elif ".txt" in path and not _contains_any(path, ignore_words):
+        return _FileType.Txt
     elif (".tar" in path) or (".tar.gz" in path) or (".tgz" in path):
         return _FileType.Tar
     else:
         return _FileType.Unknown
 
 
-def _is_sc(dest_path: Path, file_type: _FileType, raw: Optional[bytes] = None) -> bool:
-    if file_type == _FileType.Tar:
-        return _process_tar(dest_path)
-    else:
-        if raw is None:
-            with open(dest_path, "rb") as f:
-                raw = f.read()
+# util function to read a sample of the file and extract the exact file type rather than just guessing it from the file extension
+def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[_FileType, Path]:
+    if path.suffix == ".gz":
+        tmp_path = path.with_suffix("")
 
+        if not tmp_path.exists():
+            with gzip.open(path, "rb") as f_in, open(tmp_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+        path = tmp_path
+
+    try:
+        with open(path, "r") as f:
+            sample = f.read(chunk_size)
+    except UnicodeDecodeError as e:
+        logging.warning("failed to read %s: %s", path, e)
+        return _FileType.Unknown, path
+
+    try:
+        dialect = csv.Sniffer().sniff(sample)
+        reader = csv.reader(sample.splitlines(), dialect)
+        row = next(reader)
+    except csv.Error:
+        row = sample.splitlines()[0].split("\t")
+        dialect = None
+
+    row = [r for r in row if r.strip()]
+
+    if dialect is None:
+        return _FileType.Unknown, path
+    if len(row) == 1:
+        return _FileType.Txt, path
+    elif dialect.delimiter == "\t":
+        return _FileType.Tsv, path
+    elif dialect.delimiter == ",":
+        return _FileType.Csv, path
+    elif dialect.delimiter == " ":
+        return _FileType.SpaceDelimited, path
+    elif dialect.delimiter == ";":
+        return _FileType.SemicolonDelimited, path
+    else:
+        return _FileType.Unknown, path
+
+
+def _is_sc(dest_path: Path, file_type: _FileType, chunk_size: int) -> bool:
+    if file_type == _FileType.Tar:
+        return _process_tar(dest_path, chunk_size)
+    else:
         match file_type:
             case _FileType.Barcodes:
-                return _process_barcodes(raw)
+                return _process_barcodes(dest_path, chunk_size)
             case _FileType.H5:
-                return _process_h5(raw)
+                return _process_h5(dest_path, chunk_size)
             case _FileType.H5ad:
-                return _process_h5ad(raw)
+                return _process_h5ad(dest_path, chunk_size)
             case _FileType.Tsv:
-                return _process_tsv(raw)
+                return _process_delimiter_file_types("\t")(dest_path, chunk_size)
+            case _FileType.Csv:
+                return _process_delimiter_file_types(",")(dest_path, chunk_size)
+            case _FileType.SpaceDelimited:
+                return _process_delimiter_file_types(" ")(dest_path, chunk_size)
+            case _FileType.SemicolonDelimited:
+                return _process_delimiter_file_types(";")(dest_path, chunk_size)
 
     return False
 
 
-def _process_tar(dest_path: Path) -> bool:
-    with tarfile.open(dest_path, "r:*") as tar:
-        for member in tar.getmembers():
-            name = member.name.lower()
-            file_type = _classify_file(name)
-            if file_type == _FileType.Unknown:
-                continue
+def safe_process(func):
+    @functools.wraps(func)
+    def wrapper(path: Path, chunk_size: int, *args, **kwargs):
+        try:
+            return func(path, chunk_size, *args, **kwargs)
+        except Exception as e:
+            logging.error("failed to process %s: %s", path, e)
+            return True
 
-            f = tar.extractfile(member)
-            if f is None:
-                continue
-
-            raw = f.read()
-            if name.endswith(".gz"):
-                raw = gzip.decompress(raw)
-
-            is_sc = _is_sc(dest_path, file_type, raw)
-            if is_sc:
-                return True
-
-    return False
+    return wrapper
 
 
-def _process_barcodes(raw: bytes) -> bool:
-    lines = raw.decode().splitlines()
-    return len(lines) > 1
-
-
-def _process_h5(raw: bytes) -> bool:
-    with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as tmp:
-        tmp.write(raw)
-        tmp_path = tmp.name
-
+def _process_tar(path: Path, chunk_size: int) -> bool:
     try:
-        n_cells = None
+        with tarfile.open(path, "r:*") as tar:
+            for member in tar.getmembers():
+                name = member.name.lower()
+                file_type = _classify_file(name)
+                if file_type == _FileType.Unknown:
+                    continue
 
-        with h5py.File(tmp_path, "r") as f:
-            # recursively try to find barcodes
-            def find_barcodes(name, obj):
-                nonlocal n_cells
-                if n_cells is not None:
-                    return
-                if isinstance(obj, h5py.Dataset) and name.endswith("/barcodes"):
-                    n_cells = len(obj)
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
 
-            f.visititems(find_barcodes)
+                raw = f.read()
+                if name.endswith(".gz"):
+                    raw = gzip.decompress(raw)
 
-        return n_cells > 1 if n_cells is not None else False
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+                is_sc = _is_sc(path, file_type, chunk_size)
+                if is_sc:
+                    return True
 
-
-def _process_h5ad(raw: bytes) -> bool:
-    with tempfile.NamedTemporaryFile(suffix=".h5ad", delete=False) as tmp:
-        tmp.write(raw)
-        tmp_path = tmp.name
-
-    try:
-        n_cells = None
-
-        with h5py.File(tmp_path, "r") as f:
-            if "obs/_index" in f:
-                n_cells = len(f["obs/_index"])
-
-            if "X" in f:
-                n_cells = f["X"].shape[0]
-
-        return n_cells > 1 if n_cells is not None else False
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
+        return False
+    except Exception as e:
+        logging.error("failed to process %s: %s", path, e)
+        return True
 
 
-def _process_tsv(raw: bytes) -> bool:
-    with io.StringIO(raw.decode()) as f:
-        reader = csv.reader(f, delimiter="\t")
-        header = next(reader)
-        n_cells = len(header) - 1
+@safe_process
+def _process_barcodes(path: Path, chunk_size: int) -> bool:
+    with open(path, "rb") as f:
+        chunk = f.read(chunk_size)
+    idx = chunk.find(b"\n")
+    return idx != -1 and len(chunk) > idx + 1
 
-    return n_cells > 1
+
+@safe_process
+def _process_h5(path: Path, _: int) -> bool:
+    n_cells = None
+
+    with h5py.File(path, "r") as f:
+        # recursively try to find barcodes
+        def find_barcodes(name, obj):
+            nonlocal n_cells
+            if n_cells is not None:
+                return
+            if isinstance(obj, h5py.Dataset) and name.endswith("/barcodes"):
+                n_cells = len(obj)
+
+        f.visititems(find_barcodes)
+
+    return n_cells is not None and n_cells > 1
+
+
+@safe_process
+def _process_h5ad(path: Path, _: int) -> bool:
+    n_cells = None
+
+    with h5py.File(path, "r") as f:
+        if "obs/_index" in f:
+            n_cells = len(f["obs/_index"])
+
+        if "X" in f:
+            n_cells = f["X"].shape[0]
+
+    return n_cells is not None and n_cells > 1
+
+
+def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], bool]:
+    @safe_process
+    def _wrapper(path: Path, chunk_size: int) -> bool:
+        with open(path, "rb") as f:
+            chunk = f.read(chunk_size)
+
+        first_newline = chunk.find(b"\n")
+        header = (
+            chunk[:first_newline].decode().split(delimiter)
+            if first_newline != -1
+            else chunk.decode().split(delimiter)
+        )
+        return len(header) > 3
+
+    return _wrapper

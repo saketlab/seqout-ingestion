@@ -1,26 +1,25 @@
-import h5py
+import csv
+
+with open("./dump/test.txt", "r") as f:
+    sample = f.read(16 * 1024)
+
+try:
+    dialect = csv.Sniffer().sniff(sample)
+    reader = csv.reader(sample.splitlines(), dialect)
+    row = next(reader)
+except csv.Error:
+    row = sample.splitlines()[0].split("\t")
 
 
-def _count_h5_cells(path):
-    with h5py.File(path, "r") as f:
-        n_cells = None
+row = [r for r in row if r.strip()]
 
-        def find_barcodes(name, obj):
-            nonlocal n_cells
-            if n_cells is not None:
-                return
-            if isinstance(obj, h5py.Dataset) and name.endswith("/barcodes"):
-                n_cells = len(obj)
-
-        f.visititems(find_barcodes)
-
-        # if n_cells is None and "obs/_index" in f:
-        #     n_cells = len(f["obs/_index"])
-
-        # if n_cells is None and "X" in f:
-        #     n_cells = f["X"].shape[0]
-
-    return n_cells
-
-
-print(_count_h5_cells("./dump/GSM2833286_Pentamer_WT_Rep1.h5"))
+if len(row) == 1:
+    print("newline separated")
+elif dialect.delimiter == "\t":
+    print("tsv")
+elif dialect.delimiter == " ":
+    print("space delimited")
+elif dialect.delimiter == ",":
+    print("csv")
+elif dialect.delimiter == ";":
+    print("semi-colon separated")
