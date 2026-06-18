@@ -3,6 +3,7 @@ import functools
 import json
 import logging
 import pickle
+import re
 import sqlite3
 import tarfile
 import time
@@ -31,46 +32,18 @@ _GEO_OUTPUT_DIR = "geo"
 _MINIML_NAMESPACE = "http://www.ncbi.nlm.nih.gov/geo/info/MINiML"
 
 _GEO_SQL_STATEMENTS: dict[TableType, str] = {
-    TableType.Platforms: """
-        INSERT OR REPLACE INTO geo_platforms
-            (
-                accession, description, title, technology,
-                published_at, updated_at, organism,
-                manufacturer, relation
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-    TableType.Samples: """
-        INSERT OR REPLACE INTO geo_samples
-            (
-                accession, channel_count, channels,
-                description, platform_ref, published_at,
-                updated_at, supplementary_data, title,
-                sample_type, hybridization_protocol, scan_protocol
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-    TableType.Series: """
-        INSERT OR REPLACE INTO geo_series
-            (
-                accession, overall_design, pubmed_id,
-                relation, samples_ref, published_at,
-                updated_at, summary, supplementary_data,
-                title, series_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-    TableType.Contributors: """
-        INSERT INTO geo_contributors
-            (
-                accession, person, department,
-                organization, address_line, address_city,
-                address_state, address_zipcode, address_country
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+    TableType.Platforms: "INSERT OR REPLACE INTO geo_platforms (accession, description, title, technology, published_at, updated_at, organism, manufacturer, relation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    TableType.Samples: "INSERT OR REPLACE INTO geo_samples (accession, channel_count, channels, description, platform_ref, published_at,updated_at, supplementary_data, title, sample_type, hybridization_protocol, scan_protocol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    TableType.Series: "INSERT OR REPLACE INTO geo_series (accession, overall_design, pubmed_id, relation, samples_ref, published_at, updated_at, summary, supplementary_data, title, series_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    TableType.Contributors: "INSERT INTO geo_contributors (accession, person, department, organization, address_line, address_city, address_state, address_zipcode, address_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 }
 
 
 def ingest_geo(
     base_output_dir: Path,
     db_file: Optional[Path],
+    start_date: Optional[datetime.date],
+    end_date: Optional[datetime.date],
     num_workers: int,
     chunk_size: int,
     batch_size: int,
@@ -96,14 +69,18 @@ def ingest_geo(
 - num workers: %d
 - chunk size: %s
 - batch size: %d
-- series limit: %d
+- series limit: %s
+- start date: %s
+- end date: %s
 - retries: %d
 - timeout: %s
 - max timeout: %s""",
         num_workers,
         humanfriendly.format_size(chunk_size),
         batch_size,
-        series_limit,
+        str(series_limit) or "None",
+        str(start_date) or "None",
+        str(end_date) or "None",
         retries,
         humanfriendly.format_timespan(timeout),
         humanfriendly.format_timespan(max_timeout),
@@ -111,7 +88,14 @@ def ingest_geo(
 
     geo_series_pkl_file = series_pickle or (output_dir / "geo_series.pkl")
     geo_dict = _build_geo_dict(
-        num_workers, geo_series_pkl_file, series_limit, retries, timeout, max_timeout
+        num_workers,
+        geo_series_pkl_file,
+        series_limit,
+        start_date,
+        end_date,
+        retries,
+        timeout,
+        max_timeout,
     )
 
     downloader = functools.partial(
@@ -138,11 +122,13 @@ def _build_geo_dict(
     num_workers: int,
     pkl_file: Path,
     series_limit: int | None,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
     retries: int,
     timeout: int,
     max_timeout: int,
 ) -> dict[str, list[str]]:
-    if pkl_file.exists():
+    if pkl_file.exists() and start_date is None and end_date is None:
         with open(pkl_file, "rb") as f:
             return pickle.load(f)
 
@@ -174,16 +160,39 @@ def _build_geo_dict(
             timeout=timeout,
             max_wait=max_timeout,
         )
+
         if dir_resp is None:
             logging.error("failed to fetch geo accession ids (series=%s)", s)
             return None
 
         soup = BeautifulSoup(dir_resp.text, "html.parser")
-        anchors = soup.find_all("a")
-        accessions = [
-            str(a["href"][:-1]) for a in anchors if str(a["href"]).startswith("GSE")
-        ]
+        accessions = []
 
+        for a in soup.find_all("a"):
+            href = a.get("href", "")
+            if not href:
+                continue
+            if not str(href).startswith("GSE"):
+                continue
+
+            acc = str(href).rstrip("/")
+
+            if start_date is not None or end_date is not None:
+                nxt = a.next_sibling
+                if nxt is None:
+                    continue
+
+                date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(nxt))
+                if date_match is None:
+                    continue
+
+                modified_date = datetime.date.fromisoformat(date_match.group(1))
+                if start_date is not None and modified_date < start_date:
+                    continue
+                if end_date is not None and modified_date > end_date:
+                    continue
+
+            accessions.append(acc)
         return accessions
 
     with (

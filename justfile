@@ -10,15 +10,18 @@ _latest_db source:
 ingest_sra:
     {{ PYTHON }} ./src/main.py ingest sra \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-05-15 \
+        --start-date 2026-05-01 \
         --end-date 2026-05-20 \
-        --workers 8 \
+        --workers 10 \
+        --read-batch-size 200 \
+        --write-batch-size 50000
 
 ingest_geo:
     {{ PYTHON }} ./src/main.py ingest geo \
         --output-dir {{ DATA_DIR }} \
-        --series-limit 2 \
-        --workers 10
+        --start-date 2026-05-01 \
+        --end-date 2026-05-20 \
+        --workers 20
 
 ingest_ena:
     {{ PYTHON }} ./src/main.py ingest ena \

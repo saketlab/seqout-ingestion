@@ -261,8 +261,8 @@ def simple_file_download(
                 url,
                 attempt + 1,
                 retries,
-                exc,
                 wait,
+                exc,
             )
             time.sleep(wait)
 

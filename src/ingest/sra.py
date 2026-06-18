@@ -11,11 +11,11 @@ import os
 import pickle
 import queue
 import re
+import shlex
 import sqlite3
+import subprocess
 import tarfile
-import threading
 import time
-import typing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import isqrt
 from pathlib import Path
@@ -25,7 +25,7 @@ import lxml.etree as ET
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-from typing_extensions import Optional
+from typing_extensions import IO, Optional
 
 from helpers import better_downloader, exec_query_from_file
 
@@ -44,8 +44,9 @@ _SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
 _SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
 _SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
 _STOP = object()
+_FILE_STOP = object()
 
-_SQL_STATEMENTS = {
+_SRA_SQL_STATEMENTS = {
     FileType.Submission: (
         "INSERT OR IGNORE INTO sra_submissions "
         "(accession, alias, center_name, lab_name, broker_name, updated_at, published_at) "
@@ -84,8 +85,6 @@ def ingest_sra(
     chunk_size: int,
     read_batch_size: int,
     write_batch_size: int,
-    transform_queue_size: int,
-    write_queue_size: int,
     accessions_ttl: int,
     retries: int,
     timeout: int,
@@ -170,8 +169,6 @@ def ingest_sra(
         num_workers,
         read_batch_size,
         write_batch_size,
-        transform_queue_size,
-        write_queue_size,
     )
 
     logging.info("creating indexes on sra tables ...")
@@ -349,7 +346,7 @@ def _build_accessions_dict(
 
 def _process_submission(
     submission_accession: str,
-    content: typing.BinaryIO,
+    content: IO[bytes],
     accessions: dict[str, str],
 ):
     ctx = ET.iterparse(content, events=("end",))
@@ -387,7 +384,7 @@ def _process_submission(
 
 
 def _process_studies(
-    submission_accession: str, content: typing.BinaryIO, accessions: dict[str, str]
+    submission_accession: str, content: IO[bytes], accessions: dict[str, str]
 ):
     ctx = ET.iterparse(content, events=("end",))
 
@@ -396,11 +393,9 @@ def _process_studies(
             if elem.tag != "STUDY_SET":
                 continue
 
-            items = elem.findall("STUDY")
-
-            for study in items:
-                accession: str = study.get("accession")
-                descriptor = _xml_elem_to_dict(study.find("DESCRIPTOR"))
+            for study in elem.findall("STUDY"):
+                accession = study.get("accession")
+                descriptor = study.find("DESCRIPTOR")
 
                 identifiers = study.find("IDENTIFIERS")
                 external_ids = (
@@ -416,23 +411,32 @@ def _process_studies(
                     continue
                 updated_at, published_at = dates_str.split("|")
 
-                study_type_raw = descriptor.get("STUDY_TYPE", {})
-                if isinstance(study_type_raw, dict):
-                    study_type = study_type_raw.get("existing_study_type")
-                else:
-                    study_type = None
+                study_type_elem = (
+                    descriptor.find("STUDY_TYPE") if descriptor is not None else None
+                )
+                study_type = (
+                    study_type_elem.get("existing_study_type")
+                    if study_type_elem is not None
+                    else None
+                )
 
                 yield (
                     accession,
                     study.get("alias"),
                     study.get("center_name"),
-                    descriptor.get("STUDY_ABSTRACT"),
-                    descriptor.get("STUDY_TITLE"),
+                    descriptor.findtext("STUDY_ABSTRACT")
+                    if descriptor is not None
+                    else None,
+                    descriptor.findtext("STUDY_TITLE")
+                    if descriptor is not None
+                    else None,
                     _parse_external_ids(external_ids),
                     study_type,
                     _parse_attributes(attrs),
                     _parse_links(links),
-                    descriptor.get("CENTER_PROJECT_NAME"),
+                    descriptor.findtext("CENTER_PROJECT_NAME")
+                    if descriptor is not None
+                    else None,
                     submission_accession,
                     published_at,
                     updated_at,
@@ -445,7 +449,7 @@ def _process_studies(
         return
 
 
-def _process_samples(submission_accession: str, content: typing.BinaryIO):
+def _process_samples(submission_accession: str, content: IO[bytes]):
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -480,7 +484,7 @@ def _process_samples(submission_accession: str, content: typing.BinaryIO):
         return
 
 
-def _process_experiments(submission_accession: str, content: typing.BinaryIO):
+def _process_experiments(submission_accession: str, content: IO[bytes]):
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -488,29 +492,32 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
             if elem.tag != "EXPERIMENT_SET":
                 continue
 
-            items = elem.findall("EXPERIMENT")
-
-            for experiment in items:
+            for experiment in elem.findall("EXPERIMENT"):
                 experiment_accession = experiment.get("accession")
 
                 design_elem = experiment.find("DESIGN")
-                design_dict = _xml_elem_to_dict(design_elem)
-                library_descriptor = design_dict.get("LIBRARY_DESCRIPTOR", {})
-                if not isinstance(library_descriptor, dict):
-                    library_descriptor = {}
-                design_description = design_dict.get("DESIGN_DESCRIPTION")
 
-                library_layout_raw = library_descriptor.get("LIBRARY_LAYOUT", {})
-                library_layout = (
-                    next(iter(library_layout_raw), None)
-                    if isinstance(library_layout_raw, dict)
-                    else None
-                )
+                design_description = None
+                library_layout = None
+                library_name = None
+                library_selection = None
+                library_source = None
+                library_strategy = None
 
-                library_name = library_descriptor.get("LIBRARY_NAME")
-                library_selection = library_descriptor.get("LIBRARY_SELECTION")
-                library_source = library_descriptor.get("LIBRARY_SOURCE")
-                library_strategy = library_descriptor.get("LIBRARY_STRATEGY")
+                if design_elem is not None:
+                    design_description = design_elem.findtext("DESIGN_DESCRIPTION")
+                    lib_desc = design_elem.find("LIBRARY_DESCRIPTOR")
+                    if lib_desc is not None:
+                        library_name = lib_desc.findtext("LIBRARY_NAME")
+                        library_selection = lib_desc.findtext("LIBRARY_SELECTION")
+                        library_source = lib_desc.findtext("LIBRARY_SOURCE")
+                        library_strategy = lib_desc.findtext("LIBRARY_STRATEGY")
+                        layout_elem = lib_desc.find("LIBRARY_LAYOUT")
+                        if layout_elem is not None:
+                            first_child = next(iter(layout_elem), None)
+                            library_layout = (
+                                first_child.tag if first_child is not None else None
+                            )
 
                 samples = []
                 if design_elem is not None:
@@ -520,14 +527,13 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
                             samples.append(sample_accession)
 
                 platform_elem = experiment.find("PLATFORM")
-                platform_dict = _xml_elem_to_dict(platform_elem)
-                platform = next(iter(platform_dict), None)
-                platform_val = platform_dict.get(platform, {}) if platform else {}
-                instrument_model = (
-                    platform_val.get("INSTRUMENT_MODEL")
-                    if isinstance(platform_val, dict)
-                    else None
-                )
+                platform = None
+                instrument_model = None
+                if platform_elem is not None:
+                    first_child = next(iter(platform_elem), None)
+                    if first_child is not None:
+                        platform = first_child.tag
+                        instrument_model = first_child.findtext("INSTRUMENT_MODEL")
 
                 study_ref_elem = experiment.find("STUDY_REF")
                 study_ref = (
@@ -561,7 +567,7 @@ def _process_experiments(submission_accession: str, content: typing.BinaryIO):
         return
 
 
-def _process_runs(submission_accession: str, content: typing.BinaryIO):
+def _process_runs(submission_accession: str, content: IO[bytes]):
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -588,13 +594,11 @@ def _process_runs(submission_accession: str, content: typing.BinaryIO):
         return
 
 
-def _reader_worker(
+def _extract_worker(
     tarball: Path,
-    transform_queue: queue.Queue,
-    read_batch_size: int,
+    file_queue: queue.Queue,
+    pbar: tqdm,
 ):
-    batch: list = []
-
     try:
         with tarfile.open(tarball, mode="r|gz") as tar:
             for member in tar:
@@ -616,30 +620,57 @@ def _reader_worker(
                         continue
 
                     content = f.read()
-                    batch.append((submission_accession, file_type, content))
-
-                    if len(batch) >= read_batch_size:
-                        transform_queue.put(batch)
-                        batch = []
+                    file_queue.put((submission_accession, file_type, content))
+                    pbar.update(1)
                 except Exception as e:
-                    logging.error(f"[reader] failed to read {name} in {tarball}: {e}")
-
-        if batch:
-            transform_queue.put(batch)
-
+                    logging.error(f"[extract] failed to read {name} in {tarball}: {e}")
     except Exception as e:
-        logging.error(f"[reader] failed to open tarball {tarball}: {e}")
+        logging.error(f"[extract] failed to open tarball {tarball}: {e}")
         raise
+    finally:
+        file_queue.put(_FILE_STOP)
 
 
-def _process_xmls(
-    batch: list,
+def _parse_worker(
+    file_queue: queue.Queue,
+    write_queue: queue.Queue,
     accessions: dict[str, str],
-    pbar: tqdm,
+    write_batch_size: int,
+    num_extract: int,
 ):
-    for submission_accession, file_type, content in batch:
+    buffer: dict[FileType, list] = {}
+
+    def _flush(file_type: FileType):
+        rows = buffer.get(file_type)
+        if rows:
+            write_queue.put((file_type, rows))
+            buffer[file_type] = []
+
+    def _append(file_type: FileType, row):
+        lst = buffer.setdefault(file_type, [])
+        lst.append(row)
+
+        if len(lst) >= write_batch_size:
+            _flush(file_type)
+
+    sentinels_received = 0
+
+    while True:
+        item = file_queue.get()
+
+        if item is _FILE_STOP:
+            sentinels_received += 1
+            if sentinels_received == num_extract:
+                for ft in list(buffer.keys()):
+                    _flush(ft)
+                write_queue.put(_STOP)
+                return
+            continue
+
+        submission_accession, file_type, content = item
+        bio = io.BytesIO(content)
+
         try:
-            bio = io.BytesIO(content)
             if file_type == FileType.Submission:
                 processor = _process_submission(submission_accession, bio, accessions)
             elif file_type == FileType.Study:
@@ -651,79 +682,12 @@ def _process_xmls(
             elif file_type == FileType.Run:
                 processor = _process_runs(submission_accession, bio)
             else:
-                logging.error(f"[transform] received invalid file type: {file_type}")
                 continue
 
             for row in processor:
-                yield file_type, row
-
+                _append(file_type, row)
         except Exception as e:
-            logging.error(f"[transform] failed to process {submission_accession}: {e}")
-        finally:
-            pbar.update(1)
-
-
-def _process_batch_to_queue(
-    batch: list,
-    accessions: dict[str, str],
-    write_queue: queue.Queue,
-    pbar: tqdm,
-):
-    for file_type, row in _process_xmls(batch, accessions, pbar):
-        write_queue.put((file_type, row))
-
-
-def _drain_batch_to_db(
-    batch: list,
-    accessions: dict[str, str],
-    cursor: sqlite3.Cursor,
-    write_batch_size: int,
-    pbar: tqdm,
-):
-    rows_by_type: dict[FileType, list] = {}
-    for file_type, row in _process_xmls(batch, accessions, pbar):
-        rows_by_type.setdefault(file_type, []).append(row)
-
-        if len(rows_by_type[file_type]) >= write_batch_size:
-            cursor.executemany(_SQL_STATEMENTS[file_type], rows_by_type[file_type])
-            rows_by_type[file_type] = []
-
-    for file_type, rows in rows_by_type.items():
-        if rows:
-            cursor.executemany(_SQL_STATEMENTS[file_type], rows)
-
-
-def _transform_worker(
-    accessions: dict[str, str],
-    transform_queue: queue.Queue,
-    write_queue: queue.Queue,
-    pbar: tqdm,
-    stop_event: threading.Event,
-    db_file: Path,
-    write_batch_size: int,
-):
-    while True:
-        try:
-            batch = transform_queue.get(timeout=1.0)
-        except queue.Empty:
-            if not stop_event.is_set():
-                continue
-
-            conn = sqlite3.connect(str(db_file))
-            cursor = conn.cursor()
-            while True:
-                try:
-                    batch = transform_queue.get_nowait()
-                except queue.Empty:
-                    conn.commit()
-                    conn.close()
-                    write_queue.put(_STOP)
-                    return
-
-                _drain_batch_to_db(batch, accessions, cursor, write_batch_size, pbar)
-                conn.commit()
-
-        _process_batch_to_queue(batch, accessions, write_queue, pbar)
+            logging.error(f"[parse] failed to process {submission_accession}: {e}")
 
 
 def _writer_worker(
@@ -741,15 +705,16 @@ def _writer_worker(
     cursor = conn.cursor()
     sentinels_received = 0
     rows_written = 0
-    batch_by_type: dict[FileType, list] = {}
+    buffer: dict[FileType, list] = {}
 
-    def _flush(batch: list, file_type: FileType):
+    def _flush(file_type: FileType):
         nonlocal rows_written
+        batch = buffer.get(file_type)
         if batch:
-            cursor.executemany(_SQL_STATEMENTS[file_type], batch)
+            cursor.executemany(_SRA_SQL_STATEMENTS[file_type], batch)
             conn.commit()
             rows_written += len(batch)
-            batch_by_type[file_type] = []
+            buffer[file_type] = []
 
     while True:
         try:
@@ -760,18 +725,16 @@ def _writer_worker(
         if item is _STOP:
             sentinels_received += 1
             if sentinels_received == sentinels_to_receive:
-                for file_type, batch in batch_by_type.items():
-                    _flush(batch, file_type)
+                for ft in list(buffer.keys()):
+                    _flush(ft)
                 break
             continue
 
-        file_type, record = item
-        if file_type not in batch_by_type:
-            batch_by_type[file_type] = []
-        batch_by_type[file_type].append(record)
-
-        if len(batch_by_type[file_type]) >= write_batch_size:
-            _flush(batch_by_type[file_type], file_type)
+        file_type, rows = item
+        lst = buffer.setdefault(file_type, [])
+        lst.extend(rows)
+        if len(lst) >= write_batch_size:
+            _flush(file_type)
 
     conn.close()
 
@@ -783,62 +746,68 @@ def _process_tarballs(
     num_workers: int,
     read_batch_size: int,
     write_batch_size: int,
-    transform_queue_size: int,
-    write_queue_size: int,
 ):
-    num_readers = max(1, min(len(tarballs), num_workers // 4))
+    num_extract = max(1, min(len(tarballs), num_workers - 2))
+    num_parse = max(1, num_workers - num_extract - 1)
     num_writer = 1
-    num_transform = max(1, num_workers - num_readers - num_writer)
 
-    transform_queue: queue.Queue = queue.Queue(maxsize=transform_queue_size)
-    write_queue: queue.Queue = queue.Queue(maxsize=write_queue_size)
-    stop_event = threading.Event()
-
-    total = len(accessions) * 5
-
-    pbar = tqdm(
-        total=total,
-        unit="file",
-        desc="processing files",
-        mininterval=2.0,
+    logging.debug(
+        "worker distribution: %d extract, %d parse, %d writer",
+        num_extract,
+        num_parse,
+        num_writer,
     )
 
+    file_queue: queue.Queue = queue.Queue(maxsize=100)
+    write_queue: queue.Queue = queue.Queue()
+
+    total_files = 0
+    for tb in tarballs:
+        result = subprocess.run(
+            f"tar -I pigz -tf {shlex.quote(str(tb))} | grep -v '/$' | wc -l",
+            capture_output=True, text=True, shell=True,
+        )
+        result.check_returncode()
+        total_files += int(result.stdout.strip())
+
     with (
-        ThreadPoolExecutor(num_readers) as reader_pool,
-        ThreadPoolExecutor(num_transform) as transform_pool,
-        ThreadPoolExecutor(num_writer) as writer_pool,
+        ThreadPoolExecutor(max_workers=num_extract) as extract_pool,
+        ThreadPoolExecutor(max_workers=num_parse) as parse_pool,
+        ThreadPoolExecutor(max_workers=num_writer) as writer_pool,
+        tqdm(
+            total=total_files,
+            unit="file",
+            desc="processing files",
+            mininterval=2.0,
+        ) as pbar,
     ):
         write_future = writer_pool.submit(
-            _writer_worker, write_queue, db_file, num_transform, write_batch_size
+            _writer_worker, write_queue, db_file, num_parse, write_batch_size
         )
-        transform_futures = [
-            transform_pool.submit(
-                _transform_worker,
-                accessions,
-                transform_queue,
+        parse_futures = [
+            parse_pool.submit(
+                _parse_worker,
+                file_queue,
                 write_queue,
-                pbar,
-                stop_event,
-                db_file,
+                accessions,
                 write_batch_size,
+                num_extract,
             )
-            for _ in range(num_transform)
+            for _ in range(num_parse)
         ]
-        reader_futures = [
-            reader_pool.submit(_reader_worker, tb, transform_queue, read_batch_size)
+        extract_futures = [
+            extract_pool.submit(_extract_worker, tb, file_queue, pbar)
             for tb in tarballs
         ]
 
-        for f in as_completed(reader_futures):
+        for f in as_completed(extract_futures):
             f.result()
 
-        stop_event.set()
-
-        for f in as_completed(transform_futures):
+        for f in as_completed(parse_futures):
             f.result()
+
         write_future.result()
-
-    pbar.close()
+        pbar.total = pbar.n
 
 
 def _parse_external_ids(external_ids: list) -> str | None:
@@ -870,20 +839,6 @@ def _parse_links(sample_links: list) -> str | None:
                 results[child.tag] = {el.tag: el.text for el in child}
 
     return json.dumps(results)
-
-
-def _xml_elem_to_dict(elem) -> dict:
-    if elem is None:
-        return {}
-
-    result = {}
-    for child in elem:
-        if len(child) == 0:
-            result[child.tag] = child.attrib if child.attrib else child.text
-        else:
-            result[child.tag] = _xml_elem_to_dict(child)
-
-    return result
 
 
 def _convert_file_name_to_type(file_name: str) -> FileType | None:
