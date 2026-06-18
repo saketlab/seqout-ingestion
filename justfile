@@ -13,29 +13,38 @@ ingest_sra:
         --start-date 2026-05-01 \
         --end-date 2026-05-20 \
         --workers 10 \
-        --read-batch-size 200 \
-        --write-batch-size 50000
+        --write-batch-size 1000
 
 ingest_geo:
     {{ PYTHON }} ./src/main.py ingest geo \
         --output-dir {{ DATA_DIR }} \
         --start-date 2026-05-01 \
         --end-date 2026-05-20 \
-        --workers 20
+        --workers 20 \
+        --retries 20
 
 ingest_ena:
     {{ PYTHON }} ./src/main.py ingest ena \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-01-01 \
-        --end-date 2026-01-10 \
-        --workers 10
+        --start-date 2026-04-28 \
+        --end-date 2026-05-31 \
+        --workers 10 \
+        --retries 20
 
 ingest_ae:
     {{ PYTHON }} ./src/main.py ingest ae \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2025-01-01 \
-        --end-date 2026-01-01 \
-        --workers 10
+        --start-date 2026-04-28 \
+        --end-date 2026-05-31 \
+        --workers 10 \
+        --retries 20
+
+backfill_download_links:
+    {{ PYTHON }} ./src/main.py backfill download-links \
+        --output-dir {{ DATA_DIR }} \
+        --ena-db-file $(just _latest_db ena) \
+        --source ena \
+        --workers 8
 
 backfill_pm_ids:
     {{ PYTHON }} ./src/main.py backfill pm-ids \

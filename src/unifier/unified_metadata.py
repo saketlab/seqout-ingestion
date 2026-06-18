@@ -22,9 +22,9 @@ class SourceMap:
     published: dict[str, str] = field(default_factory=dict)
 
 
-_UNIFIED_METADATA_OUTPUT_DIR = "unified_metadata"
-_SPLIT_INSTITUTES_PAT = r"[,;]?\s*\d+[.\-)]\s*"
-_CLEAN_CENTER_PREFIX = re.compile(r"^[\s(,;]*\d+[.\-)]\s*")
+UNIFIED_METADATA_OUTPUT_DIR = "unified_metadata"
+SPLIT_INSTITUTES_PAT = re.compile(r"[,;]?\s*\d+[.\-)]\s*")
+CLEAN_CENTER_PREFIX = re.compile(r"^[\s(,;]*\d+[.\-)]\s*")
 
 
 def build_unified_metadata(
@@ -40,7 +40,7 @@ def build_unified_metadata(
     taxonomy_mapping_csv_file: Path,
     batch_size: int,
 ) -> tuple[list[dict], list[tuple[str, str, int]]]:
-    output_dir = base_output_dir / _UNIFIED_METADATA_OUTPUT_DIR
+    output_dir = base_output_dir / UNIFIED_METADATA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     db_file = db_file or (output_dir / "unified_metadata.db")
@@ -96,12 +96,12 @@ def build_unified_metadata(
             if len(center_list) == 1:
                 center_list = [
                     x.strip()
-                    for x in re.split(_SPLIT_INSTITUTES_PAT, center_list[0])
+                    for x in re.split(SPLIT_INSTITUTES_PAT, center_list[0])
                     if x.strip()
                 ]
 
             center_list = [
-                _CLEAN_CENTER_PREFIX.sub("", cn).strip()
+                CLEAN_CENTER_PREFIX.sub("", cn).strip()
                 for cn in center_list
                 if cn.strip()
             ]
@@ -156,8 +156,8 @@ def build_unified_metadata(
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
 
-        exec_query_from_file("tables/unified_metadata_tables.sql", conn=conn)
-        exec_query_from_file("indexes/unified_metadata_indexes.sql", conn=conn)
+        exec_query_from_file("tables/unified_metadata.sql", conn=conn)
+        exec_query_from_file("tables/unified_centers.sql", conn=conn)
 
         cols = list(rows[0].keys())
         placeholders = ", ".join(["?"] * len(cols))
@@ -170,9 +170,6 @@ def build_unified_metadata(
                 [tuple(r[c] for c in cols) for r in batch],
             )
 
-        exec_query_from_file("tables/unified_centers_tables.sql", conn=conn)
-        exec_query_from_file("indexes/unified_centers_indexes.sql", conn=conn)
-
         for start in range(0, len(centers_rows), batch_size):
             batch = centers_rows[start : start + batch_size]
             conn.executemany(
@@ -181,6 +178,8 @@ def build_unified_metadata(
                 batch,
             )
 
+        exec_query_from_file("indexes/unified_metadata.sql", conn=conn)
+        exec_query_from_file("indexes/unified_centers.sql", conn=conn)
         conn.commit()
 
     return rows, centers_rows

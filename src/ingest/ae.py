@@ -15,9 +15,9 @@ from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
 
-_AE_OUTPUT_DIR = "ae"
-_BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
-_BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
+AE_OUTPUT_DIR = "ae"
+BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
+BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
 
 
 def ingest_ae(
@@ -31,7 +31,7 @@ def ingest_ae(
     timeout: int,
     max_timeout: int,
 ):
-    output_dir = base_output_dir / _AE_OUTPUT_DIR
+    output_dir = base_output_dir / AE_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
@@ -64,9 +64,9 @@ def ingest_ae(
     )
     _download_magetab_files(data_dir, num_workers, retries, timeout, max_timeout)
 
-    exec_query_from_file("tables/ae_tables.sql", db_file)
+    exec_query_from_file("tables/ae.sql", db_file)
     _process_accessions(accessions, db_file, data_dir, num_workers, batch_size)
-    exec_query_from_file("indexes/ae_indexes.sql", db_file)
+    exec_query_from_file("indexes/ae.sql", db_file)
 
 
 def _send_search_req(
@@ -74,7 +74,7 @@ def _send_search_req(
 ) -> list[str] | None:
     r = send_req(
         method="GET",
-        url=f"{_BIOSTUDIES_API_BASE_URL}/search",
+        url=f"{BIOSTUDIES_API_BASE_URL}/search",
         params={
             "collection": "arrayexpress",
             "release_date": date,
@@ -180,7 +180,7 @@ def _study_metadata_worker(
 
     r = send_req(
         method="GET",
-        url=f"{_BIOSTUDIES_API_BASE_URL}/studies/{accession}",
+        url=f"{BIOSTUDIES_API_BASE_URL}/studies/{accession}",
         num_retries=retries,
         timeout=timeout,
         max_wait=max_timeout,
@@ -254,7 +254,7 @@ def _download_magetab_files(
         if dest_path.exists():
             return
 
-        url = f"{_BIOSTUDIES_FILES_BASE_URL}/{accession}/{filename}"
+        url = f"{BIOSTUDIES_FILES_BASE_URL}/{accession}/{filename}"
         try:
             r = send_req(
                 "GET", url, num_retries=retries, timeout=timeout, max_wait=timeout
@@ -388,7 +388,7 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
                                         {
                                             "path": path,
                                             "size": f.get("size"),
-                                            "url": f"{_BIOSTUDIES_FILES_BASE_URL}/{accession}/{path}",
+                                            "url": f"{BIOSTUDIES_FILES_BASE_URL}/{accession}/{path}",
                                         }
                                     )
                         # experimental factor details

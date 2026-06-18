@@ -18,7 +18,7 @@ class GeocodingProviders(StrEnum):
     Arcgis = "arcgis"
 
 
-_FIELD_KEYS = [
+FIELD_KEYS = [
     "geocode_query",
     "official_address",
     "place_name",
@@ -52,7 +52,7 @@ _FIELD_KEYS = [
     "multiple_institutes",
 ]
 
-_UPDATE_COLS = [
+UPDATE_COLS = [
     "latitude",
     "longitude",
     "place_name",
@@ -220,7 +220,7 @@ def countries_mismatch(geocoded_country, input_country):
 
 
 def _empty_result(query, error_msg="Not attempted"):
-    base = {k: None for k in _FIELD_KEYS if k != "geocode_query"}
+    base = {k: None for k in FIELD_KEYS if k != "geocode_query"}
     base["geocode_query"] = query
     base["error"] = error_msg
     return base
@@ -305,11 +305,6 @@ def _geocode(
                 case GeocodingProviders.Arcgis:
                     pass
 
-            # if input_country and result.get("country"):
-            #     result["country_mismatch"] = countries_mismatch(
-            #         result["country"], input_country
-            #     )
-
             return result
     except Exception as e:
         logging.debug("geocoding failed for '%s': %s", query, e)
@@ -349,8 +344,8 @@ def _update_by_name(
     center_name: str,
     result: dict[str, Any],
 ):
-    set_clauses = ", ".join(f"{c} = ?" for c in _UPDATE_COLS)
-    values = [result.get(c) for c in _UPDATE_COLS] + [center_name]
+    set_clauses = ", ".join(f"{c} = ?" for c in UPDATE_COLS)
+    values = [result.get(c) for c in UPDATE_COLS] + [center_name]
     conn.execute(
         f"UPDATE {table} SET {set_clauses} "
         f"WHERE {center_name} = ? "

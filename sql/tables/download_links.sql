@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS run_download_links (
+    run_accession               TEXT PRIMARY KEY,
+    study_accession             TEXT NOT NULL,
+    experiment_accession        TEXT,
+    library_layout              TEXT,
+    fastq_ftp                   TEXT,
+    fastq_bytes                 TEXT,
+    fastq_md5                   TEXT,
+    sra_ftp                     TEXT,
+    sra_bytes                   TEXT,
+    sra_md5                     TEXT,
+    updated_at                  TEXT,
+    ncbi_files                  TEXT,
+    ncbi_sra_url                TEXT,
+    ncbi_sra_url_aws            TEXT,
+    ncbi_fetched_at             TEXT,
+    ncbi_sra_normalized_url     TEXT,
+    ncbi_sra_normalized_bytes   TEXT,
+    ncbi_sra_lite_url           TEXT,
+    ncbi_sra_lite_bytes         TEXT,
+    ncbi_sra_lite_s3_url        TEXT,
+    ncbi_sra_lite_gs_url        TEXT
+);

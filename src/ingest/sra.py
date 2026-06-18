@@ -15,6 +15,7 @@ import shlex
 import sqlite3
 import subprocess
 import tarfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import isqrt
@@ -38,37 +39,24 @@ class FileType(enum.StrEnum):
     Run = "run"
 
 
-_SRA_OUTPUT_DIR = "sra"
-_SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
-_SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
-_SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
-_SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
-_STOP = object()
-_FILE_STOP = object()
+SRA_OUTPUT_DIR = "sra"
+SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
+SRA_ACCESSIONS_TAB_FILE_NAME = "SRA_Accessions.tab"
+SRA_TARBALL_RE_PAT = re.compile(r"^NCBI_SRA_Metadata_Full_(\d{8})\.tar\.gz$")
+SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
 
-_SRA_SQL_STATEMENTS = {
+SRA_SQL_STATEMENTS = {
     FileType.Submission: (
-        "INSERT OR IGNORE INTO sra_submissions "
-        "(accession, alias, center_name, lab_name, broker_name, updated_at, published_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)"
+        "INSERT OR IGNORE INTO sra_submissions (accession, alias, center_name, lab_name, broker_name, updated_at, published_at) VALUES (?,?,?,?,?,?,?)"
     ),
     FileType.Sample: (
-        "INSERT OR IGNORE INTO sra_samples "
-        "(accession, alias, description, title, scientific_name, taxon_id, "
-        "external_id, attributes_json, submission, links) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)"
+        "INSERT OR IGNORE INTO sra_samples (accession, alias, description, title, scientific_name, taxon_id, external_id, attributes_json, submission, links) VALUES (?,?,?,?,?,?,?,?,?,?)"
     ),
     FileType.Study: (
-        "INSERT OR IGNORE INTO sra_studies "
-        "(accession, alias, center_name, abstract, title, external_id, study_type, "
-        "attributes_json, links, center_project_name, submission, published_at, updated_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT OR IGNORE INTO sra_studies (accession, alias, center_name, abstract, title, external_id, study_type, attributes_json, links, center_project_name, submission, published_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ),
     FileType.Experiment: (
-        "INSERT OR IGNORE INTO sra_experiments "
-        "(accession, design_description, library_layout, library_name, library_selection, "
-        "library_source, library_strategy, samples, platform, instrument_model, study, title, submission) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT OR IGNORE INTO sra_experiments (accession, design_description, library_layout, library_name, library_selection, library_source, library_strategy, samples, platform, instrument_model, study, title, submission) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ),
     FileType.Run: (
         "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)"
@@ -83,14 +71,13 @@ def ingest_sra(
     end_date: datetime.date,
     num_workers: int,
     chunk_size: int,
-    read_batch_size: int,
     write_batch_size: int,
     accessions_ttl: int,
     retries: int,
     timeout: int,
     max_timeout: int,
 ):
-    output_dir = Path(base_output_dir) / _SRA_OUTPUT_DIR
+    output_dir = Path(base_output_dir) / SRA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -102,7 +89,6 @@ def ingest_sra(
         """starting sra ingest with following config:
 - num workers: %d
 - chunk size: %s
-- read batch size: %d
 - write batch size: %d
 - accessions file ttl: %s
 - retries: %d
@@ -110,7 +96,6 @@ def ingest_sra(
 - max timeout: %s""",
         num_workers,
         humanfriendly.format_size(chunk_size),
-        read_batch_size,
         write_batch_size,
         humanfriendly.format_timespan(accessions_ttl),
         retries,
@@ -159,21 +144,17 @@ def ingest_sra(
     accessions_dict = _build_accessions_dict(
         accessions_csv_path, to_reprocess_csv, output_dir
     )
-    tarballs = sorted(data_dir.glob(_SRA_TARBALL_GLOB_PAT), reverse=True)
+    tarballs = sorted(data_dir.glob(SRA_TARBALL_GLOB_PAT), reverse=True)
 
-    exec_query_from_file("tables/sra_tables.sql", db_file)
+    exec_query_from_file("tables/sra.sql", db_file)
     _process_tarballs(
         tarballs,
         db_file,
         accessions_dict,
         num_workers,
-        read_batch_size,
         write_batch_size,
     )
-
-    logging.info("creating indexes on sra tables ...")
-    exec_query_from_file("indexes/sra_indexes.sql", db_file)
-    logging.info("indexes created successfully")
+    exec_query_from_file("indexes/sra.sql", db_file)
 
 
 def _extract_sra_file_dumps_in_range(
@@ -181,13 +162,13 @@ def _extract_sra_file_dumps_in_range(
 ) -> list[str]:
     file_dumps: list[str] = []
 
-    with requests.get(_SRA_FTP_BASE_URL, timeout=30) as r:
+    with requests.get(SRA_FTP_BASE_URL, timeout=30) as r:
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
     for a in soup.find_all("a", href=True):
         href = str(a["href"])
-        match = _SRA_TARBALL_RE_PAT.match(href)
+        match = SRA_TARBALL_RE_PAT.match(href)
         if match is None:
             continue
 
@@ -205,7 +186,7 @@ def _download_accessions_tab_file(
     num_workers: int,
     chunk_size: int,
 ) -> tuple[Path, bool]:
-    tab_file = output_dir / _SRA_ACCESSIONS_TAB_FILE_NAME
+    tab_file = output_dir / SRA_ACCESSIONS_TAB_FILE_NAME
     to_download = False
 
     try:
@@ -224,7 +205,7 @@ def _download_accessions_tab_file(
         return tab_file, False
 
     downloader(
-        f"{_SRA_FTP_BASE_URL}/{_SRA_ACCESSIONS_TAB_FILE_NAME}",
+        f"{SRA_FTP_BASE_URL}/{SRA_ACCESSIONS_TAB_FILE_NAME}",
         tab_file,
         num_workers,
         chunk_size,
@@ -302,7 +283,7 @@ def _download_sra_file_dumps(
 
     def _process_per_file(file: str):
         dest_path = data_dir / file
-        url = f"{_SRA_FTP_BASE_URL}/{file}"
+        url = f"{SRA_FTP_BASE_URL}/{file}"
         downloader(url, dest_path, workers_per_file, chunk_size)
 
     if concurrent_files == 1:
@@ -627,8 +608,6 @@ def _extract_worker(
     except Exception as e:
         logging.error(f"[extract] failed to open tarball {tarball}: {e}")
         raise
-    finally:
-        file_queue.put(_FILE_STOP)
 
 
 def _parse_worker(
@@ -636,7 +615,7 @@ def _parse_worker(
     write_queue: queue.Queue,
     accessions: dict[str, str],
     write_batch_size: int,
-    num_extract: int,
+    extract_done: threading.Event,
 ):
     buffer: dict[FileType, list] = {}
 
@@ -653,18 +632,17 @@ def _parse_worker(
         if len(lst) >= write_batch_size:
             _flush(file_type)
 
-    sentinels_received = 0
-
     while True:
-        item = file_queue.get()
-
-        if item is _FILE_STOP:
-            sentinels_received += 1
-            if sentinels_received == num_extract:
-                for ft in list(buffer.keys()):
-                    _flush(ft)
-                write_queue.put(_STOP)
-                return
+        try:
+            item = file_queue.get(timeout=1.0)
+        except queue.Empty:
+            if extract_done.is_set():
+                try:
+                    item = file_queue.get(timeout=0.5)
+                except queue.Empty:
+                    for ft in list(buffer.keys()):
+                        _flush(ft)
+                    return
             continue
 
         submission_accession, file_type, content = item
@@ -693,8 +671,8 @@ def _parse_worker(
 def _writer_worker(
     write_queue: queue.Queue,
     db_file: Path,
-    sentinels_to_receive: int,
     write_batch_size: int,
+    parse_done: threading.Event,
 ):
     conn = sqlite3.connect(str(db_file))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -703,7 +681,6 @@ def _writer_worker(
     conn.execute("PRAGMA cache_size=-800000")
 
     cursor = conn.cursor()
-    sentinels_received = 0
     rows_written = 0
     buffer: dict[FileType, list] = {}
 
@@ -711,20 +688,16 @@ def _writer_worker(
         nonlocal rows_written
         batch = buffer.get(file_type)
         if batch:
-            cursor.executemany(_SRA_SQL_STATEMENTS[file_type], batch)
+            cursor.executemany(SRA_SQL_STATEMENTS[file_type], batch)
             conn.commit()
             rows_written += len(batch)
             buffer[file_type] = []
 
     while True:
         try:
-            item = write_queue.get(timeout=10.0)
+            item = write_queue.get(timeout=1.0)
         except queue.Empty:
-            continue
-
-        if item is _STOP:
-            sentinels_received += 1
-            if sentinels_received == sentinels_to_receive:
+            if parse_done.is_set():
                 for ft in list(buffer.keys()):
                     _flush(ft)
                 break
@@ -744,7 +717,6 @@ def _process_tarballs(
     db_file: Path,
     accessions: dict[str, str],
     num_workers: int,
-    read_batch_size: int,
     write_batch_size: int,
 ):
     num_extract = max(1, min(len(tarballs), num_workers - 2))
@@ -763,12 +735,18 @@ def _process_tarballs(
 
     total_files = 0
     for tb in tarballs:
+        # takes around ~5-6 mins for performing file counting over 15 GB SRA file dump
         result = subprocess.run(
             f"tar -I pigz -tf {shlex.quote(str(tb))} | grep -v '/$' | wc -l",
-            capture_output=True, text=True, shell=True,
+            capture_output=True,
+            text=True,
+            shell=True,
         )
         result.check_returncode()
         total_files += int(result.stdout.strip())
+
+    extract_done = threading.Event()
+    parse_done = threading.Event()
 
     with (
         ThreadPoolExecutor(max_workers=num_extract) as extract_pool,
@@ -782,7 +760,7 @@ def _process_tarballs(
         ) as pbar,
     ):
         write_future = writer_pool.submit(
-            _writer_worker, write_queue, db_file, num_parse, write_batch_size
+            _writer_worker, write_queue, db_file, write_batch_size, parse_done
         )
         parse_futures = [
             parse_pool.submit(
@@ -791,7 +769,7 @@ def _process_tarballs(
                 write_queue,
                 accessions,
                 write_batch_size,
-                num_extract,
+                extract_done,
             )
             for _ in range(num_parse)
         ]
@@ -802,12 +780,13 @@ def _process_tarballs(
 
         for f in as_completed(extract_futures):
             f.result()
+        extract_done.set()
 
         for f in as_completed(parse_futures):
             f.result()
+        parse_done.set()
 
         write_future.result()
-        pbar.total = pbar.n
 
 
 def _parse_external_ids(external_ids: list) -> str | None:

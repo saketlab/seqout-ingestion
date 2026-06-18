@@ -9,7 +9,7 @@ import pandas as pd
 
 from helpers import exec_query_from_file
 
-_UNIFIED_CATALOG_DIR = "unified_catalog"
+UNIFIED_CATALOG_DIR = "unified_catalog"
 
 
 def build_unified_catalog(
@@ -21,7 +21,7 @@ def build_unified_catalog(
     db_file: Optional[Path],
     dump_parquet: bool,
 ):
-    output_dir = base_output_dir / _UNIFIED_CATALOG_DIR
+    output_dir = base_output_dir / UNIFIED_CATALOG_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     db_file = db_file or (output_dir / "unified_catalog.db")
@@ -33,7 +33,7 @@ def build_unified_catalog(
     catalog = _build_catalog_tuples(geo_dict, sra_dict, ena_dict, ae_dict)
 
     with sqlite3.Connection(db_file) as conn:
-        exec_query_from_file("tables/unified_studies_tables.sql", conn=conn)
+        exec_query_from_file("tables/unified_studies.sql", conn=conn)
         conn.executemany(
             "INSERT OR REPLACE INTO unified_studies VALUES (?, ?, ?, ?, ?)", catalog
         )

@@ -10,7 +10,7 @@ from tqdm import tqdm
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
-def __is_retryable(exc: Exception) -> bool:
+def _is_retryable(exc: Exception) -> bool:
     if isinstance(exc, requests.HTTPError):
         return (
             exc.response is not None
@@ -48,7 +48,7 @@ def better_downloader(
                 accepts_range = r.headers.get("Accept-Ranges", "")
             break
         except Exception as exc:
-            if not __is_retryable(exc) or attempt == retries - 1:
+            if not _is_retryable(exc) or attempt == retries - 1:
                 raise
 
             wait = min(2**attempt, max_timeout)
@@ -137,7 +137,7 @@ def better_downloader(
                     return
 
                 except Exception as exc:
-                    if not __is_retryable(exc) or attempt == retries - 1:
+                    if not _is_retryable(exc) or attempt == retries - 1:
                         raise
 
                     cursor -= bytes_this_attempt
@@ -250,7 +250,7 @@ def simple_file_download(
             return dest_path
 
         except Exception as exc:
-            if not __is_retryable(exc) or attempt == retries - 1:
+            if not _is_retryable(exc) or attempt == retries - 1:
                 raise
 
             already_downloaded -= bytes_this_attempt
@@ -297,18 +297,20 @@ def send_req(
             r.raise_for_status()
             return r
         except requests.RequestException as exc:
-            if attempt == num_retries - 1:
+            if not _is_retryable(exc) or attempt == num_retries - 1:
                 raise
+
             wait = min(2**attempt, max_wait)
             logging.warning(
-                "send_req %s %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                "failed to send %s req to %s (attempt %d/%d, retrying in %.0fs) - %s",
                 method,
                 url,
                 attempt + 1,
                 num_retries,
-                exc,
                 wait,
+                exc,
             )
+
             time.sleep(wait)
 
     raise RuntimeError(f"failed after {num_retries} retries")

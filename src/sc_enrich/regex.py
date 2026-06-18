@@ -5,7 +5,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-_SC_PATTERNS = re.compile(
+SC_PATTERNS = re.compile(
     r"scRNA[\-\s]?seq|sc[\-\s]RNA[\-\s]?seq"
     r"|snRNA[\-\s]?seq|sn[\-\s]RNA[\-\s]?seq"
     r"|single[\-\s]cell[\-\s]+RNA"
@@ -22,7 +22,7 @@ _SC_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-_MODALITY_RULES: list[tuple[str, re.Pattern]] = [
+MODALITY_RULES: list[tuple[str, re.Pattern]] = [
     (
         "Spatial Transcriptomics",
         re.compile(
@@ -100,7 +100,7 @@ def sc_regex_enricher(
     for accession, title, dominant_assay_l2 in tqdm(
         rows, unit="acc", desc="classifying studies"
     ):
-        is_sc = bool(dominant_assay_l2 == "scRNA-seq" or _SC_PATTERNS.search(title))
+        is_sc = bool(dominant_assay_l2 == "scRNA-seq" or SC_PATTERNS.search(title))
         modality = _classify_modality(title) if is_sc else None
 
         if is_sc:
@@ -137,7 +137,7 @@ def sc_regex_enricher(
 
 def _classify_modality(title: str | None) -> str:
     if title:
-        for modality, pattern in _MODALITY_RULES:
+        for modality, pattern in MODALITY_RULES:
             if pattern.search(title):
                 return modality
 

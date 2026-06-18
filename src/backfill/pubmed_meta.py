@@ -16,7 +16,18 @@ from backfill.backfill_utils import _chunked, _parse_pmid
 from helpers import exec_query_from_file
 from pipeline_types import Datasource
 
-_PUBMED_META_OUTPUT_DIR = "pubmed_meta"
+
+@dataclass
+class Counters:
+    total: Synchronized[int]
+    updated: Synchronized[int]
+    errors: Synchronized[int]
+    skipped: Optional[Synchronized[int]]
+    citations: Optional[Synchronized[int]]
+    journals: Optional[Synchronized[int]]
+
+
+PUBMED_META_OUTPUT_DIR = "pubmed_meta"
 
 PMID_EXTRACT_QUERIES = {
     "sra": [
@@ -79,16 +90,6 @@ WHERE journal = ?;
 """
 
 
-@dataclass
-class Counters:
-    total: Synchronized[int]
-    updated: Synchronized[int]
-    errors: Synchronized[int]
-    skipped: Optional[Synchronized[int]]
-    citations: Optional[Synchronized[int]]
-    journals: Optional[Synchronized[int]]
-
-
 def backfill_pubmed_meta(
     base_output_dir: Path,
     geo_db_file: Optional[Path],
@@ -117,7 +118,7 @@ def backfill_pubmed_meta(
             "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
         )
 
-    output_dir = base_output_dir / _PUBMED_META_OUTPUT_DIR
+    output_dir = base_output_dir / PUBMED_META_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (output_dir / "pubmed_meta.db")
 
@@ -131,7 +132,7 @@ def backfill_pubmed_meta(
         k: v for k, v in raw_mapping.items() if v is not None
     }
 
-    exec_query_from_file("tables/pubmed_meta_tables.sql", db_file)
+    exec_query_from_file("tables/pubmed_meta.sql", db_file)
 
     if update_journal_metrics:
         _process_via_per_journal_lookup(
@@ -525,6 +526,7 @@ def _pmid_lookup_worker(
 
                 _pbar_update()
                 logging.exception("batch failed (%d pubmed ids): %s", len(batch), e)
+
 
 def _collect_all_pmids(conn: sqlite3.Connection, datasource: Datasource) -> set[str]:
     all_pmids: set[str] = set()

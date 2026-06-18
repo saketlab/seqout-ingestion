@@ -14,11 +14,11 @@ from helpers import exec_query_from_file, send_req
 # to redirect urllib3 logs to warning instead of info level
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
-_ENA_OUTPUT_DIR = "ena"
-_ENA_PORTAL_API_BASE_URL = "https://www.ebi.ac.uk/ena/portal/api"
+ENA_OUTPUT_DIR = "ena"
+ENA_PORTAL_API_BASE_URL = "https://www.ebi.ac.uk/ena/portal/api"
 
 
-_STUDY_FIELDS = [
+STUDY_FIELDS = [
     "study_accession",
     "secondary_study_accession",
     "secondary_study_alias",
@@ -49,7 +49,7 @@ _STUDY_FIELDS = [
     "status",
 ]
 
-_EXPERIMENT_FIELDS = [
+EXPERIMENT_FIELDS = [
     "experiment_accession",
     "run_accession",
     "run_alias",
@@ -81,7 +81,7 @@ _EXPERIMENT_FIELDS = [
     "read_count",
 ]
 
-_SAMPLE_FIELDS = [
+SAMPLE_FIELDS = [
     "sample_accession",
     "secondary_sample_accession",
     "sample_alias",
@@ -208,7 +208,7 @@ def ingest_ena(
     timeout: int,
     max_timeout: int,
 ):
-    output_dir = base_output_dir / _ENA_OUTPUT_DIR
+    output_dir = base_output_dir / ENA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
@@ -247,7 +247,7 @@ def ingest_ena(
     _run_per_study_download(
         study_accessions=study_accessions,
         num_workers=num_workers,
-        fields=_STUDY_FIELDS,
+        fields=STUDY_FIELDS,
         output_dir=data_dir / "studies",
         result_type="study",
         desc="downloading per-study metadata",
@@ -260,7 +260,7 @@ def ingest_ena(
         _run_per_study_download(
             study_accessions=study_accessions,
             num_workers=num_workers,
-            fields=_EXPERIMENT_FIELDS,
+            fields=EXPERIMENT_FIELDS,
             output_dir=data_dir / "experiments",
             result_type="read_experiment",
             desc="downloading experiments per study",
@@ -273,7 +273,7 @@ def ingest_ena(
         _run_per_study_download(
             study_accessions=study_accessions,
             num_workers=num_workers,
-            fields=_SAMPLE_FIELDS,
+            fields=SAMPLE_FIELDS,
             output_dir=data_dir / "samples",
             result_type="sample",
             desc="downloading samples per study",
@@ -282,9 +282,9 @@ def ingest_ena(
             max_timeout=max_timeout,
         )
 
-    exec_query_from_file("tables/ena_tables.sql", db_file)
+    exec_query_from_file("tables/ena.sql", db_file)
     _ingest_data(db_file, data_dir)
-    exec_query_from_file("indexes/ena_indexes.sql", db_file)
+    exec_query_from_file("indexes/ena.sql", db_file)
 
 
 def _fetch_accessions(
@@ -302,7 +302,7 @@ def _fetch_accessions(
 
     r = send_req(
         "GET",
-        f"{_ENA_PORTAL_API_BASE_URL}/search",
+        f"{ENA_PORTAL_API_BASE_URL}/search",
         params={
             "result": "study",
             "query": f"{field} >= {start_date_str} AND {field} <= {end_date_str}",
@@ -334,7 +334,7 @@ def _fetch_per_study(
 ) -> list[dict] | None:
     r = send_req(
         "GET",
-        f"{_ENA_PORTAL_API_BASE_URL}/search",
+        f"{ENA_PORTAL_API_BASE_URL}/search",
         params={
             "result": result_type,
             "query": f"study_accession={study_accession}",
@@ -404,19 +404,19 @@ def _ingest_data(db_file: Path, output_dir: Path):
             (
                 "studies",
                 "study_accession",
-                _STUDY_FIELDS,
+                STUDY_FIELDS,
                 "storing ena studies in sqlite",
             ),
             (
                 "experiments",
                 "run_accession",
-                _EXPERIMENT_FIELDS,
+                EXPERIMENT_FIELDS,
                 "storing ena experiments in sqlite",
             ),
             (
                 "samples",
                 "sample_accession",
-                _SAMPLE_FIELDS,
+                SAMPLE_FIELDS,
                 "storing ena samples in sqlite",
             ),
         ]

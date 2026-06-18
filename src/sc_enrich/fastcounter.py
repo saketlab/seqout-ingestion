@@ -20,7 +20,7 @@ import pyreadr
 from helpers import simple_file_download
 
 
-class _FileType(StrEnum):
+class FileType(StrEnum):
     Barcodes = "barcodes"
     H5 = "h5"
     H5ad = "h5ad"
@@ -35,8 +35,8 @@ class _FileType(StrEnum):
 
 
 @dataclasses.dataclass
-class _DownloadLink:
-    type: _FileType
+class DownloadLink:
+    type: FileType
     url: str
 
     def _parse_url(self) -> str:
@@ -46,8 +46,8 @@ class _DownloadLink:
         return self.url.split("/")[-1]
 
 
-_SC_ENRICH_OUTPUT_DIR = "sc_enrich"
-_POSSIBLE_MISNOMER_FILE_TYPES = [_FileType.Csv, _FileType.Tsv, _FileType.Txt]
+SC_ENRICH_OUTPUT_DIR = "sc_enrich"
+POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
 
 
 def sc_fastcounter(
@@ -61,7 +61,7 @@ def sc_fastcounter(
     timeout: int,
     max_timeout: int,
 ):
-    output_dir = base_output_dir / _SC_ENRICH_OUTPUT_DIR
+    output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     conn = sqlite3.connect(unified_metadata_db_file)
@@ -129,8 +129,8 @@ def sc_fastcounter(
         for v in samples_ref:
             gsm_to_gse[v["@ref"]] = accession
 
-    download_links_mapping: dict[str, list[_DownloadLink]] = defaultdict(
-        list[_DownloadLink]
+    download_links_mapping: dict[str, list[DownloadLink]] = defaultdict(
+        list[DownloadLink]
     )
 
     all_gsms = list(gsm_to_gse.keys())
@@ -155,11 +155,11 @@ def sc_fastcounter(
                     continue
 
                 file_type = _classify_file(url)
-                if file_type == _FileType.Unknown:
+                if file_type == FileType.Unknown:
                     continue
 
                 download_links_mapping[gse].append(
-                    _DownloadLink(type=file_type, url=url)
+                    DownloadLink(type=file_type, url=url)
                 )
 
     for series_accession in accessions_to_process:
@@ -185,9 +185,9 @@ def sc_fastcounter(
                     continue
 
                 file_type = _classify_file(url)
-                if file_type == _FileType.Tar:
+                if file_type == FileType.Tar:
                     download_links_mapping[series_accession].append(
-                        _DownloadLink(type=file_type, url=url)
+                        DownloadLink(type=file_type, url=url)
                     )
                     break
         else:
@@ -209,14 +209,14 @@ def sc_fastcounter(
                     continue
 
                 file_type = _classify_file(url)
-                if file_type == _FileType.Unknown:
+                if file_type == FileType.Unknown:
                     continue
 
                 download_links_mapping[series_accession].append(
-                    _DownloadLink(type=file_type, url=url)
+                    DownloadLink(type=file_type, url=url)
                 )
 
-    accession_dest_path_mapping: dict[str, tuple[Path, _FileType]] = {}
+    accession_dest_path_mapping: dict[str, tuple[Path, FileType]] = {}
     accessions_to_update: list[str] = []
 
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
@@ -261,9 +261,9 @@ def sc_fastcounter(
         futures = {}
 
         for accession, (dest_path, file_type) in accession_dest_path_mapping.items():
-            if file_type in _POSSIBLE_MISNOMER_FILE_TYPES:
+            if file_type in POSSIBLE_MISNOMER_FILE_TYPES:
                 file_type, dest_path = _file_type_sniffer(dest_path, chunk_size)
-                if file_type == _FileType.Unknown:
+                if file_type == FileType.Unknown:
                     logging.debug("unable to find file type for %s", dest_path)
                     continue
 
@@ -289,7 +289,7 @@ def _contains_any(s: str, substrings: list[str]) -> bool:
     return any(sub in s for sub in substrings)
 
 
-def _classify_file(path: str) -> _FileType:
+def _classify_file(path: str) -> FileType:
     # list of words to ignore while assigning csv, tsv and txt file types
     ignore_words = [
         "barcode",
@@ -302,27 +302,27 @@ def _classify_file(path: str) -> _FileType:
     ]
 
     if "barcodes.tsv" in path:
-        return _FileType.Barcodes
+        return FileType.Barcodes
     elif ".ha5d" in path:
-        return _FileType.H5ad
+        return FileType.H5ad
     elif _contains_any(path, [".h5", ".hdf5"]):
-        return _FileType.H5
+        return FileType.H5
     elif ".txt" in path and not _contains_any(path, ignore_words):
-        return _FileType.Txt
+        return FileType.Txt
     elif ".csv" in path and not _contains_any(path, ignore_words):
-        return _FileType.Csv
+        return FileType.Csv
     elif ".tsv" in path and not _contains_any(path, ignore_words):
-        return _FileType.Tsv
+        return FileType.Tsv
     elif ".rds" in path:
-        return _FileType.Rds
+        return FileType.Rds
     elif _contains_any(path, [".tar", ".tar.gz", ".tgz"]):
-        return _FileType.Tar
+        return FileType.Tar
     else:
-        return _FileType.Unknown
+        return FileType.Unknown
 
 
 # util function to read a sample of the file and extract the exact file type rather than just guessing it from the file extension
-def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[_FileType, Path]:
+def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:
     if path.suffix == ".gz":
         tmp_path = path.with_suffix("")
         if not tmp_path.exists():
@@ -335,7 +335,7 @@ def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[_FileType, Path]:
             sample = f.read(chunk_size)
     except UnicodeDecodeError as e:
         logging.warning("failed to read %s: %s", path, e)
-        return _FileType.Unknown, path
+        return FileType.Unknown, path
 
     try:
         dialect = csv.Sniffer().sniff(sample)
@@ -348,43 +348,43 @@ def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[_FileType, Path]:
     row = [r for r in row if r.strip()]
 
     if dialect is None:
-        return _FileType.Unknown, path
+        return FileType.Unknown, path
     if len(row) == 1:
-        return _FileType.Txt, path
+        return FileType.Txt, path
     elif dialect.delimiter == "\t":
-        return _FileType.Tsv, path
+        return FileType.Tsv, path
     elif dialect.delimiter == ",":
-        return _FileType.Csv, path
+        return FileType.Csv, path
     elif dialect.delimiter == " ":
-        return _FileType.SpaceDelimited, path
+        return FileType.SpaceDelimited, path
     elif dialect.delimiter == ";":
-        return _FileType.SemicolonDelimited, path
+        return FileType.SemicolonDelimited, path
     else:
-        return _FileType.Unknown, path
+        return FileType.Unknown, path
 
 
-def _is_sc(dest_path: Path, file_type: _FileType, chunk_size: int) -> bool:
-    if file_type == _FileType.Tar:
+def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> bool:
+    if file_type == FileType.Tar:
         return _process_tar(dest_path, chunk_size)
     else:
         match file_type:
-            case _FileType.Barcodes:
+            case FileType.Barcodes:
                 return _process_barcodes(dest_path, chunk_size)
-            case _FileType.H5:
+            case FileType.H5:
                 return _process_h5(dest_path, chunk_size)
-            case _FileType.H5ad:
+            case FileType.H5ad:
                 return _process_h5ad(dest_path, chunk_size)
-            case _FileType.Txt:
+            case FileType.Txt:
                 return _process_txt(dest_path, chunk_size)
-            case _FileType.Tsv:
+            case FileType.Tsv:
                 return _process_delimiter_file_types("\t")(dest_path, chunk_size)
-            case _FileType.Csv:
+            case FileType.Csv:
                 return _process_delimiter_file_types(",")(dest_path, chunk_size)
-            case _FileType.SpaceDelimited:
+            case FileType.SpaceDelimited:
                 return _process_delimiter_file_types(" ")(dest_path, chunk_size)
-            case _FileType.SemicolonDelimited:
+            case FileType.SemicolonDelimited:
                 return _process_delimiter_file_types(";")(dest_path, chunk_size)
-            case _FileType.Rds:
+            case FileType.Rds:
                 return _process_rds(dest_path, chunk_size)
 
     return False
@@ -408,7 +408,7 @@ def _process_tar(path: Path, chunk_size: int) -> bool:
             for member in tar.getmembers():
                 name = member.name.lower()
                 file_type = _classify_file(name)
-                if file_type == _FileType.Unknown:
+                if file_type == FileType.Unknown:
                     continue
 
                 f = tar.extractfile(member)
@@ -419,9 +419,9 @@ def _process_tar(path: Path, chunk_size: int) -> bool:
                     shutil.copyfileobj(f, tmp)
                     tmp_path = Path(tmp.name)
 
-                if file_type in _POSSIBLE_MISNOMER_FILE_TYPES:
+                if file_type in POSSIBLE_MISNOMER_FILE_TYPES:
                     file_type, dest_path = _file_type_sniffer(tmp_path, chunk_size)
-                    if file_type == _FileType.Unknown:
+                    if file_type == FileType.Unknown:
                         logging.debug("unable to find file type for %s", dest_path)
                         continue
 

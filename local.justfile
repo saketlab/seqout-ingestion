@@ -13,7 +13,6 @@ ingest_sra:
         --start-date 2026-01-01 \
         --end-date 2026-01-20 \
         --workers 10 \
-        --read-batch-size 200 \
         --write-batch-size 50000
 
 ingest_geo:
@@ -35,22 +34,29 @@ ingest_ae:
         --end-date 2026-01-01 \
         --workers 10
 
+backfill_download_links:
+    {{ PYTHON }} ./src/main.py backfill download-links \
+        --output-dir {{ DATA_DIR }} \
+        --ena-db-file $(just -f local.justfile _latest_db ena) \
+        --source ena \
+        --workers 8
+
 backfill_pm_ids:
     {{ PYTHON }} ./src/main.py backfill pm-ids \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --geo-db-file $(just -f local.justfile _latest_db geo) \
+        --sra-db-file $(just -f local.justfile _latest_db sra) \
+        --ena-db-file $(just -f local.justfile _latest_db ena) \
+        --ae-db-file $(just -f local.justfile _latest_db ae) \
         --ncbi-keys-file ./data/_keys/ncbi.txt \
         --batch-size 100
 
 backfill_pm_meta:
     {{ PYTHON }} ./src/main.py backfill pm-meta \
         --output-dir {{ DATA_DIR }} \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --geo-db-file $(just -f local.justfile _latest_db geo) \
+        --sra-db-file $(just -f local.justfile _latest_db sra) \
+        --ena-db-file $(just -f local.justfile _latest_db ena) \
+        --ae-db-file $(just -f local.justfile _latest_db ae) \
         --ncbi-keys-file ./data/_keys/ncbi.txt \
         --openalex-keys-file ./data/_keys/openalex.txt \
         --update-journal-metrics \
@@ -60,18 +66,18 @@ backfill_pm_meta:
 unify_build_catalog:
     {{ PYTHON }} ./src/main.py unify build-catalog \
         --output-dir {{ DATA_DIR }} \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --geo-db-file $(just -f local.justfile _latest_db geo) \
+        --sra-db-file $(just -f local.justfile _latest_db sra) \
+        --ena-db-file $(just -f local.justfile _latest_db ena) \
+        --ae-db-file $(just -f local.justfile _latest_db ae) \
 
 unify_build_metadata:
     {{ PYTHON }} ./src/main.py unify build-metadata \
         --output-dir {{ DATA_DIR }} \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --geo-db-file $(just -f local.justfile _latest_db geo) \
+        --sra-db-file $(just -f local.justfile _latest_db sra) \
+        --ena-db-file $(just -f local.justfile _latest_db ena) \
+        --ae-db-file $(just -f local.justfile _latest_db ae) \
         --unified-catalog-db-file {{ DATA_DIR }}/unified_catalog/unified_catalog.db \
         --pubmed-metadata-db-file {{ DATA_DIR }}/pubmed_meta/pubmed_meta.db \
         --assay-mapping-csv-file {{ DATA_DIR }}/_csv/assay_mapping.csv \
@@ -80,7 +86,7 @@ unify_build_metadata:
 geocode_missing:
     {{ PYTHON }} ./src/main.py geocode \
         --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
-        --geo-db-file $(just _latest_db geo) \
+        --geo-db-file $(just -f local.justfile _latest_db geo) \
         --cache-file ./data/geocoding/geocode_cache.json \
         --save-every 1 \
         --rate-limit 3.0
@@ -94,6 +100,6 @@ sc_enrich_fastcounter:
         sc_enrich fastcounter \
             --output-dir {{ DATA_DIR }} \
             --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
-            --geo-db-file $(just _latest_db geo) \
-            --ae-db-file $(just _latest_db ae) \
+            --geo-db-file $(just -f local.justfile _latest_db geo) \
+            --ae-db-file $(just -f local.justfile _latest_db ae) \
             --workers 5 \

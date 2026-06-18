@@ -28,10 +28,10 @@ class TableType(StrEnum):
     Contributors = "Contributors"
 
 
-_GEO_OUTPUT_DIR = "geo"
-_MINIML_NAMESPACE = "http://www.ncbi.nlm.nih.gov/geo/info/MINiML"
+GEO_OUTPUT_DIR = "geo"
+MINIML_NAMESPACE = "http://www.ncbi.nlm.nih.gov/geo/info/MINiML"
 
-_GEO_SQL_STATEMENTS: dict[TableType, str] = {
+GEO_SQL_STATEMENTS: dict[TableType, str] = {
     TableType.Platforms: "INSERT OR REPLACE INTO geo_platforms (accession, description, title, technology, published_at, updated_at, organism, manufacturer, relation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     TableType.Samples: "INSERT OR REPLACE INTO geo_samples (accession, channel_count, channels, description, platform_ref, published_at,updated_at, supplementary_data, title, sample_type, hybridization_protocol, scan_protocol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     TableType.Series: "INSERT OR REPLACE INTO geo_series (accession, overall_design, pubmed_id, relation, samples_ref, published_at, updated_at, summary, supplementary_data, title, series_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -53,7 +53,7 @@ def ingest_geo(
     timeout: int,
     max_timeout: int,
 ):
-    output_dir = Path(base_output_dir) / _GEO_OUTPUT_DIR
+    output_dir = Path(base_output_dir) / GEO_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
@@ -102,7 +102,7 @@ def ingest_geo(
         simple_file_download, retries=retries, timeout=timeout, max_timeout=max_timeout
     )
 
-    exec_query_from_file("tables/geo_tables.sql", db_file)
+    exec_query_from_file("tables/geo.sql", db_file)
     _run_pipeline(
         downloader,
         geo_dict,
@@ -115,7 +115,7 @@ def ingest_geo(
         timeout,
         max_timeout,
     )
-    exec_query_from_file("indexes/geo_indexes.sql", db_file)
+    exec_query_from_file("indexes/geo.sql", db_file)
 
 
 def _build_geo_dict(
@@ -245,7 +245,7 @@ def _download_worker(
 
 
 def _wrap_ns(s: str) -> str:
-    return f"{{{_MINIML_NAMESPACE}}}{s}"
+    return f"{{{MINIML_NAMESPACE}}}{s}"
 
 
 def _findtext(root: ET._Element, s: str) -> str | None:
@@ -533,7 +533,7 @@ def _process_one(
         delay = timeout
         for attempt in range(retries):
             try:
-                cursor.executemany(_GEO_SQL_STATEMENTS[table_type], batch)
+                cursor.executemany(GEO_SQL_STATEMENTS[table_type], batch)
                 conn.commit()
                 batch_by_type[table_type] = []
                 return

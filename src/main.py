@@ -3,7 +3,6 @@ from typing import Literal, Optional
 
 import typer
 
-import sc_enrich
 from cli.backfill import backfill_app
 from cli.geocode import geocode_app
 from cli.ingest import ingest_app
