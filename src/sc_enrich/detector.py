@@ -5,7 +5,9 @@ import gzip
 import json
 import logging
 import shutil
+import signal
 import sqlite3
+import sys
 import tarfile
 import tempfile
 from collections import defaultdict
@@ -79,6 +81,13 @@ def sc_detector(
 ):
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
+
+    def _cleanup(signum, frame):
+        shutil.rmtree(output_dir, ignore_errors=True)
+        sys.exit(signum)
+
+    signal.signal(signal.SIGINT, _cleanup)
+    signal.signal(signal.SIGTERM, _cleanup)
 
     conn = sqlite3.connect(unified_metadata_db_file)
     geo_conn = sqlite3.connect(geo_db_file)
