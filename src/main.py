@@ -7,6 +7,7 @@ from cli.backfill import backfill_app
 from cli.geocode import geocode_app
 from cli.ingest import ingest_app
 from cli.sc_enrich import sc_enrich_app
+from cli.transfer import transfer_app
 from cli.unify import unify_app
 
 cli = typer.Typer()
@@ -40,6 +41,7 @@ cli.add_typer(backfill_app, name="backfill")
 cli.add_typer(unify_app, name="unify")
 cli.add_typer(geocode_app)
 cli.add_typer(sc_enrich_app, name="sc_enrich")
+cli.add_typer(transfer_app, name="transfer")
 
 if __name__ == "__main__":
     cli()

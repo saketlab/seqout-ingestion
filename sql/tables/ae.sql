@@ -1,9 +1,7 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS arrayexpress_experiments (
     accession                   TEXT PRIMARY KEY,
     title                       TEXT,
+    organisms                   TEXT CHECK (organisms IS NULL or json_valid(organisms)),
     organism                    TEXT,
     description                 TEXT,
     study_type                  TEXT,
@@ -53,7 +51,3 @@ CREATE TABLE IF NOT EXISTS arrayexpress_samples (
     ena_run                 TEXT,
     attributes_json         TEXT CHECK (attributes_json IS NULL OR json_valid(attributes_json))
 );
-
-CREATE VIRTUAL TABLE IF NOT EXISTS arrayexpress_experiments_fts USING fts5(title, description, attributes_json, content=arrayexpress_experiments, content_rowid=rowid);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS arrayexpress_samples_fts USING fts5(attributes_json, content=arrayexpress_samples, content_rowid=id);

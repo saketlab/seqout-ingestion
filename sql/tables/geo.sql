@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS geo_contributors (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     accession           TEXT NOT NULL,
@@ -17,15 +14,15 @@ CREATE TABLE IF NOT EXISTS geo_contributors (
 CREATE TABLE IF NOT EXISTS geo_series (
     accession            TEXT PRIMARY KEY,
     overall_design       TEXT,
-    pubmed_id            TEXT,
-    relation             TEXT,
-    samples_ref          TEXT,
+    pubmed_id            TEXT CHECK (pubmed_id IS NULL OR json_valid(pubmed_id)),
+    relation             TEXT CHECK (relation IS NULL OR json_valid(relation)),
+    samples_ref          TEXT CHECK (samples_ref IS NULL OR json_valid(samples_ref)),
     published_at         DATE,
     updated_at           DATE,
     summary              TEXT,
-    supplementary_data   TEXT,
+    supplementary_data   TEXT CHECK (supplementary_data IS NULL OR json_valid(supplementary_data)),
     title                TEXT,
-    series_type          TEXT,
+    series_type          TEXT CHECK (series_type IS NULL OR json_valid(series_type)),
     pubmed_id_pysradb    TEXT,
     pubmed_last_checked  DATE
 );

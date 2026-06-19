@@ -497,7 +497,9 @@ def _process_experiments(submission_accession: str, content: IO[bytes]):
                         if layout_elem is not None:
                             first_child = next(iter(layout_elem), None)
                             library_layout = (
-                                str(first_child.tag) if first_child is not None else None
+                                str(first_child.tag)
+                                if first_child is not None
+                                else None
                             )
 
                 samples = []

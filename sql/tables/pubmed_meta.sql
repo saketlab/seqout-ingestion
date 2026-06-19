@@ -1,12 +1,9 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS pubmed_metadata (
     pmid                       TEXT PRIMARY KEY,
     title                      TEXT,
     journal                    TEXT,
     doi                        TEXT,
-    pub_date                   TEXT,
+    pub_date                   DATE,
     authors                    TEXT,
     issn                       TEXT,
     citation_count             INTEGER,

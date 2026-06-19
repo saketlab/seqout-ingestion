@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS unified_metadata (
     canonical_accession      TEXT PRIMARY KEY,
     source                   TEXT NOT NULL,
@@ -23,7 +20,7 @@ CREATE TABLE IF NOT EXISTS unified_metadata (
     pmid                     TEXT,
     journal                  TEXT,
     citation_count           INTEGER,
-    first_published          TEXT,
+    first_published          DATE,
     place_name               TEXT,
     place_type               TEXT,
     short_label              TEXT,

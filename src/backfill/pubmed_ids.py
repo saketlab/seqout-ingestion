@@ -126,7 +126,6 @@ def backfill_pubmed_ids(
         keys = f.read().splitlines()
 
     optimal_num_workers = len(keys)
-    num_workers = num_workers
     if num_workers != optimal_num_workers:
         num_workers = optimal_num_workers
         logging.warning("using %d as num workers", num_workers)

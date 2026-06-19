@@ -5,6 +5,8 @@ from pathlib import Path
 
 from tqdm import tqdm
 
+from helpers import exec_query_from_file
+
 SC_PATTERNS = re.compile(
     r"scRNA[\-\s]?seq|sc[\-\s]RNA[\-\s]?seq"
     r"|snRNA[\-\s]?seq|sn[\-\s]RNA[\-\s]?seq"
@@ -131,7 +133,7 @@ def sc_regex_enricher(
         )
         conn.commit()
 
-    _create_indexes(conn)
+    exec_query_from_file("indexes/unified_metadata.sql", unified_metadata_db_file)
     conn.close()
 
 
@@ -142,13 +144,3 @@ def _classify_modality(title: str | None) -> str:
                 return modality
 
     return "Other single-cell"
-
-
-def _create_indexes(conn: sqlite3.Connection):
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_um_is_single_cell ON unified_metadata(is_single_cell)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_um_modality ON unified_metadata(single_cell_modality)"
-    )
-    conn.commit()

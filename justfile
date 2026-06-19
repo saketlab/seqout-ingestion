@@ -1,11 +1,15 @@
-export PYTHON_GIL := "0"
+set dotenv-load
 
-PYTHON := ".venv/bin/python"
+export PYTHON_GIL := "0"
+export DATA_DIR := env("DATA_DIR", "/data/share/seqout_may")
+
+LOG_LEVEL := env("LOG_LEVEL", "info")
 START_DATE := env("START_DATE", "2026-04-28")
 END_DATE := env("END_DATE", "2026-05-31")
-export DATA_DIR := env("DATA_DIR", "/data/share/seqout_may")
-LOG_LEVEL := env("LOG_LEVEL", "info")
+RETRIES := env("RETRIES", "20")
+WORKERS := env("WORKERS", "10")
 
+PYTHON := ".venv/bin/python"
 ENTRYPOINT := "./src/main.py --log-level " + LOG_LEVEL
 
 _latest_db source:
@@ -17,7 +21,7 @@ ingest_sra:
         --output-dir {{ DATA_DIR }} \
         --start-date {{ START_DATE }} \
         --end-date {{ END_DATE }} \
-        --workers 10 \
+        --workers {{ WORKERS }} \
         --write-batch-size 1000
 
 ingest_geo:
@@ -25,24 +29,24 @@ ingest_geo:
         --output-dir {{ DATA_DIR }} \
         --start-date {{ START_DATE }} \
         --end-date {{ END_DATE }} \
-        --workers 20 \
-        --retries 20
+        --workers {{ WORKERS }} \
+        --retries {{ RETRIES }}
 
 ingest_ena:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest ena \
         --output-dir {{ DATA_DIR }} \
         --start-date {{ START_DATE }} \
         --end-date {{ END_DATE }} \
-        --workers 10 \
-        --retries 20
+        --workers {{ WORKERS }} \
+        --retries {{ RETRIES }}
 
 ingest_ae:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest ae \
         --output-dir {{ DATA_DIR }} \
         --start-date {{ START_DATE }} \
         --end-date {{ END_DATE }} \
-        --workers 10 \
-        --retries 20
+        --workers {{ WORKERS }} \
+        --retries {{ RETRIES }}
 
 backfill_download_links:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill download-links \
@@ -51,7 +55,7 @@ backfill_download_links:
         --ena-db-file $(just _latest_db ena) \
         --source ncbi \
         --ncbi-keys-file {{ DATA_DIR }}/_keys/ncbi.txt \
-        --workers 20
+        --workers {{ WORKERS }}
 
 backfill_pm_ids:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-ids \
@@ -60,7 +64,7 @@ backfill_pm_ids:
         --ena-db-file $(just _latest_db ena) \
         --ae-db-file $(just _latest_db ae) \
         --ncbi-keys-file {{ DATA_DIR }}/_keys/ncbi.txt \
-        --batch-size 100
+        --batch-size 100 \
 
 backfill_pm_meta:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-meta \
@@ -78,8 +82,8 @@ backfill_pm_meta:
 unify_build_catalog:
     {{ PYTHON }} {{ ENTRYPOINT }} unify build-catalog \
         --output-dir {{ DATA_DIR }} \
-        --geo-db-file $(just _latest_db geo) \
         --sra-db-file $(just _latest_db sra) \
+        --geo-db-file $(just _latest_db geo) \
         --ena-db-file $(just _latest_db ena) \
         --ae-db-file $(just _latest_db ae) \
 
@@ -102,7 +106,7 @@ geocode_missing:
         --cache-file {{ DATA_DIR }}/geocoding/geocode_cache.json \
         --save-every 100 \
         --rate-limit 3 \
-        --retries 20
+        --retries {{ RETRIES }}
 
 sc_enrich_regex:
     {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich regex \
@@ -114,4 +118,13 @@ sc_enrich_detector:
         --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
         --geo-db-file $(just _latest_db geo) \
         --ae-db-file $(just _latest_db ae) \
-        --workers 10
+        --workers {{ WORKERS }}
+
+transfer_pg:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer pg \
+        --sra-db-file $(just _latest_db sra) \
+        --geo-db-file $(just _latest_db geo) \
+        --ena-db-file $(just _latest_db ena) \
+        --ae-db-file $(just _latest_db ae) \
+        --pg-url "$PG_URL" \
+        --workers {{ WORKERS }}

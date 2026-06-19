@@ -3,7 +3,9 @@ import sqlite3
 import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import LiteralString, cast
 
+import psycopg
 import requests
 from tqdm import tqdm
 
@@ -319,18 +321,27 @@ def send_req(
 def exec_query_from_file(
     query_file: str | Path,
     db_file: str | Path | None = None,
-    conn: sqlite3.Connection | None = None,
+    pg_dsn: str | None = None,
+    conn: sqlite3.Connection | psycopg.Connection | None = None,
 ):
-    owns_conn = conn is None
-    if owns_conn:
-        if not db_file:
-            raise ValueError("missing db file")
-        conn = sqlite3.connect(db_file)
+    is_custom_conn = conn is not None
+    if not is_custom_conn:
+        if pg_dsn:
+            conn = psycopg.connect(pg_dsn)
+        elif db_file:
+            conn = sqlite3.connect(db_file)
+        else:
+            raise ValueError("provide either db_file (sqlite) or pg_dsn (postgres)")
 
-    cursor = conn.cursor()
     sql_dir = Path(__file__).resolve().parent.parent / "sql"
     query = (sql_dir / query_file).read_text()
-    cursor.executescript(query)
 
-    if owns_conn:
+    if isinstance(conn, psycopg.Connection):
+        conn.cursor().execute(cast(LiteralString, query))
+        conn.commit()
+    elif isinstance(conn, sqlite3.Connection):
+        conn.cursor().executescript(query)
+        conn.commit()
+
+    if not is_custom_conn:
         conn.close()

@@ -1,14 +1,11 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS sra_submissions (
     accession    TEXT PRIMARY KEY,
     alias        TEXT,
     broker_name  TEXT,
     center_name  TEXT,
     lab_name     TEXT,
-    published_at TEXT,
-    updated_at   TEXT
+    published_at DATE,
+    updated_at   DATE
 );
 
 CREATE TABLE IF NOT EXISTS sra_experiments (
@@ -58,8 +55,8 @@ CREATE TABLE IF NOT EXISTS sra_studies (
     links               TEXT CHECK (json_valid(links)),
     center_project_name TEXT,
     submission          TEXT,
-    published_at        TEXT,
+    published_at        DATE,
     pubmed_id_pysradb   TEXT,
     pubmed_last_checked DATE,
-    updated_at          TEXT
+    updated_at          DATE
 );

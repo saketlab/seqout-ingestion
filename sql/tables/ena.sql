@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE TABLE IF NOT EXISTS ena_studies (
     study_accession             TEXT PRIMARY KEY,
     secondary_study_accession   TEXT,
@@ -21,8 +18,8 @@ CREATE TABLE IF NOT EXISTS ena_studies (
     breed                       TEXT,
     cultivar                    TEXT,
     isolate                     TEXT,
-    first_public                TEXT,
-    last_updated                TEXT,
+    first_public                DATE,
+    last_updated                DATE,
     geo_accession               TEXT,
     keywords                    TEXT,
     tag                         TEXT,
@@ -51,8 +48,8 @@ CREATE TABLE IF NOT EXISTS ena_experiments (
     scientific_name             TEXT,
     tax_id                      INTEGER,
     center_name                 TEXT,
-    first_public                TEXT,
-    last_updated                TEXT,
+    first_public                DATE,
+    last_updated                DATE,
     sample_title                TEXT,
     sample_alias                TEXT,
     sample_description          TEXT,
@@ -77,8 +74,8 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     study_accession                   TEXT NOT NULL,
     center_name                       TEXT,
     broker_name                       TEXT,
-    first_public                      TEXT,
-    last_updated                      TEXT,
+    first_public                      DATE,
+    last_updated                      DATE,
     submission_accession              TEXT,
     submission_tool                   TEXT,
     status                            TEXT,
@@ -178,9 +175,3 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     taxonomic_identity_marker         TEXT,
     related_sample_accession          TEXT
 );
-
-CREATE VIRTUAL TABLE IF NOT EXISTS ena_studies_fts USING fts5(study_title, study_description, content=ena_studies, content_rowid=rowid);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS ena_experiments_fts USING fts5(experiment_title, sample_description, content=ena_experiments, content_rowid=rowid);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS ena_samples_fts USING fts5(sample_title, sample_description, content=ena_samples, content_rowid=rowid);

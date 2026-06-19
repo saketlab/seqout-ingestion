@@ -363,7 +363,7 @@ def sc_detector(
 def _flush_updates(conn: sqlite3.Connection, accessions: list[str]) -> None:
     placeholders = ", ".join(repr(acc) for acc in accessions)
     conn.execute(
-        f"UPDATE unified_metadata SET is_single_cell = 0, single_cell_modality = '' WHERE accession IN ({placeholders})"
+        f"UPDATE unified_metadata SET is_single_cell = 0, single_cell_modality = '' WHERE canonical_accession IN ({placeholders})"
     )
     conn.commit()
 
