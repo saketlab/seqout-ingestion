@@ -9,8 +9,7 @@ from backfill.pubmed_meta import backfill_pubmed_meta
 
 backfill_app = typer.Typer()
 
-_NUM_WORKERS_FLAG = typer.Option(8, "--workers", "-w")
-_SOURCE_FLAG = typer.Option("ena", "--source", help="source: ena or ncbi")
+_NUM_WORKERS_FLAG = typer.Option(8, "--workers")
 _BATCH_SIZE_FLAG = typer.Option(100)
 
 
@@ -80,21 +79,19 @@ def pm_meta(
 
 @backfill_app.command()
 def download_links(
-    output_dir: Path = typer.Option(..., "--output-dir"),
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    source: str = typer.Option(...),
     sra_db_file: Optional[Path] = typer.Option(None),
     ena_db_file: Optional[Path] = typer.Option(None),
     ncbi_keys_file: Optional[Path] = typer.Option(None),
     num_workers: int = _NUM_WORKERS_FLAG,
     is_dry_run: bool = typer.Option(False),
-    source: str = _SOURCE_FLAG,
     limit: Optional[int] = typer.Option(None),
 ):
-    output_db_file = output_dir / "download_links" / "download_links.db"
-    output_db_file.parent.mkdir(parents=True, exist_ok=True)
     backfill_download_links(
+        base_output_dir,
         sra_db_file,
         ena_db_file,
-        output_db_file,
         ncbi_keys_file,
         num_workers,
         is_dry_run,

@@ -16,6 +16,7 @@ def geocode(
     cache_file: Optional[Path] = typer.Option(None, "--cache-file"),
     save_every: int = typer.Option(50, "--save-every"),
     rate_limit: float = typer.Option(1.0, "--rate-limit"),
+    retries: int = typer.Option(20, "--retries"),
     is_dry_run: bool = typer.Option(False, "--dry-run"),
 ):
     geocode_missing(
@@ -24,6 +25,7 @@ def geocode(
         cache_file,
         save_every,
         rate_limit,
+        retries,
         limit,
         is_dry_run,
     )

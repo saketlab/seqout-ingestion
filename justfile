@@ -1,75 +1,82 @@
 export PYTHON_GIL := "0"
 
 PYTHON := ".venv/bin/python"
-DATA_DIR := "/data/share/seqout_may"
+START_DATE := env("START_DATE", "2026-04-28")
+END_DATE := env("END_DATE", "2026-05-31")
+export DATA_DIR := env("DATA_DIR", "/data/share/seqout_may")
+LOG_LEVEL := env("LOG_LEVEL", "info")
+
+ENTRYPOINT := "./src/main.py --log-level " + LOG_LEVEL
 
 _latest_db source:
     @latest=$(ls {{ DATA_DIR }}/{{ source }}/db/ | sort -r | head -1) && \
     echo "{{ DATA_DIR }}/{{ source }}/db/$latest/{{ source }}_metadata_$latest.db"
 
 ingest_sra:
-    {{ PYTHON }} ./src/main.py ingest sra \
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest sra \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-05-01 \
-        --end-date 2026-05-20 \
+        --start-date {{ START_DATE }} \
+        --end-date {{ END_DATE }} \
         --workers 10 \
         --write-batch-size 1000
 
 ingest_geo:
-    {{ PYTHON }} ./src/main.py ingest geo \
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest geo \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-05-01 \
-        --end-date 2026-05-20 \
+        --start-date {{ START_DATE }} \
+        --end-date {{ END_DATE }} \
         --workers 20 \
         --retries 20
 
 ingest_ena:
-    {{ PYTHON }} ./src/main.py ingest ena \
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest ena \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-04-28 \
-        --end-date 2026-05-31 \
+        --start-date {{ START_DATE }} \
+        --end-date {{ END_DATE }} \
         --workers 10 \
         --retries 20
 
 ingest_ae:
-    {{ PYTHON }} ./src/main.py ingest ae \
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest ae \
         --output-dir {{ DATA_DIR }} \
-        --start-date 2026-04-28 \
-        --end-date 2026-05-31 \
+        --start-date {{ START_DATE }} \
+        --end-date {{ END_DATE }} \
         --workers 10 \
         --retries 20
 
 backfill_download_links:
-    {{ PYTHON }} ./src/main.py backfill download-links \
+    {{ PYTHON }} {{ ENTRYPOINT }} backfill download-links \
         --output-dir {{ DATA_DIR }} \
+        --sra-db-file $(just _latest_db sra) \
         --ena-db-file $(just _latest_db ena) \
-        --source ena \
-        --workers 8
+        --source ncbi \
+        --ncbi-keys-file {{ DATA_DIR }}/_keys/ncbi.txt \
+        --workers 20
 
 backfill_pm_ids:
-    {{ PYTHON }} ./src/main.py backfill pm-ids \
+    {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-ids \
         --geo-db-file $(just _latest_db geo) \
         --sra-db-file $(just _latest_db sra) \
         --ena-db-file $(just _latest_db ena) \
         --ae-db-file $(just _latest_db ae) \
-        --ncbi-keys-file ./data/_keys/ncbi.txt \
+        --ncbi-keys-file {{ DATA_DIR }}/_keys/ncbi.txt \
         --batch-size 100
 
 backfill_pm_meta:
-    {{ PYTHON }} ./src/main.py backfill pm-meta \
+    {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-meta \
         --output-dir {{ DATA_DIR }} \
         --geo-db-file $(just _latest_db geo) \
         --sra-db-file $(just _latest_db sra) \
         --ena-db-file $(just _latest_db ena) \
         --ae-db-file $(just _latest_db ae) \
-        --ncbi-keys-file ./data/_keys/ncbi.txt \
-        --openalex-keys-file ./data/_keys/openalex.txt \
+        --ncbi-keys-file {{ DATA_DIR }}/_keys/ncbi.txt \
+        --openalex-keys-file {{ DATA_DIR }}/_keys/openalex.txt \
         --update-journal-metrics \
         --refresh-all-journals-metrics \
         --batch-size 100 \
 
 unify_build_catalog:
-    {{ PYTHON }} ./src/main.py unify build-catalog \
+    {{ PYTHON }} {{ ENTRYPOINT }} unify build-catalog \
         --output-dir {{ DATA_DIR }} \
         --geo-db-file $(just _latest_db geo) \
         --sra-db-file $(just _latest_db sra) \
@@ -77,7 +84,7 @@ unify_build_catalog:
         --ae-db-file $(just _latest_db ae) \
 
 unify_build_metadata:
-    {{ PYTHON }} ./src/main.py unify build-metadata \
+    {{ PYTHON }} {{ ENTRYPOINT }} unify build-metadata \
         --output-dir {{ DATA_DIR }} \
         --geo-db-file $(just _latest_db geo) \
         --sra-db-file $(just _latest_db sra) \
@@ -89,22 +96,22 @@ unify_build_metadata:
         --taxonomy-mapping-csv-file {{ DATA_DIR }}/_csv/ncbi_taxonomy_common_names.csv
 
 geocode_missing:
-    {{ PYTHON }} ./src/main.py geocode \
+    {{ PYTHON }} {{ ENTRYPOINT }} geocode \
         --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
         --geo-db-file $(just _latest_db geo) \
-        --cache-file ./data/geocoding/geocode_cache.json \
-        --save-every 1 \
-        --rate-limit 3.0
+        --cache-file {{ DATA_DIR }}/geocoding/geocode_cache.json \
+        --save-every 100 \
+        --rate-limit 3 \
+        --retries 20
 
 sc_enrich_regex:
-    {{ PYTHON }} ./src/main.py sc_enrich regex \
-        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich regex \
+        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db
 
-sc_enrich_fastcounter:
-    {{ PYTHON }} ./src/main.py --log-level debug \
-        sc_enrich fastcounter \
-            --output-dir {{ DATA_DIR }} \
-            --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
-            --geo-db-file $(just _latest_db geo) \
-            --ae-db-file $(just _latest_db ae) \
-            --workers 5 \
+sc_enrich_detector:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich detector \
+        --output-dir {{ DATA_DIR }} \
+        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
+        --geo-db-file $(just _latest_db geo) \
+        --ae-db-file $(just _latest_db ae) \
+        --workers 10

@@ -192,6 +192,8 @@ def _worker(
                 pmid_updates.append((pmid, acc))
 
         with sqlite3.Connection(db_file) as conn:
+            conn.execute("PRAGMA busy_timeout=60000")
+
             table = DATASOURCE_TABLE_MAPPING[datasource]
             column = DATASOURCE_COLUMN_MAPPING[datasource]
 
@@ -207,6 +209,6 @@ def _worker(
                     f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE {column} = ?",
                     pmid_updates,
                 )
-            conn.commit()
 
+            conn.commit()
         pbar.update(len(batch))

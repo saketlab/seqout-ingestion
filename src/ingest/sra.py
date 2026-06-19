@@ -497,7 +497,7 @@ def _process_experiments(submission_accession: str, content: IO[bytes]):
                         if layout_elem is not None:
                             first_child = next(iter(layout_elem), None)
                             library_layout = (
-                                first_child.tag if first_child is not None else None
+                                str(first_child.tag) if first_child is not None else None
                             )
 
                 samples = []
@@ -513,7 +513,7 @@ def _process_experiments(submission_accession: str, content: IO[bytes]):
                 if platform_elem is not None:
                     first_child = next(iter(platform_elem), None)
                     if first_child is not None:
-                        platform = first_child.tag
+                        platform = str(first_child.tag)
                         instrument_model = first_child.findtext("INSTRUMENT_MODEL")
 
                 study_ref_elem = experiment.find("STUDY_REF")
@@ -668,6 +668,12 @@ def _parse_worker(
             logging.error(f"[parse] failed to process {submission_accession}: {e}")
 
 
+def _coerce(val: object) -> object:
+    if isinstance(val, (str, int, float, bytes, type(None))):
+        return val
+    return str(val)
+
+
 def _writer_worker(
     write_queue: queue.Queue,
     db_file: Path,
@@ -688,7 +694,8 @@ def _writer_worker(
         nonlocal rows_written
         batch = buffer.get(file_type)
         if batch:
-            cursor.executemany(SRA_SQL_STATEMENTS[file_type], batch)
+            safe_batch = [tuple(_coerce(v) for v in row) for row in batch]
+            cursor.executemany(SRA_SQL_STATEMENTS[file_type], safe_batch)
             conn.commit()
             rows_written += len(batch)
             buffer[file_type] = []
@@ -815,7 +822,7 @@ def _parse_links(sample_links: list) -> str | None:
             results[label] = url.findtext("URL")
         else:
             for child in link:
-                results[child.tag] = {el.tag: el.text for el in child}
+                results[str(child.tag)] = {str(el.tag): el.text for el in child}
 
     return json.dumps(results)
 

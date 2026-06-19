@@ -92,9 +92,9 @@ STUDY_QUERIES: dict[Datasource, str] = {
 
 
 def backfill_download_links(
+    base_output_dir: Path,
     sra_db_file: Optional[Path],
     ena_db_file: Optional[Path],
-    output_db_file: Path,
     ncbi_keys_file: Optional[Path],
     num_workers: int,
     is_dry_run: bool,
@@ -104,7 +104,11 @@ def backfill_download_links(
     if not sra_db_file and not ena_db_file:
         raise ValueError("expected at least one of --sra-db-file or --ena-db-file")
 
-    with sqlite3.connect(output_db_file) as conn:
+    output_dir = base_output_dir / "download_links"
+    output_dir.mkdir(exist_ok=True, parents=True)
+
+    db_file = output_dir / "download_links.db"
+    with sqlite3.connect(db_file) as conn:
         exec_query_from_file("tables/download_links.sql", conn=conn)
         exec_query_from_file("tables/study_fetch_log.sql", conn=conn)
         exec_query_from_file("indexes/download_links.sql", conn=conn)
@@ -156,7 +160,7 @@ def backfill_download_links(
                     _ncbi_worker,
                     keys[i],
                     worker_data[i],
-                    output_db_file,
+                    db_file,
                     pbar,
                 )
                 for i in range(num_workers)
@@ -179,7 +183,7 @@ def backfill_download_links(
                     _ena_worker,
                     "",
                     worker_data[i],
-                    output_db_file,
+                    db_file,
                     pbar,
                 )
                 for i in range(num_workers)
@@ -274,10 +278,16 @@ def _ncbi_worker(
 
         run_rows = []
         for package in response:
-            exp_node = package.get("EXPERIMENT") or {}
+            exp_node = (
+                package["EXPERIMENT"]
+                if isinstance(package.get("EXPERIMENT"), dict)
+                else {}
+            )
             exp_acc = exp_node.get("@accession") or None
 
-            run_set = package.get("RUN_SET") or {}
+            run_set = (
+                package["RUN_SET"] if isinstance(package.get("RUN_SET"), dict) else {}
+            )
             runs = run_set.get("RUN", [])
             if isinstance(runs, dict):
                 runs = [runs]

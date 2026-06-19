@@ -86,6 +86,7 @@ def geocode_missing(
     cache_file: Optional[Path],
     save_every: int,
     rate_limit: float,
+    retries: int,
     limit: Optional[int],
     is_dry_run: bool,
 ):
@@ -112,8 +113,11 @@ def geocode_missing(
     nominatim = RateLimiter(
         Nominatim(user_agent="seqout-ingestion-v2").geocode,
         min_delay_seconds=rate_limit,
+        max_retries=retries,
     )
-    arcgis = RateLimiter(ArcGIS().geocode, min_delay_seconds=rate_limit)
+    arcgis = RateLimiter(
+        ArcGIS().geocode, min_delay_seconds=rate_limit, max_retries=retries
+    )
 
     updated = 0
     total = len(missing)
@@ -348,7 +352,7 @@ def _update_by_name(
     values = [result.get(c) for c in UPDATE_COLS] + [center_name]
     conn.execute(
         f"UPDATE {table} SET {set_clauses} "
-        f"WHERE {center_name} = ? "
+        f"WHERE center_name = ? "
         f"AND (latitude IS NULL OR longitude IS NULL)",
         values,
     )
