@@ -123,5 +123,7 @@ sc_enrich_detector:
 transfer_pg:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer pg \
         --pg-url "$PG_URL" \
+        --sra-db-file ./data/local_subset.db \
         --geo-db-file $(just _latest_db geo) \
+        --unified-metadata-db-file {{ DATA_DIR }}/unified_metadata/unified_metadata.db \
         --batch-size 500 \

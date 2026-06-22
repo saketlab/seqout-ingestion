@@ -11,8 +11,17 @@ transfer_app = typer.Typer()
 @transfer_app.command()
 def pg(
     pg_url: str = typer.Option(...),
-    geo_db_file: Optional[Path] = typer.Option(None),
+    sra_db_file: Path = typer.Option(...),
+    geo_db_file: Path = typer.Option(...),
+    unified_metadata_db_file: Path = typer.Option(...),
     num_workers: int = typer.Option(4),
     batch_size: int = typer.Option(default=500),
 ):
-    pg_transfer(pg_url, geo_db_file, num_workers, batch_size)
+    pg_transfer(
+        pg_url,
+        sra_db_file,
+        geo_db_file,
+        unified_metadata_db_file,
+        num_workers,
+        batch_size,
+    )

@@ -27,27 +27,38 @@ _GEO_SERIES_SELECT_COLS = [
 _GEO_SERIES_INSERT_COLS = [
     *_GEO_SERIES_SELECT_COLS,
     "bioproject_id",
+    "organisms",
+    "alias",
+    "alias_all",
+    "library_strategies",
+    "instrument_models",
+    "platforms",
 ]
 
 
 def pg_transfer(
-    pg_url: str, geo_db_file: Optional[Path], num_workers: int, batch_size: int
+    pg_url: str,
+    sra_db_file: Path,
+    geo_db_file: Path,
+    unified_db_file: Path,
+    num_workers: int,
+    batch_size: int,
 ):
     table_info = {
         "geo_series": (
             geo_db_file,
-            _geo_series_modifier,
+            _geo_series_batch_modifier(sra_db_file, geo_db_file, unified_db_file),
             _GEO_SERIES_SELECT_COLS,
             _GEO_SERIES_INSERT_COLS,
         ),
         "geo_samples": (
             geo_db_file,
-            _geo_sample_modifier,
+            _batch_modifier(_geo_sample_modifier),
             None,
             None,
         ),
-        "geo_contributors": (geo_db_file, _no_op_modifier, None, None),
-        "geo_platforms": (geo_db_file, _no_op_modifier, None, None),
+        "geo_contributors": (geo_db_file, _batch_modifier(_no_op_modifier), None, None),
+        "geo_platforms": (geo_db_file, _batch_modifier(_no_op_modifier), None, None),
     }
 
     all_tasks = [
@@ -97,10 +108,19 @@ def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str
     return col_list, pk
 
 
+def _batch_modifier(
+    row_modifier: Callable[[dict], dict],
+) -> Callable[[list[dict]], list[dict]]:
+    def modifier(batch: list[dict]) -> list[dict]:
+        return [row_modifier(row) for row in batch]
+
+    return modifier
+
+
 def _transfer_helper(
     pg_url: str,
     sqlite_db_file: Path,
-    modifier: Callable[[dict], dict],
+    modifier: Callable[[list[dict]], list[dict]],
     table_name: str,
     batch_size: int,
     select_cols: Optional[list[str]] = None,
@@ -144,10 +164,8 @@ def _transfer_helper(
                 if not batch:
                     break
 
-                modified_batch = []
-                for row in batch:
-                    modified = modifier(dict(row))
-                    modified_batch.append(tuple(modified[c] for c in col_list))
+                modified_batch = modifier([dict(row) for row in batch])
+                modified_batch = [tuple(m[c] for c in col_list) for m in modified_batch]
 
                 with pg_conn.cursor() as cur:
                     cur.executemany(cast(LiteralString, insert_query), modified_batch)
@@ -171,29 +189,151 @@ def _geo_sample_modifier(value: dict) -> dict:
     return value
 
 
-def _geo_series_modifier(value: dict) -> dict:
-    relations = _ensure_list(_convert_to_json(value["relation"]))
-    samples_ref = _ensure_list(_convert_to_json(value["samples_ref"]))
-    supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
+def _geo_series_batch_modifier(
+    sra_db_file: Path,
+    geo_db_file: Path,
+    unified_db_file: Path,
+) -> Callable[[list[dict]], list[dict]]:
+    def modifier(batch: list[dict]) -> list[dict]:
+        _conn_cache: dict[str, sqlite3.Connection] = {}
 
-    bioproject_id = next(
-        (
-            str(v["@target"]).split("/")[-1]
-            for v in relations
-            if v["@type"] == "BioProject"
-        ),
-        None,
-    )
+        def _get_conn(path: Path) -> sqlite3.Connection:
+            key = str(path)
+            if key not in _conn_cache:
+                _conn_cache[key] = sqlite3.connect(path)
+            return _conn_cache[key]
 
-    value["pubmed_id"] = _convert_to_json(value["pubmed_id"])
-    value["samples_ref"] = [v["@ref"] for v in samples_ref]
-    value["series_type"] = _convert_to_json(value["series_type"])
-    value["relation"] = [Jsonb(x) for x in relations]
-    value["supplementary_data"] = [Jsonb(x) for x in supp]
+        row_meta: list[dict] = []
+        all_samples: list[str] = []
+        alias_set: set[str] = set()
+        all_accessions: list[str] = []
 
-    value["bioproject_id"] = bioproject_id
+        for value in batch:
+            accession = value["accession"]
+            relations = _ensure_list(_convert_to_json(value["relation"]))
+            samples_ref = _ensure_list(_convert_to_json(value["samples_ref"]))
+            supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
 
-    return value
+            samples = [v["@ref"] for v in samples_ref]
+            alias = next(
+                (
+                    str(x["@target"]).split("?term=", 1)[-1]
+                    for x in relations
+                    if x["@type"] == "SRA"
+                ),
+                None,
+            )
+
+            row_meta.append(
+                {
+                    "accession": accession,
+                    "alias": alias,
+                    "samples": samples,
+                    "relations": relations,
+                    "supp": supp,
+                }
+            )
+
+            all_samples.extend(samples)
+            if alias:
+                alias_set.add(alias)
+            all_accessions.append(accession)
+
+        sample_organisms: dict[str, set[str]] = {}
+        sample_platforms: dict[str, list[str]] = {}
+
+        if all_samples:
+            unique_samples = list(set(all_samples))
+            placeholders = ", ".join(["?"] * len(unique_samples))
+            query = f"SELECT gs.accession, gp.organism, gs.platform_ref FROM geo_samples AS gs JOIN geo_platforms gp ON gs.platform_ref = gp.accession WHERE gs.accession IN ({placeholders})"
+            conn = _get_conn(geo_db_file)
+
+            for sample_acc, org_json, platform in conn.execute(
+                query, unique_samples
+            ).fetchall():
+                org_parsed = json.loads(org_json)
+                for item in org_parsed:
+                    sample_organisms.setdefault(sample_acc, set[str]()).add(
+                        item["#text"]
+                    )
+                sample_platforms.setdefault(sample_acc, []).append(platform)
+
+        alias_strategies: dict[str, list[str]] = {}
+        alias_models: dict[str, list[str]] = {}
+
+        if alias_set:
+            unique_aliases = list(alias_set)
+            placeholders = ", ".join(["?"] * len(unique_aliases))
+            query = f"SELECT study, library_strategy, instrument_model FROM sra_experiments WHERE study IN ({placeholders})"
+            conn = _get_conn(sra_db_file)
+
+            for study, strategy, model in conn.execute(
+                query, unique_aliases
+            ).fetchall():
+                alias_strategies.setdefault(study, []).append(strategy)
+                alias_models.setdefault(study, []).append(model)
+
+        accession_alias_all: dict[str, list[str]] = {}
+
+        if all_accessions:
+            unique_accessions = list(set(all_accessions))
+            placeholders = ", ".join(["?"] * len(unique_accessions))
+            query = f"SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession IN ({placeholders})"
+            conn = _get_conn(unified_db_file)
+
+            for acc, aliases_json in conn.execute(query, unique_accessions).fetchall():
+                aliases_data = json.loads(aliases_json)
+                if aliases_data:
+                    accession_alias_all[acc] = list(dict(aliases_data).values())
+
+        results: list[dict] = []
+        for value, meta in zip(batch, row_meta):
+            organisms = sorted(
+                set[str]().union(
+                    *(sample_organisms.get(s, set[str]()) for s in meta["samples"])
+                )
+            )
+            platforms = sorted(
+                {p for s in meta["samples"] for p in sample_platforms.get(s, [])}
+            )
+
+            library_strategies = (
+                alias_strategies.get(meta["alias"], []) if meta["alias"] else []
+            )
+            instrument_models = (
+                alias_models.get(meta["alias"], []) if meta["alias"] else []
+            )
+
+            alias_all = accession_alias_all.get(meta["accession"], [])
+
+            bioproject_id = next(
+                (
+                    str(v["@target"]).split("/")[-1]
+                    for v in meta["relations"]
+                    if v["@type"] == "BioProject"
+                ),
+                None,
+            )
+
+            modified = dict(value)
+            modified["pubmed_id"] = _convert_to_json(modified["pubmed_id"])
+            modified["samples_ref"] = meta["samples"]
+            modified["series_type"] = _convert_to_json(modified["series_type"])
+            modified["relation"] = [Jsonb(x) for x in meta["relations"]]
+            modified["supplementary_data"] = [Jsonb(x) for x in meta["supp"]]
+            modified["bioproject_id"] = bioproject_id
+            modified["alias"] = meta["alias"]
+            modified["organisms"] = organisms
+            modified["alias_all"] = alias_all
+            modified["library_strategies"] = library_strategies
+            modified["instrument_models"] = instrument_models
+            modified["platforms"] = platforms
+
+            results.append(modified)
+
+        return results
+
+    return modifier
 
 
 def _ensure_list(value):
