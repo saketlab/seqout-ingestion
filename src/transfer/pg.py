@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable, LiteralString, Optional, cast
 
 import psycopg
+import pycountry
 from psycopg.types.json import Jsonb
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -29,10 +30,47 @@ _GEO_SERIES_INSERT_COLS = [
     "bioproject_id",
     "organisms",
     "alias",
-    "alias_all",
+    "countries",
+    "contributors",
+    "departments",
+    "organizations",
+    "countries_iso",
     "library_strategies",
     "instrument_models",
+    "alias_all",
     "platforms",
+]
+_GEO_GEOCODE_COLS = [
+    "organization",
+    "department",
+    "address_line",
+    "address_city",
+    "address_state",
+    "address_zipcode",
+    "address_country",
+    "n_series",
+    "full_address",
+    "address_key",
+    "geo_query",
+    "geo_formatted_address",
+    "geo_place_name",
+    "geo_place_type",
+    "geo_address_type",
+    "geo_longitude",
+    "geo_latitude",
+    "geo_city",
+    "geo_district",
+    "geo_subdistrict",
+    "geo_county",
+    "geo_suburb",
+    "geo_neighbourhood",
+    "geo_state",
+    "geo_postcode",
+    "geo_country",
+    "geo_country_code",
+    "geo_source",
+    "geo_country_mismatch",
+    "geo_error",
 ]
 
 
@@ -53,12 +91,12 @@ def pg_transfer(
         ),
         "geo_samples": (
             geo_db_file,
-            _batch_modifier(_geo_sample_modifier),
+            _geo_sample_batch_modifier,
             None,
             None,
         ),
-        "geo_contributors": (geo_db_file, _batch_modifier(_no_op_modifier), None, None),
-        "geo_platforms": (geo_db_file, _batch_modifier(_no_op_modifier), None, None),
+        "geo_contributors": (geo_db_file, _no_op_batch_modifier, None, None),
+        "geo_platforms": (geo_db_file, _no_op_batch_modifier, None, None),
     }
 
     all_tasks = [
@@ -97,6 +135,8 @@ def pg_transfer(
             f.result()
             outer_pbar.update(1)
 
+    _transfer_geo_geocode(pg_url, geo_db_file, unified_db_file, batch_size)
+
 
 def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str], str]:
     cursor = conn.execute(f"PRAGMA table_info({table_name})")
@@ -106,15 +146,6 @@ def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str
     pk = next(row[1] for row in rows if row[5] == 1)
 
     return col_list, pk
-
-
-def _batch_modifier(
-    row_modifier: Callable[[dict], dict],
-) -> Callable[[list[dict]], list[dict]]:
-    def modifier(batch: list[dict]) -> list[dict]:
-        return [row_modifier(row) for row in batch]
-
-    return modifier
 
 
 def _transfer_helper(
@@ -175,18 +206,17 @@ def _transfer_helper(
                 pbar.update(len(batch))
 
 
-def _no_op_modifier(value: dict) -> dict:
-    return value
+def _no_op_batch_modifier(batch: list[dict]) -> list[dict]:
+    return batch
 
 
-def _geo_sample_modifier(value: dict) -> dict:
-    channels = _ensure_list(_convert_to_json(value["channels"]))
-    supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
-
-    value["channels"] = [Jsonb(x) for x in channels]
-    value["supplementary_data"] = [Jsonb(x) for x in supp]
-
-    return value
+def _geo_sample_batch_modifier(batch: list[dict]) -> list[dict]:
+    for value in batch:
+        channels = _ensure_list(_convert_to_json(value["channels"]))
+        supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
+        value["channels"] = [Jsonb(x) for x in channels]
+        value["supplementary_data"] = [Jsonb(x) for x in supp]
+    return batch
 
 
 def _geo_series_batch_modifier(
@@ -286,6 +316,39 @@ def _geo_series_batch_modifier(
                 if aliases_data:
                     accession_alias_all[acc] = list(dict(aliases_data).values())
 
+        accession_contributors: dict[str, dict[str, list[str]]] = {}
+
+        if all_accessions:
+            unique_accessions = list(set(all_accessions))
+            placeholders = ", ".join(["?"] * len(unique_accessions))
+            query = f"SELECT accession, person, department, organization, address_country FROM geo_contributors WHERE accession IN ({placeholders})"
+            conn = _get_conn(geo_db_file)
+
+            for acc, person, department, organization, country in conn.execute(
+                query, unique_accessions
+            ).fetchall():
+                entry = accession_contributors.setdefault(
+                    acc,
+                    {
+                        "contributors": [],
+                        "departments": [],
+                        "organizations": [],
+                        "countries": [],
+                        "countries_iso": [],
+                    },
+                )
+                if person:
+                    entry["contributors"].append(person)
+                if department:
+                    entry["departments"].append(department)
+                if organization:
+                    entry["organizations"].append(organization)
+                if country:
+                    entry["countries"].append(country)
+                    iso = _normalize_country(country)
+                    if iso:
+                        entry["countries_iso"].append(iso)
+
         results: list[dict] = []
         for value, meta in zip(batch, row_meta):
             organisms = sorted(
@@ -305,6 +368,7 @@ def _geo_series_batch_modifier(
             )
 
             alias_all = accession_alias_all.get(meta["accession"], [])
+            contrib = accession_contributors.get(meta["accession"], {})
 
             bioproject_id = next(
                 (
@@ -324,16 +388,217 @@ def _geo_series_batch_modifier(
             modified["bioproject_id"] = bioproject_id
             modified["alias"] = meta["alias"]
             modified["organisms"] = organisms
+            if meta["alias"] and meta["alias"] not in alias_all:
+                alias_all = [*alias_all, meta["alias"]]
             modified["alias_all"] = alias_all
             modified["library_strategies"] = library_strategies
             modified["instrument_models"] = instrument_models
             modified["platforms"] = platforms
+            modified["countries"] = sorted(set(contrib.get("countries", [])))
+            modified["countries_iso"] = sorted(set(contrib.get("countries_iso", [])))
+            modified["contributors"] = contrib.get("contributors", [])
+            modified["departments"] = contrib.get("departments", [])
+            modified["organizations"] = contrib.get("organizations", [])
 
             results.append(modified)
 
         return results
 
     return modifier
+
+
+def _transfer_geo_geocode(
+    pg_url: str, geo_db_file: Path, unified_db_file: Path | None, batch_size: int
+):
+    with (
+        sqlite3.connect(geo_db_file) as src_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_geo_geocode_address_key ON geo_geocode (address_key)"
+            )
+
+        center_lookup: dict[tuple[str, str], dict] = {}
+        if unified_db_file and unified_db_file.exists():
+            with sqlite3.connect(unified_db_file) as uc_conn:
+                for row in uc_conn.execute(
+                    "SELECT canonical_accession, center_name, place_name, place_type, address_type, longitude, latitude, city, district, subdistrict, county, suburb, neighbourhood, state, postcode, country_code, country, country_mismatch FROM unified_centers"
+                ).fetchall():
+                    (
+                        acc,
+                        name,
+                        place_name,
+                        place_type,
+                        address_type,
+                        lon,
+                        lat,
+                        city,
+                        district,
+                        subdistrict,
+                        county,
+                        suburb,
+                        neighbourhood,
+                        state,
+                        postcode,
+                        country_code,
+                        country,
+                        country_mismatch,
+                    ) = row
+                    center_lookup[(acc, name.strip().lower())] = {
+                        "geo_place_name": place_name,
+                        "geo_place_type": place_type,
+                        "geo_address_type": address_type,
+                        "geo_longitude": float(lon) if lon is not None else None,
+                        "geo_latitude": float(lat) if lat is not None else None,
+                        "geo_city": city,
+                        "geo_district": district,
+                        "geo_subdistrict": subdistrict,
+                        "geo_county": county,
+                        "geo_suburb": suburb,
+                        "geo_neighbourhood": neighbourhood,
+                        "geo_state": state,
+                        "geo_postcode": postcode,
+                        "geo_country_code": country_code,
+                        "geo_country": country,
+                        "geo_country_mismatch": country_mismatch.strip().lower()
+                        in ("true", "1", "yes")
+                        if country_mismatch
+                        else None,
+                    }
+
+        rows = src_conn.execute(
+            "SELECT DISTINCT organization, department, address_line, address_city, address_state, address_zipcode, address_country, accession FROM geo_contributors WHERE organization IS NOT NULL AND organization != ''"
+        ).fetchall()
+
+        groups: dict[str, dict] = {}
+        for org, dept, addr, city, state, zipcode, country, acc in rows:
+            org_s = org or ""
+            dept_s = dept or ""
+            addr_s = addr or ""
+            city_s = city or ""
+            state_s = state or ""
+            country_s = country or ""
+
+            key = f"{org_s}|{dept_s}|{addr_s}|{city_s}|{state_s}|{country_s}"
+
+            if key not in groups:
+                parts = [
+                    p for p in [org_s, dept_s, addr_s, city_s, state_s, country_s] if p
+                ]
+                groups[key] = {
+                    "organization": org_s,
+                    "department": dept_s,
+                    "address_line": addr_s,
+                    "address_city": city_s,
+                    "address_state": state_s,
+                    "address_zipcode": zipcode or "",
+                    "address_country": country_s,
+                    "full_address": ", ".join(parts),
+                    "address_key": key,
+                    "geo_query": ", ".join(parts),
+                    "geo_formatted_address": None,
+                    "geo_place_name": None,
+                    "geo_place_type": None,
+                    "geo_address_type": None,
+                    "geo_longitude": None,
+                    "geo_latitude": None,
+                    "geo_city": None,
+                    "geo_district": None,
+                    "geo_subdistrict": None,
+                    "geo_county": None,
+                    "geo_suburb": None,
+                    "geo_neighbourhood": None,
+                    "geo_state": None,
+                    "geo_postcode": None,
+                    "geo_country": None,
+                    "geo_country_code": None,
+                    "geo_source": None,
+                    "geo_country_mismatch": None,
+                    "geo_error": None,
+                    "accessions": set(),
+                }
+            groups[key]["accessions"].add(acc)
+
+            center = center_lookup.get((acc, org_s.strip().lower()))
+            if center:
+                g = groups[key]
+                for field in (
+                    "geo_place_name",
+                    "geo_place_type",
+                    "geo_address_type",
+                    "geo_longitude",
+                    "geo_latitude",
+                    "geo_city",
+                    "geo_district",
+                    "geo_subdistrict",
+                    "geo_county",
+                    "geo_suburb",
+                    "geo_neighbourhood",
+                    "geo_state",
+                    "geo_postcode",
+                    "geo_country_code",
+                    "geo_country",
+                    "geo_country_mismatch",
+                ):
+                    if center.get(field) is not None and g.get(field) is None:
+                        g[field] = center[field]
+
+                if g["geo_formatted_address"] is None and center.get("geo_place_name"):
+                    g["geo_formatted_address"] = center["geo_place_name"]
+
+                if g["geo_source"] is None:
+                    g["geo_source"] = "unified"
+
+        cols = ", ".join(_GEO_GEOCODE_COLS)
+        placeholders = ", ".join(["%s"] * len(_GEO_GEOCODE_COLS))
+        insert_query = f"INSERT INTO geo_geocode ({cols}) VALUES ({placeholders}) ON CONFLICT (address_key) DO NOTHING"
+
+        batch: list[tuple] = []
+        total = len(groups)
+
+        with tqdm(desc="transferring geo_geocode", total=total, unit="rows") as pbar:
+            for key, data in groups.items():
+                batch.append(
+                    tuple(
+                        data[c] if c != "n_series" else len(data["accessions"])
+                        for c in _GEO_GEOCODE_COLS
+                    )
+                )
+                pbar.update(1)
+
+                if len(batch) >= batch_size:
+                    with pg_conn.cursor() as cur:
+                        cur.executemany(cast(LiteralString, insert_query), batch)
+                    pg_conn.commit()
+                    batch = []
+
+            if batch:
+                with pg_conn.cursor() as cur:
+                    cur.executemany(cast(LiteralString, insert_query), batch)
+                pg_conn.commit()
+
+
+def _normalize_country(name: str) -> str | None:
+    if not name:
+        return None
+
+    s = name.strip()
+
+    try:
+        return pycountry.countries.lookup(s).alpha_3
+    except LookupError:
+        pass
+
+    c = pycountry.countries.get(alpha_3=s.upper())
+    if c:
+        return c.alpha_3
+
+    c = pycountry.countries.get(alpha_2=s.upper())
+    if c:
+        return c.alpha_3
+
+    return s
 
 
 def _ensure_list(value):
