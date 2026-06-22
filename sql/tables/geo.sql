@@ -1,28 +1,15 @@
-CREATE TABLE IF NOT EXISTS geo_contributors (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    accession           TEXT NOT NULL,
-    person              TEXT,
-    department          TEXT,
-    organization        TEXT,
-    address_line        TEXT,
-    address_city        TEXT,
-    address_state       TEXT,
-    address_zipcode     TEXT,
-    address_country     TEXT
-);
-
 CREATE TABLE IF NOT EXISTS geo_series (
     accession            TEXT PRIMARY KEY,
     overall_design       TEXT,
-    pubmed_id            TEXT CHECK (pubmed_id IS NULL OR json_valid(pubmed_id)),
-    relation             TEXT CHECK (relation IS NULL OR json_valid(relation)),
-    samples_ref          TEXT CHECK (samples_ref IS NULL OR json_valid(samples_ref)),
+    summary              TEXT,
+    title                TEXT,
+    pubmed_id            TEXT CHECK json_valid(pubmed_id),
+    samples_ref          TEXT CHECK json_valid(samples_ref),
+    series_type          TEXT CHECK json_valid(series_type),
+    relation             TEXT CHECK json_valid(relation),
+    supplementary_data   TEXT CHECK json_valid(supplementary_data),
     published_at         DATE,
     updated_at           DATE,
-    summary              TEXT,
-    supplementary_data   TEXT CHECK (supplementary_data IS NULL OR json_valid(supplementary_data)),
-    title                TEXT,
-    series_type          TEXT CHECK (series_type IS NULL OR json_valid(series_type)),
     pubmed_id_pysradb    TEXT,
     pubmed_last_checked  DATE
 );
@@ -52,4 +39,17 @@ CREATE TABLE IF NOT EXISTS geo_platforms (
     organism        TEXT,
     manufacturer    TEXT,
     relation        TEXT
+);
+
+CREATE TABLE IF NOT EXISTS geo_contributors (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    accession           TEXT NOT NULL,
+    person              TEXT,
+    department          TEXT,
+    organization        TEXT,
+    address_line        TEXT,
+    address_city        TEXT,
+    address_state       TEXT,
+    address_zipcode     TEXT,
+    address_country     TEXT
 );

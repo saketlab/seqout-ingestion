@@ -1,192 +1,206 @@
 import json
-import logging
-import re
 import sqlite3
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import LiteralString, Optional, cast
+from typing import Callable, LiteralString, Optional, cast
 
 import psycopg
-import results
-import testing.postgresql
-import tqdm
 from psycopg.types.json import Jsonb
-from requests import JSONDecodeError
-from results import db
-from tqdm.contrib.concurrent import thread_map
+from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from helpers import exec_query_from_file
-
-JSON_VALID_PAT = re.compile(r"json_valid\((\w+)\)")
+_GEO_SERIES_SELECT_COLS = [
+    "accession",
+    "overall_design",
+    "summary",
+    "title",
+    "pubmed_id",
+    "samples_ref",
+    "series_type",
+    "relation",
+    "supplementary_data",
+    "published_at",
+    "updated_at",
+    "pubmed_id_pysradb",
+    "pubmed_last_checked",
+]
+_GEO_SERIES_INSERT_COLS = [
+    *_GEO_SERIES_SELECT_COLS,
+    "bioproject_id",
+]
 
 
 def pg_transfer(
-    sra_db_file: Optional[Path],
-    geo_db_file: Optional[Path],
-    ena_db_file: Optional[Path],
-    ae_db_file: Optional[Path],
-    pg_url: str,
-    num_workers: int,
-    batch_size: int,
+    pg_url: str, geo_db_file: Optional[Path], num_workers: int, batch_size: int
 ):
-    db_mapping: dict[str, Path | None] = {
-        "sra": sra_db_file,
-        "geo": geo_db_file,
-        "ena": ena_db_file,
-        "ae": ae_db_file,
+    table_info = {
+        "geo_series": (
+            geo_db_file,
+            _geo_series_modifier,
+            _GEO_SERIES_SELECT_COLS,
+            _GEO_SERIES_INSERT_COLS,
+        ),
+        "geo_samples": (
+            geo_db_file,
+            _geo_sample_modifier,
+            None,
+            None,
+        ),
+        "geo_contributors": (geo_db_file, _no_op_modifier, None, None),
+        "geo_platforms": (geo_db_file, _no_op_modifier, None, None),
     }
-    dbs_to_process = {
-        k: v for k, v in db_mapping.items() if v is not None and Path(v).exists()
-    }
-
-    _perform_db_migration(pg_url, dbs_to_process)
-
-    # {db_tag: [(table_name, [json_col_name, ...]), ...]}
-    db_info: dict[str, list[tuple[str, list[str]]]] = defaultdict(
-        list[tuple[str, list[str]]]
-    )
-
-    for db_tag, db_file in dbs_to_process.items():
-        with sqlite3.Connection(db_file) as conn:
-            rows = conn.execute(
-                "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-            ).fetchall()
-
-            for table_name, sql in rows:
-                match: list[str] = re.findall(JSON_VALID_PAT, sql)
-                db_info[db_tag].append((table_name, match))
 
     all_tasks = [
-        (db_tag, table_info)
-        for db_tag, table_infos in db_info.items()
-        for table_info in table_infos
+        (table_name, sqlite_db_file, modifier, select_cols, insert_cols)
+        for table_name, (
+            sqlite_db_file,
+            modifier,
+            select_cols,
+            insert_cols,
+        ) in table_info.items()
+        if sqlite_db_file is not None and sqlite_db_file.exists()
     ]
 
-    def run_worker(task):
-        db_tag, table_info = task
-        _worker(pg_url, dbs_to_process[db_tag], table_info, batch_size)
-
-    with logging_redirect_tqdm():
-        thread_map(
-            run_worker,
-            all_tasks,
-            max_workers=num_workers,
-            desc="transferring tables",
-            unit="table",
-        )
-
-    with ThreadPoolExecutor(num_workers) as pool, logging_redirect_tqdm():
-        futures = [
-            pool.submit(_worker, pg_url, dbs_to_process[db_tag], table_info, batch_size)
-            for pos, (db_tag, table_info) in enumerate(all_tasks)
-        ]
+    with (
+        ThreadPoolExecutor(max_workers=num_workers) as pool,
+        tqdm(
+            total=len(all_tasks), desc="transferring tables", unit="table"
+        ) as outer_pbar,
+        logging_redirect_tqdm(),
+    ):
+        futures = {
+            pool.submit(
+                _transfer_helper,
+                pg_url,
+                sqlite_db_file,
+                modifier,
+                table_name,
+                batch_size,
+                select_cols,
+                insert_cols,
+            ): table_name
+            for table_name, sqlite_db_file, modifier, select_cols, insert_cols in all_tasks
+        }
 
         for f in as_completed(futures):
             f.result()
+            outer_pbar.update(1)
 
 
-def _perform_db_migration(pg_url: str, dbs_to_process: dict[str, Path]):
-    with (
-        testing.postgresql.Postgresql() as tmp_pg,
-    ):
-        dev_conn = psycopg.connect(tmp_pg.url())
-        for key in dbs_to_process:
-            print(key)
-            pg_setup_file = f"pg/{key}.pg.sql"
-            exec_query_from_file(pg_setup_file, conn=dev_conn)
-        dev_conn.close()
+def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str], str]:
+    cursor = conn.execute(f"PRAGMA table_info({table_name})")
+    rows = cursor.fetchall()
 
-        prod_db: results.database.Database = db(pg_url)
-        dev_db: results.database.Database = db(tmp_pg.url())
-        diff: str | None = prod_db.schemadiff_as_sql(dev_db)
+    col_list = [row[1] for row in rows]
+    pk = next(row[1] for row in rows if row[5] == 1)
 
-        logging.info("running db migration")
-
-        if diff:
-            with prod_db.t() as t:
-                t: results.database.Transaction
-                t.q(diff, fail_on_empty=False)
-            logging.info("migration applied")
-        else:
-            logging.info("already up to date")
+    return col_list, pk
 
 
-def _worker(
+def _transfer_helper(
     pg_url: str,
-    db_file: Path,
-    table_info: tuple[str, list[str]],
+    sqlite_db_file: Path,
+    modifier: Callable[[dict], dict],
+    table_name: str,
     batch_size: int,
+    select_cols: Optional[list[str]] = None,
+    insert_cols: Optional[list[str]] = None,
 ):
-    table_name, json_cols = table_info
+    with (
+        sqlite3.connect(sqlite_db_file) as sqlite_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        sqlite_conn.row_factory = sqlite3.Row
 
-    with sqlite3.Connection(db_file) as sqlite_conn, psycopg.connect(pg_url) as pg_conn:
-        cursor = sqlite_conn.execute(f"SELECT * FROM {table_name} LIMIT 0")
-        cols = [desc[0] for desc in cursor.description]
-        col_list = ", ".join(cols)
-        placeholders = ", ".join(["%s"] * len(cols))
-        insert_sql = f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        if select_cols:
+            col_list = select_cols
+        else:
+            col_list, pk = _get_table_info(sqlite_conn, table_name)
 
-        json_col_idx: dict[str, int] = {}
-        for col in json_cols:
-            try:
-                idx = cols.index(col)
-            except ValueError:
-                logging.warning(
-                    "json col %s not found in table %s, skipping", col, table_name
-                )
-                continue
-            json_col_idx[col] = idx
+        columns = ", ".join(col_list)
+        placeholders = ", ".join(["%s"] * len(col_list))
+        select_query = (
+            f"SELECT {columns} FROM {table_name} LIMIT {batch_size} OFFSET {{offset}}"
+        )
 
+        if insert_cols:
+            col_list = insert_cols
+            columns = ", ".join(col_list)
+            placeholders = ", ".join(["%s"] * len(col_list))
+
+        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
         total = int(
             sqlite_conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
         )
         offset = 0
 
-        pbar = tqdm.tqdm(
-            desc=f"transferring {table_name}",
-            total=total,
-            unit="rows",
-            leave=False,
-        )
-
-        while True:
-            batch = list(
-                sqlite_conn.execute(
-                    f"SELECT {col_list} FROM {table_name} LIMIT {batch_size} OFFSET {offset}"
+        with tqdm(
+            desc=f"transferring {table_name}", total=total, unit="rows", leave=False
+        ) as pbar:
+            while True:
+                batch = sqlite_conn.execute(
+                    select_query.format(offset=offset)
                 ).fetchall()
-            )
+                if not batch:
+                    break
 
-            if not batch:
-                break
+                modified_batch = []
+                for row in batch:
+                    modified = modifier(dict(row))
+                    modified_batch.append(tuple(modified[c] for c in col_list))
 
-            for i, b in enumerate(batch):
-                row = list(b)
-                for col_name, idx in json_col_idx.items():
-                    if row[idx] is None:
-                        continue
-                    try:
-                        parsed = json.loads(row[idx])
+                with pg_conn.cursor() as cur:
+                    cur.executemany(cast(LiteralString, insert_query), modified_batch)
 
-                        if isinstance(parsed, list):
-                            row[idx] = [Jsonb(item) for item in parsed]
-                        else:
-                            row[idx] = Jsonb(parsed)
-                    except (JSONDecodeError, TypeError) as err:
-                        logging.error(
-                            "failed to parse json column %s in %s db: %s",
-                            col_name,
-                            db_file,
-                            err,
-                        )
-                batch[i] = row
+                pg_conn.commit()
+                offset += batch_size
+                pbar.update(len(batch))
 
-            with pg_conn.cursor() as cur:
-                cur.executemany(cast(LiteralString, insert_sql), batch)
-            pg_conn.commit()
 
-            offset += batch_size
-            pbar.update(len(batch))
+def _no_op_modifier(value: dict) -> dict:
+    return value
 
-        pbar.close()
+
+def _geo_sample_modifier(value: dict) -> dict:
+    channels = _ensure_list(_convert_to_json(value["channels"]))
+    supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
+
+    value["channels"] = [Jsonb(x) for x in channels]
+    value["supplementary_data"] = [Jsonb(x) for x in supp]
+
+    return value
+
+
+def _geo_series_modifier(value: dict) -> dict:
+    relations = _ensure_list(_convert_to_json(value["relation"]))
+    samples_ref = _ensure_list(_convert_to_json(value["samples_ref"]))
+    supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
+
+    bioproject_id = next(
+        (
+            str(v["@target"]).split("/")[-1]
+            for v in relations
+            if v["@type"] == "BioProject"
+        ),
+        None,
+    )
+
+    value["pubmed_id"] = _convert_to_json(value["pubmed_id"])
+    value["samples_ref"] = [v["@ref"] for v in samples_ref]
+    value["series_type"] = _convert_to_json(value["series_type"])
+    value["relation"] = [Jsonb(x) for x in relations]
+    value["supplementary_data"] = [Jsonb(x) for x in supp]
+
+    value["bioproject_id"] = bioproject_id
+
+    return value
+
+
+def _ensure_list(value):
+    if isinstance(value, dict):
+        return [value]
+    return value or []
+
+
+def _convert_to_json(value: str):
+    return json.loads(value) if value else None

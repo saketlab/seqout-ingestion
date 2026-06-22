@@ -122,9 +122,6 @@ sc_enrich_detector:
 
 transfer_pg:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer pg \
-        --sra-db-file $(just _latest_db sra) \
-        --geo-db-file $(just _latest_db geo) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
         --pg-url "$PG_URL" \
-        --workers {{ WORKERS }}
+        --geo-db-file $(just _latest_db geo) \
+        --batch-size 500 \
