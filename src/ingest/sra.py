@@ -315,7 +315,9 @@ def _build_accessions_dict(
         col = {name: i for i, name in enumerate(header)}
         for row in reader:
             key = row[col["accession"]]
-            val = row[col["updated_at"]] + "|" + row[col["published_at"]]
+            updated_at = row[col["updated_at"]].split("T")[0]
+            published_at = row[col["published_at"]].split("T")[0]
+            val = updated_at + "|" + published_at
             accessions[key] = val
 
     logging.info("saving accessions dict to pickle")

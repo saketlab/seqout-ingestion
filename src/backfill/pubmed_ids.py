@@ -174,7 +174,7 @@ def _worker(
     is_sra_related = datasource in (Datasource.Sra, Datasource.Ena)
     col_name = "srp_accession" if is_sra_related else "gse_accession"
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     for batch in _chunked(data, batch_size):
         try:

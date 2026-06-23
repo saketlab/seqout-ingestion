@@ -1,6 +1,8 @@
 import json
 import sqlite3
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, LiteralString, Optional, cast
 
@@ -73,42 +75,114 @@ _GEO_GEOCODE_COLS = [
     "geo_error",
 ]
 
+_SRA_STUDIES_SELECT_COLS = [
+    "accession",
+    "alias",
+    "title",
+    "abstract",
+    "submission",
+    "study_type",
+    "published_at",
+    "updated_at",
+    "external_id",
+    "attributes_json",
+    "links",
+    "center_name",
+    "center_project_name",
+    "pubmed_id_pysradb",
+    "pubmed_last_checked",
+]
+_SRA_STUDIES_INSERT_COLS = [
+    *_SRA_STUDIES_SELECT_COLS,
+    "organisms",
+    "bioproject_id",
+    "countries",
+    "library_strategies",
+    "instrument_models",
+    "platforms",
+]
+
+
+@dataclass
+class _TableInfo:
+    sqlite_db_file: Path
+    modifier: Callable[[list[dict]], list[dict]]
+    select_cols: list[str] | None = None
+    insert_cols: list[str] | None = None
+    alternative_table_name: str | None = None
+
 
 def pg_transfer(
     pg_url: str,
     sra_db_file: Path,
     geo_db_file: Path,
-    unified_db_file: Path,
+    unified_metadata_db_file: Path,
+    download_links_db_file: Path,
     num_workers: int,
     batch_size: int,
 ):
     table_info = {
-        "geo_series": (
-            geo_db_file,
-            _geo_series_batch_modifier(sra_db_file, geo_db_file, unified_db_file),
-            _GEO_SERIES_SELECT_COLS,
-            _GEO_SERIES_INSERT_COLS,
+        "geo_series": _TableInfo(
+            sqlite_db_file=geo_db_file,
+            modifier=_geo_series_batch_modifier(
+                sra_db_file, geo_db_file, unified_metadata_db_file
+            ),
+            select_cols=_GEO_SERIES_SELECT_COLS,
+            insert_cols=_GEO_SERIES_INSERT_COLS,
         ),
-        "geo_samples": (
-            geo_db_file,
-            _geo_sample_batch_modifier,
-            None,
-            None,
+        "geo_samples": _TableInfo(
+            sqlite_db_file=geo_db_file,
+            modifier=_geo_sample_batch_modifier,
         ),
-        "geo_contributors": (geo_db_file, _no_op_batch_modifier, None, None),
-        "geo_platforms": (geo_db_file, _no_op_batch_modifier, None, None),
+        "geo_platforms": _TableInfo(
+            sqlite_db_file=geo_db_file,
+            modifier=_no_op_batch_modifier,
+        ),
+        "geo_contributors": _TableInfo(
+            sqlite_db_file=geo_db_file,
+            modifier=_no_op_batch_modifier,
+        ),
+        "sra_studies": _TableInfo(
+            sqlite_db_file=sra_db_file,
+            modifier=_sra_studies_batch_modifier(sra_db_file, unified_metadata_db_file),
+            select_cols=_SRA_STUDIES_SELECT_COLS,
+            insert_cols=_SRA_STUDIES_INSERT_COLS,
+        ),
+        "sra_submissions": _TableInfo(
+            sqlite_db_file=sra_db_file,
+            modifier=_no_op_batch_modifier,
+        ),
+        "sra_experiments": _TableInfo(
+            sqlite_db_file=sra_db_file,
+            modifier=_sra_experiments_batch_modifier,
+        ),
+        "sra_samples": _TableInfo(
+            sqlite_db_file=sra_db_file,
+            modifier=_sra_samples_batch_modifier,
+        ),
+        "sra_runs": _TableInfo(
+            sqlite_db_file=sra_db_file, modifier=_no_op_batch_modifier
+        ),
+        "run_download_links": _TableInfo(
+            sqlite_db_file=download_links_db_file,
+            modifier=_sra_run_download_links_modifier,
+            alternative_table_name="sra_run_download_links",
+        ),
     }
 
-    all_tasks = [
-        (table_name, sqlite_db_file, modifier, select_cols, insert_cols)
-        for table_name, (
-            sqlite_db_file,
-            modifier,
-            select_cols,
-            insert_cols,
-        ) in table_info.items()
-        if sqlite_db_file is not None and sqlite_db_file.exists()
-    ]
+    all_tasks: list[tuple] = []
+    for table_name, info in table_info.items():
+        if info.sqlite_db_file is not None and info.sqlite_db_file.exists():
+            all_tasks.append(
+                (
+                    table_name,
+                    info.sqlite_db_file,
+                    info.modifier,
+                    info.select_cols,
+                    info.insert_cols,
+                    info.alternative_table_name,
+                )
+            )
 
     with (
         ThreadPoolExecutor(max_workers=num_workers) as pool,
@@ -121,21 +195,23 @@ def pg_transfer(
             pool.submit(
                 _transfer_helper,
                 pg_url,
-                sqlite_db_file,
-                modifier,
+                info.sqlite_db_file,
+                info.modifier,
                 table_name,
                 batch_size,
-                select_cols,
-                insert_cols,
+                info.select_cols,
+                info.insert_cols,
+                info.alternative_table_name,
             ): table_name
-            for table_name, sqlite_db_file, modifier, select_cols, insert_cols in all_tasks
+            for table_name, info in table_info.items()
+            if info.sqlite_db_file is not None and info.sqlite_db_file.exists()
         }
 
         for f in as_completed(futures):
             f.result()
             outer_pbar.update(1)
 
-    _transfer_geo_geocode(pg_url, geo_db_file, unified_db_file, batch_size)
+    _transfer_geo_geocode(pg_url, geo_db_file, unified_metadata_db_file, batch_size)
 
 
 def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str], str]:
@@ -156,7 +232,10 @@ def _transfer_helper(
     batch_size: int,
     select_cols: Optional[list[str]] = None,
     insert_cols: Optional[list[str]] = None,
+    alternative_table_name: str | None = None,
 ):
+    pg_table_name = alternative_table_name or table_name
+
     with (
         sqlite3.connect(sqlite_db_file) as sqlite_conn,
         psycopg.connect(pg_url) as pg_conn,
@@ -179,7 +258,7 @@ def _transfer_helper(
             columns = ", ".join(col_list)
             placeholders = ", ".join(["%s"] * len(col_list))
 
-        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        insert_query = f"INSERT INTO {pg_table_name} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
         total = int(
             sqlite_conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
         )
@@ -222,7 +301,7 @@ def _geo_sample_batch_modifier(batch: list[dict]) -> list[dict]:
 def _geo_series_batch_modifier(
     sra_db_file: Path,
     geo_db_file: Path,
-    unified_db_file: Path,
+    unified_metadata_db_file: Path,
 ) -> Callable[[list[dict]], list[dict]]:
     def modifier(batch: list[dict]) -> list[dict]:
         _conn_cache: dict[str, sqlite3.Connection] = {}
@@ -269,8 +348,8 @@ def _geo_series_batch_modifier(
                 alias_set.add(alias)
             all_accessions.append(accession)
 
-        sample_organisms: dict[str, set[str]] = {}
-        sample_platforms: dict[str, list[str]] = {}
+        sample_organisms: dict[str, set[str]] = defaultdict(set[str])
+        sample_platforms: dict[str, set[str]] = defaultdict(set[str])
 
         if all_samples:
             unique_samples = list(set(all_samples))
@@ -283,13 +362,11 @@ def _geo_series_batch_modifier(
             ).fetchall():
                 org_parsed = json.loads(org_json)
                 for item in org_parsed:
-                    sample_organisms.setdefault(sample_acc, set[str]()).add(
-                        item["#text"]
-                    )
-                sample_platforms.setdefault(sample_acc, []).append(platform)
+                    sample_organisms[sample_acc].add(item["#text"])
+                sample_platforms[sample_acc].add(platform)
 
-        alias_strategies: dict[str, list[str]] = {}
-        alias_models: dict[str, list[str]] = {}
+        alias_strategies: dict[str, set[str]] = defaultdict(set[str])
+        alias_models: dict[str, set[str]] = defaultdict(set[str])
 
         if alias_set:
             unique_aliases = list(alias_set)
@@ -300,8 +377,10 @@ def _geo_series_batch_modifier(
             for study, strategy, model in conn.execute(
                 query, unique_aliases
             ).fetchall():
-                alias_strategies.setdefault(study, []).append(strategy)
-                alias_models.setdefault(study, []).append(model)
+                if strategy:
+                    alias_strategies[study].add(strategy)
+                if model:
+                    alias_models[study].add(model)
 
         accession_alias_all: dict[str, list[str]] = {}
 
@@ -309,7 +388,7 @@ def _geo_series_batch_modifier(
             unique_accessions = list(set(all_accessions))
             placeholders = ", ".join(["?"] * len(unique_accessions))
             query = f"SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession IN ({placeholders})"
-            conn = _get_conn(unified_db_file)
+            conn = _get_conn(unified_metadata_db_file)
 
             for acc, aliases_json in conn.execute(query, unique_accessions).fetchall():
                 aliases_data = json.loads(aliases_json)
@@ -350,6 +429,7 @@ def _geo_series_batch_modifier(
                         entry["countries_iso"].append(iso)
 
         results: list[dict] = []
+
         for value, meta in zip(batch, row_meta):
             organisms = sorted(
                 set[str]().union(
@@ -357,14 +437,18 @@ def _geo_series_batch_modifier(
                 )
             )
             platforms = sorted(
-                {p for s in meta["samples"] for p in sample_platforms.get(s, [])}
+                {
+                    p
+                    for s in meta["samples"]
+                    for p in sample_platforms.get(s, set[str]())
+                }
             )
 
-            library_strategies = (
-                alias_strategies.get(meta["alias"], []) if meta["alias"] else []
+            library_strategies = sorted(
+                alias_strategies.get(meta["alias"], set[str]()) if meta["alias"] else []
             )
-            instrument_models = (
-                alias_models.get(meta["alias"], []) if meta["alias"] else []
+            instrument_models = sorted(
+                alias_models.get(meta["alias"], set[str]()) if meta["alias"] else []
             )
 
             alias_all = accession_alias_all.get(meta["accession"], [])
@@ -407,8 +491,143 @@ def _geo_series_batch_modifier(
     return modifier
 
 
+def _sra_experiments_batch_modifier(batch: list[dict]) -> list[dict]:
+    for value in batch:
+        value["samples"] = _ensure_list(_convert_to_json(value["samples"]))
+    return batch
+
+
+def _sra_samples_batch_modifier(batch: list[dict]) -> list[dict]:
+    for value in batch:
+        value["external_id"] = Jsonb(_convert_to_json(value["external_id"]))
+        value["attributes_json"] = Jsonb(_convert_to_json(value["attributes_json"]))
+        value["links"] = Jsonb(_convert_to_json(value["links"]))
+    return batch
+
+
+def _sra_run_download_links_modifier(batch: list[dict]) -> list[dict]:
+    for value in batch:
+        value["ncbi_files"] = Jsonb(_convert_to_json(value["ncbi_files"]))
+    return batch
+
+
+def _sra_studies_batch_modifier(
+    sra_db_file: Path,
+    unified_metadata_db_file: Path,
+) -> Callable[[list[dict]], list[dict]]:
+    def modifier(batch: list[dict]) -> list[dict]:
+        _conn_cache: dict[str, sqlite3.Connection] = {}
+
+        def _get_conn(path: Path) -> sqlite3.Connection:
+            key = str(path)
+            if key not in _conn_cache:
+                _conn_cache[key] = sqlite3.connect(path)
+            return _conn_cache[key]
+
+        row_meta: list[dict] = []
+        all_submissions: set[str] = set()
+        all_accessions: list[str] = []
+
+        for value in batch:
+            accession = value["accession"]
+            submission = value["submission"]
+            external_id = _convert_to_json(value["external_id"])
+
+            row_meta.append(
+                {
+                    "accession": accession,
+                    "submission": submission,
+                    "external_id": external_id,
+                }
+            )
+
+            if submission:
+                all_submissions.add(submission)
+            all_accessions.append(accession)
+
+        submission_organisms: dict[str, set[str]] = {}
+        if all_submissions:
+            unique_submissions = list(all_submissions)
+            placeholders = ", ".join(["?"] * len(unique_submissions))
+            query = f"SELECT submission, scientific_name FROM sra_samples WHERE submission IN ({placeholders}) AND scientific_name IS NOT NULL"
+            conn = _get_conn(sra_db_file)
+
+            for sub, org in conn.execute(query, unique_submissions).fetchall():
+                submission_organisms.setdefault(sub, set[str]()).add(org)
+
+        submission_strategies: dict[str, set[str]] = defaultdict(set[str])
+        submission_models: dict[str, set[str]] = defaultdict(set[str])
+        submission_platforms: dict[str, set[str]] = defaultdict(set[str])
+
+        if all_submissions:
+            unique_submissions = list(all_submissions)
+            placeholders = ", ".join(["?"] * len(unique_submissions))
+            query = f"SELECT submission, library_strategy, instrument_model, platform FROM sra_experiments WHERE submission IN ({placeholders})"
+            conn = _get_conn(sra_db_file)
+
+            for sub, strategy, model, platform in conn.execute(
+                query, unique_submissions
+            ).fetchall():
+                if strategy:
+                    submission_strategies[sub].add(strategy)
+                if model:
+                    submission_models[sub].add(model)
+                if platform:
+                    submission_platforms[sub].add(platform)
+
+        accession_countries: dict[str, set[str]] = {}
+
+        if all_accessions:
+            unique_accessions = list(set(all_accessions))
+            placeholders = ", ".join(["?"] * len(unique_accessions))
+            query = f"SELECT canonical_accession, country FROM unified_centers WHERE canonical_accession IN ({placeholders}) AND country IS NOT NULL"
+            conn = _get_conn(unified_metadata_db_file)
+
+            for acc, country in conn.execute(query, unique_accessions).fetchall():
+                accession_countries.setdefault(acc, set[str]()).add(country)
+
+        results: list[dict] = []
+
+        for value, meta in zip(batch, row_meta):
+            organisms = sorted(submission_organisms.get(meta["submission"], set[str]()))
+            library_strategies = sorted(
+                submission_strategies.get(meta["submission"], set[str]())
+            )
+            instrument_models = sorted(
+                submission_models.get(meta["submission"], set[str]())
+            )
+            platforms = sorted(submission_platforms.get(meta["submission"], set[str]()))
+            countries = sorted(accession_countries.get(meta["accession"], set[str]()))
+
+            bioproject_id = None
+            if meta["external_id"] and isinstance(meta["external_id"], dict):
+                bioproject_id = meta["external_id"].get("BioProject")
+
+            modified = dict(value)
+            modified["external_id"] = Jsonb(meta["external_id"])
+            modified["attributes_json"] = Jsonb(
+                _convert_to_json(value["attributes_json"])
+            )
+            modified["links"] = Jsonb(_convert_to_json(value["links"]))
+            modified["bioproject_id"] = bioproject_id
+            modified["organisms"] = organisms
+            modified["countries"] = countries
+            modified["library_strategies"] = library_strategies
+            modified["instrument_models"] = instrument_models
+            modified["platforms"] = platforms
+
+            results.append(modified)
+
+        return results
+
+    return modifier
+
+
 def _transfer_geo_geocode(
-    pg_url: str, geo_db_file: Path, unified_db_file: Path | None, batch_size: int
+    pg_url: str,
+    geo_db_file: Path,
+    unified_metadata_db_file: Path | None,
+    batch_size: int,
 ):
     with (
         sqlite3.connect(geo_db_file) as src_conn,
@@ -420,8 +639,8 @@ def _transfer_geo_geocode(
             )
 
         center_lookup: dict[tuple[str, str], dict] = {}
-        if unified_db_file and unified_db_file.exists():
-            with sqlite3.connect(unified_db_file) as uc_conn:
+        if unified_metadata_db_file and unified_metadata_db_file.exists():
+            with sqlite3.connect(unified_metadata_db_file) as uc_conn:
                 for row in uc_conn.execute(
                     "SELECT canonical_accession, center_name, place_name, place_type, address_type, longitude, latitude, city, district, subdistrict, county, suburb, neighbourhood, state, postcode, country_code, country, country_mismatch FROM unified_centers"
                 ).fetchall():

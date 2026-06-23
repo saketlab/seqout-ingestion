@@ -46,17 +46,17 @@ CREATE TABLE IF NOT EXISTS sra_runs (
 CREATE TABLE IF NOT EXISTS sra_studies (
     accession           TEXT PRIMARY KEY,
     alias               TEXT,
-    center_name         TEXT,
-    abstract            TEXT,
     title               TEXT,
-    external_id         TEXT CHECK (json_valid(external_id)),
+    abstract            TEXT,
+    submission          TEXT,
     study_type          TEXT,
+    published_at        DATE,
+    updated_at          DATE
+    external_id         TEXT CHECK (json_valid(external_id)),
     attributes_json     TEXT CHECK (json_valid(attributes_json)),
     links               TEXT CHECK (json_valid(links)),
     center_project_name TEXT,
-    submission          TEXT,
-    published_at        DATE,
+    center_name         TEXT,
     pubmed_id_pysradb   TEXT,
     pubmed_last_checked DATE,
-    updated_at          DATE
 );

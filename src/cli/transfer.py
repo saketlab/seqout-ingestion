@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -14,7 +13,8 @@ def pg(
     sra_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
     unified_metadata_db_file: Path = typer.Option(...),
-    num_workers: int = typer.Option(4),
+    download_links_db_file: Path = typer.Option(...),
+    num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
 ):
     pg_transfer(
@@ -22,6 +22,7 @@ def pg(
         sra_db_file,
         geo_db_file,
         unified_metadata_db_file,
+        download_links_db_file,
         num_workers,
         batch_size,
     )
