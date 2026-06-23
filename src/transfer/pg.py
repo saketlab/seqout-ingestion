@@ -1279,7 +1279,10 @@ def _transfer_cross_refs(
                 ("cross_ref_pubmed", "accession, pubmed_id, source"),
             ]:
                 cur.execute(
-                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_pk ON {table} ({cols})"
+                    cast(
+                        LiteralString,
+                        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_pk ON {table} ({cols})",
+                    )
                 )
 
         source_table_map = {
