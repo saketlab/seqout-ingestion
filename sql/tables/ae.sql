@@ -1,7 +1,6 @@
 CREATE TABLE IF NOT EXISTS arrayexpress_experiments (
     accession                   TEXT PRIMARY KEY,
     title                       TEXT,
-    organisms                   TEXT CHECK (organisms IS NULL or json_valid(organisms)),
     organism                    TEXT,
     description                 TEXT,
     study_type                  TEXT,

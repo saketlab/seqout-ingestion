@@ -14,6 +14,7 @@ def pg(
     geo_db_file: Path = typer.Option(...),
     unified_metadata_db_file: Path = typer.Option(...),
     download_links_db_file: Path = typer.Option(...),
+    ae_db_file: Path = typer.Option(...),
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
 ):
@@ -23,6 +24,7 @@ def pg(
         geo_db_file,
         unified_metadata_db_file,
         download_links_db_file,
+        ae_db_file,
         num_workers,
         batch_size,
     )

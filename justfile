@@ -137,6 +137,7 @@ transfer_pg:
         --pg-url "$PG_URL" \
         --sra-db-file $(just _latest_db sra) \
         --geo-db-file $(just _latest_db geo) \
+        --ae-db-file $(just _latest_db ae) \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
         --download-links-db-file {{ DOWNLOAD_LINKS_DB }} \
         --batch-size {{ BATCH_SIZE }} \

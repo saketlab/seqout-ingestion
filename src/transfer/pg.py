@@ -142,6 +142,48 @@ _SRA_GEOCODE_COLS = [
     "multiple_institutes",
 ]
 
+_AE_EXPERIMENTS_SELECT_COLS = [
+    "accession",
+    "title",
+    "organism",
+    "description",
+    "study_type",
+    "release_date",
+    "submission_date",
+    "experimental_factors",
+    "experimental_factor_types",
+    "contact_name",
+    "contact_email",
+    "contact_affiliation",
+    "pubmed_id",
+    "pubmed_id_pysradb",
+    "pubmed_last_checked",
+    "protocol_names",
+    "protocol_types",
+    "attributes_json",
+    "publication_title",
+    "publication_authors",
+    "publication_doi",
+    "external_links",
+    "processed_data_files",
+    "experimental_factors_detail",
+    "authors",
+    "organizations",
+    "protocols_description",
+    "assay_count",
+    "technology",
+    "assay_by_molecule",
+    "minseqe_score",
+]
+_AE_EXPERIMENTS_INSERT_COLS = [
+    *_AE_EXPERIMENTS_SELECT_COLS,
+    "organisms",
+    "organizations_text",
+    "authors_text",
+    "alias",
+    "countries",
+]
+
 
 type _Modifier = Callable[[list[dict]], list[dict]]
 
@@ -161,6 +203,7 @@ def pg_transfer(
     geo_db_file: Path,
     unified_metadata_db_file: Path,
     download_links_db_file: Path,
+    ae_db_file: Path,
     num_workers: int,
     batch_size: int,
 ):
@@ -210,6 +253,16 @@ def pg_transfer(
             sqlite_db_file=download_links_db_file,
             modifier=_sra_run_download_links_modifier,
             alternative_table_name="sra_run_download_links",
+        ),
+        "arrayexpress_experiments": _TableInfo(
+            sqlite_db_file=ae_db_file,
+            modifier=_arrayexpress_experiments_batch_modifier(unified_metadata_db_file),
+            select_cols=_AE_EXPERIMENTS_SELECT_COLS,
+            insert_cols=_AE_EXPERIMENTS_INSERT_COLS,
+        ),
+        "arrayexpress_samples": _TableInfo(
+            sqlite_db_file=ae_db_file,
+            modifier=_arrayexpress_samples_batch_modifier,
         ),
     }
 
@@ -387,13 +440,7 @@ def _geo_series_batch_modifier(
     unified_metadata_db_file: Path,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
-        _conn_cache: dict[str, sqlite3.Connection] = {}
-
-        def _get_conn(path: Path) -> sqlite3.Connection:
-            key = str(path)
-            if key not in _conn_cache:
-                _conn_cache[key] = sqlite3.connect(path)
-            return _conn_cache[key]
+        _get_conn = _make_conn_cache()
 
         row_meta: list[dict] = []
         all_samples: list[str] = []
@@ -588,6 +635,12 @@ def _sra_samples_batch_modifier(batch: list[dict]) -> list[dict]:
     return batch
 
 
+def _arrayexpress_samples_batch_modifier(batch: list[dict]) -> list[dict]:
+    for value in batch:
+        value["attributes_json"] = Jsonb(_convert_to_json(value["attributes_json"]))
+    return batch
+
+
 def _sra_run_download_links_modifier(batch: list[dict]) -> list[dict]:
     for value in batch:
         value["ncbi_files"] = Jsonb(_convert_to_json(value["ncbi_files"]))
@@ -599,13 +652,7 @@ def _sra_studies_batch_modifier(
     unified_metadata_db_file: Path,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
-        _conn_cache: dict[str, sqlite3.Connection] = {}
-
-        def _get_conn(path: Path) -> sqlite3.Connection:
-            key = str(path)
-            if key not in _conn_cache:
-                _conn_cache[key] = sqlite3.connect(path)
-            return _conn_cache[key]
+        _get_conn = _make_conn_cache()
 
         row_meta: list[dict] = []
         all_submissions: set[str] = set()
@@ -698,6 +745,91 @@ def _sra_studies_batch_modifier(
             modified["library_strategies"] = library_strategies
             modified["instrument_models"] = instrument_models
             modified["platforms"] = platforms
+
+            results.append(modified)
+
+        return results
+
+    return modifier
+
+
+def _arrayexpress_experiments_batch_modifier(
+    unified_metadata_db_file: Path,
+) -> _Modifier:
+    def modifier(batch: list[dict]) -> list[dict]:
+        _get_conn = _make_conn_cache()
+
+        all_accessions = [v["accession"] for v in batch]
+        accession_countries: dict[str, set[str]] = {}
+
+        if all_accessions:
+            unique_accessions = list(set(all_accessions))
+            placeholders = ", ".join(["?"] * len(unique_accessions))
+            query = f"SELECT canonical_accession, country FROM unified_centers WHERE canonical_accession IN ({placeholders}) AND country IS NOT NULL"
+            conn = _get_conn(unified_metadata_db_file)
+            for acc, country in conn.execute(query, unique_accessions).fetchall():
+                accession_countries.setdefault(acc, set[str]()).add(country)
+
+        results: list[dict] = []
+        for value in batch:
+            modified = dict(value)
+
+            modified["organisms"] = (
+                [modified["organism"]] if modified.get("organism") else []
+            )
+
+            orgs = _convert_to_json(value.get("organizations"))
+            if orgs and isinstance(orgs, list):
+                modified["organizations_text"] = " ".join(
+                    o.get("name", "") for o in orgs if o.get("name")
+                )
+            else:
+                modified["organizations_text"] = None
+
+            authors_raw = _convert_to_json(value.get("authors"))
+            if authors_raw and isinstance(authors_raw, list):
+                modified["authors_text"] = " ".join(str(a) for a in authors_raw if a)
+            else:
+                modified["authors_text"] = None
+
+            modified["countries"] = sorted(
+                accession_countries.get(value["accession"], set[str]())
+            )
+
+            attrs = _convert_to_json(value["attributes_json"])
+            modified["alias"] = (
+                attrs.get("Comment[SecondaryAccession]")
+                if isinstance(attrs, dict)
+                else None
+            )
+
+            modified["experimental_factors"] = _ensure_list(
+                _convert_to_json(value["experimental_factors"])
+            )
+            modified["experimental_factor_types"] = _ensure_list(
+                _convert_to_json(value["experimental_factor_types"])
+            )
+            modified["protocol_names"] = _ensure_list(
+                _convert_to_json(value["protocol_names"])
+            )
+            modified["protocol_types"] = _ensure_list(
+                _convert_to_json(value["protocol_types"])
+            )
+            modified["attributes_json"] = Jsonb(
+                _convert_to_json(value["attributes_json"])
+            )
+            modified["external_links"] = Jsonb(
+                _convert_to_json(value["external_links"])
+            )
+            modified["processed_data_files"] = Jsonb(
+                _convert_to_json(value["processed_data_files"])
+            )
+            modified["experimental_factors_detail"] = Jsonb(
+                _convert_to_json(value["experimental_factors_detail"])
+            )
+            modified["minseqe_score"] = Jsonb(_convert_to_json(value["minseqe_score"]))
+            modified["authors"] = _ensure_list(_convert_to_json(value["authors"]))
+            modified["organizations"] = Jsonb(_convert_to_json(value["organizations"]))
 
             results.append(modified)
 
@@ -1012,11 +1144,23 @@ def _normalize_country(name: str) -> str | None:
     return s
 
 
+def _make_conn_cache() -> Callable[[Path], sqlite3.Connection]:
+    _conn_cache: dict[str, sqlite3.Connection] = {}
+
+    def _get_conn(path: Path) -> sqlite3.Connection:
+        key = str(path)
+        if key not in _conn_cache:
+            _conn_cache[key] = sqlite3.connect(path)
+        return _conn_cache[key]
+
+    return _get_conn
+
+
 def _ensure_list(value):
     if isinstance(value, dict):
         return [value]
     return value or []
 
 
-def _convert_to_json(value: str):
+def _convert_to_json(value: str | None):
     return json.loads(value) if value else None
