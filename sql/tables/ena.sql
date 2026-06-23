@@ -33,7 +33,6 @@ CREATE TABLE IF NOT EXISTS ena_studies (
 
 CREATE TABLE IF NOT EXISTS ena_experiments (
     run_accession               TEXT PRIMARY KEY,
-    run_alias                   TEXT,
     experiment_accession        TEXT NOT NULL,
     sample_accession            TEXT,
     study_accession             TEXT NOT NULL,
@@ -61,6 +60,7 @@ CREATE TABLE IF NOT EXISTS ena_experiments (
     dev_stage                   TEXT,
     base_count                  INTEGER,
     read_count                  INTEGER
+    run_alias                   TEXT,
 );
 
 CREATE TABLE IF NOT EXISTS ena_samples (

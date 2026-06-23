@@ -13,177 +13,22 @@ from psycopg.types.json import Jsonb
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-_GEO_SERIES_SELECT_COLS = [
-    "accession",
-    "overall_design",
-    "summary",
-    "title",
-    "pubmed_id",
-    "samples_ref",
-    "series_type",
-    "relation",
-    "supplementary_data",
-    "published_at",
-    "updated_at",
-    "pubmed_id_pysradb",
-    "pubmed_last_checked",
-]
-_GEO_SERIES_INSERT_COLS = [
-    *_GEO_SERIES_SELECT_COLS,
-    "bioproject_id",
-    "organisms",
-    "alias",
-    "countries",
-    "contributors",
-    "departments",
-    "organizations",
-    "countries_iso",
-    "library_strategies",
-    "instrument_models",
-    "alias_all",
-    "platforms",
-]
-_GEO_GEOCODE_NONE_FIELDS = [
-    "geo_formatted_address",
-    "geo_place_name",
-    "geo_place_type",
-    "geo_address_type",
-    "geo_longitude",
-    "geo_latitude",
-    "geo_city",
-    "geo_district",
-    "geo_subdistrict",
-    "geo_county",
-    "geo_suburb",
-    "geo_neighbourhood",
-    "geo_state",
-    "geo_postcode",
-    "geo_country",
-    "geo_country_code",
-    "geo_source",
-    "geo_country_mismatch",
-    "geo_error",
-]
-_GEO_GEOCODE_COLS = [
-    "organization",
-    "department",
-    "address_line",
-    "address_city",
-    "address_state",
-    "address_zipcode",
-    "address_country",
-    "n_series",
-    "full_address",
-    "address_key",
-    "geo_query",
-    *_GEO_GEOCODE_NONE_FIELDS,
-]
-
-
-_SRA_STUDIES_SELECT_COLS = [
-    "accession",
-    "alias",
-    "title",
-    "abstract",
-    "submission",
-    "study_type",
-    "published_at",
-    "updated_at",
-    "external_id",
-    "attributes_json",
-    "links",
-    "center_name",
-    "center_project_name",
-    "pubmed_id_pysradb",
-    "pubmed_last_checked",
-]
-_SRA_STUDIES_INSERT_COLS = [
-    *_SRA_STUDIES_SELECT_COLS,
-    "organisms",
-    "bioproject_id",
-    "countries",
-    "library_strategies",
-    "instrument_models",
-    "platforms",
-]
-_SRA_GEOCODE_SOURCE_FIELDS = [
-    "place_name",
-    "place_type",
-    "short_label",
-    "address_type",
-    "osm_id",
-    "osm_type",
-    "place_id",
-    "longitude",
-    "latitude",
-    "city",
-    "district",
-    "subdistrict",
-    "county",
-    "suburb",
-    "neighbourhood",
-    "state",
-    "state_district",
-    "territory",
-    "metro_area",
-    "postcode",
-    "country_code",
-    "country",
-    "country_mismatch",
-]
-_SRA_GEOCODE_COLS = [
-    "center_name",
-    "original_country",
-    "formatted_address",
-    "official_address",
-    *_SRA_GEOCODE_SOURCE_FIELDS,
-    "source",
-    "error",
-    "multiple_institutes",
-]
-
-_AE_EXPERIMENTS_SELECT_COLS = [
-    "accession",
-    "title",
-    "organism",
-    "description",
-    "study_type",
-    "release_date",
-    "submission_date",
-    "experimental_factors",
-    "experimental_factor_types",
-    "contact_name",
-    "contact_email",
-    "contact_affiliation",
-    "pubmed_id",
-    "pubmed_id_pysradb",
-    "pubmed_last_checked",
-    "protocol_names",
-    "protocol_types",
-    "attributes_json",
-    "publication_title",
-    "publication_authors",
-    "publication_doi",
-    "external_links",
-    "processed_data_files",
-    "experimental_factors_detail",
-    "authors",
-    "organizations",
-    "protocols_description",
-    "assay_count",
-    "technology",
-    "assay_by_molecule",
-    "minseqe_score",
-]
-_AE_EXPERIMENTS_INSERT_COLS = [
-    *_AE_EXPERIMENTS_SELECT_COLS,
-    "organisms",
-    "organizations_text",
-    "authors_text",
-    "alias",
-    "countries",
-]
-
+from transfer.pg_fields import (
+    _AE_CENTER_GEO_FIELDS,
+    _AE_EXPERIMENTS_INSERT_COLS,
+    _AE_EXPERIMENTS_SELECT_COLS,
+    _AE_GEOCODE_COLS,
+    _AE_GEOCODE_NONE_FIELDS,
+    _GEO_CENTER_GEO_FIELDS,
+    _GEO_GEOCODE_COLS,
+    _GEO_GEOCODE_NONE_FIELDS,
+    _GEO_SERIES_INSERT_COLS,
+    _GEO_SERIES_SELECT_COLS,
+    _SRA_GEOCODE_COLS,
+    _SRA_GEOCODE_SOURCE_FIELDS,
+    _SRA_STUDIES_INSERT_COLS,
+    _SRA_STUDIES_SELECT_COLS,
+)
 
 type _Modifier = Callable[[list[dict]], list[dict]]
 
@@ -201,9 +46,10 @@ def pg_transfer(
     pg_url: str,
     sra_db_file: Path,
     geo_db_file: Path,
+    ena_db_file: Path,
+    ae_db_file: Path,
     unified_metadata_db_file: Path,
     download_links_db_file: Path,
-    ae_db_file: Path,
     num_workers: int,
     batch_size: int,
 ):
@@ -254,6 +100,18 @@ def pg_transfer(
             modifier=_sra_run_download_links_modifier,
             alternative_table_name="sra_run_download_links",
         ),
+        "ena_experiments": _TableInfo(
+            sqlite_db_file=ena_db_file,
+            modifier=_no_op_batch_modifier,
+        ),
+        "ena_studies": _TableInfo(
+            sqlite_db_file=ena_db_file,
+            modifier=_no_op_batch_modifier,
+        ),
+        "ena_samples": _TableInfo(
+            sqlite_db_file=ena_db_file,
+            modifier=_no_op_batch_modifier,
+        ),
         "arrayexpress_experiments": _TableInfo(
             sqlite_db_file=ae_db_file,
             modifier=_arrayexpress_experiments_batch_modifier(unified_metadata_db_file),
@@ -298,6 +156,13 @@ def pg_transfer(
             "sra_geocode",
             _transfer_sra_geocode,
             (pg_url, sra_db_file, unified_metadata_db_file, batch_size),
+        )
+    )
+    all_tasks.append(
+        (
+            "ae_geocode",
+            _transfer_ae_geocode,
+            (pg_url, ae_db_file, unified_metadata_db_file, batch_size),
         )
     )
 
@@ -981,52 +846,15 @@ def _transfer_geo_geocode(
 
             center = center_lookup.get((acc, org_s.strip().lower()))
             if center:
-                g = groups[key]
-                for src_field, dst_field in (
-                    ("place_name", "geo_place_name"),
-                    ("place_type", "geo_place_type"),
-                    ("address_type", "geo_address_type"),
-                    ("longitude", "geo_longitude"),
-                    ("latitude", "geo_latitude"),
-                    ("city", "geo_city"),
-                    ("district", "geo_district"),
-                    ("subdistrict", "geo_subdistrict"),
-                    ("county", "geo_county"),
-                    ("suburb", "geo_suburb"),
-                    ("neighbourhood", "geo_neighbourhood"),
-                    ("state", "geo_state"),
-                    ("postcode", "geo_postcode"),
-                    ("country_code", "geo_country_code"),
-                    ("country", "geo_country"),
-                    ("country_mismatch", "geo_country_mismatch"),
-                ):
-                    if center.get(src_field) is not None and g.get(dst_field) is None:
-                        g[dst_field] = center[src_field]
+                _apply_center_geo(groups[key], center, _GEO_CENTER_GEO_FIELDS)
 
-                if g["geo_formatted_address"] is None and center.get("place_name"):
-                    g["geo_formatted_address"] = center["place_name"]
-
-                if g["geo_source"] is None:
-                    g["geo_source"] = "unified"
-
-        cols = ", ".join(_GEO_GEOCODE_COLS)
-        placeholders = ", ".join(["%s"] * len(_GEO_GEOCODE_COLS))
-        insert_query = f"INSERT INTO geo_geocode ({cols}) VALUES ({placeholders}) ON CONFLICT (address_key) DO NOTHING"
-
-        _execute_batch_inserts(
+        _insert_geocode_batches(
             pg_conn,
-            insert_query,
-            (
-                tuple(
-                    d[c] if c != "n_series" else len(d["accessions"])
-                    for c in _GEO_GEOCODE_COLS
-                )
-                for d in groups.values()
-            ),
+            "geo_geocode",
+            _GEO_GEOCODE_COLS,
+            groups,
             batch_size,
-            "  geo_geocode",
-            total=len(groups),
-            position=1,
+            count_col="n_series",
         )
 
 
@@ -1107,19 +935,133 @@ def _transfer_sra_geocode(
         for data in groups.values():
             data["multiple_institutes"] = len(data["accessions"]) > 1
 
-        cols = ", ".join(_SRA_GEOCODE_COLS)
-        placeholders = ", ".join(["%s"] * len(_SRA_GEOCODE_COLS))
-        insert_query = f"INSERT INTO sra_geocode ({cols}) VALUES ({placeholders}) ON CONFLICT (center_name) DO NOTHING"
-
-        _execute_batch_inserts(
-            pg_conn,
-            insert_query,
-            (tuple(d[c] for c in _SRA_GEOCODE_COLS) for d in groups.values()),
-            batch_size,
-            "  sra_geocode",
-            total=len(groups),
-            position=1,
+        _insert_geocode_batches(
+            pg_conn, "sra_geocode", _SRA_GEOCODE_COLS, groups, batch_size
         )
+
+
+def _transfer_ae_geocode(
+    pg_url: str,
+    ae_db_file: Path,
+    unified_metadata_db_file: Path,
+    batch_size: int,
+):
+    with (
+        sqlite3.connect(ae_db_file) as src_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ae_geocode_address_key ON arrayexpress_geocode (address_key)"
+            )
+
+        center_lookup, _ = _load_unified_centers(unified_metadata_db_file)
+
+        groups: dict[str, dict] = {}
+        for accession, org_json in src_conn.execute(
+            "SELECT accession, organizations FROM arrayexpress_experiments WHERE organizations IS NOT NULL"
+        ):
+            orgs = json.loads(org_json)
+            if not isinstance(orgs, list):
+                continue
+            for org_data in orgs:
+                if not isinstance(org_data, dict):
+                    continue
+                org_name = (org_data.get("name") or "").strip()
+                if not org_name:
+                    continue
+                address = (org_data.get("address") or "").strip()
+
+                key = f"{org_name}|{address}"
+
+                if key not in groups:
+                    parts = [p for p in [org_name, address] if p]
+                    groups[key] = {f: None for f in _AE_GEOCODE_NONE_FIELDS}
+                    groups[key].update(
+                        {
+                            "organization": org_name,
+                            "address_line": address or None,
+                            "address_city": None,
+                            "address_state": None,
+                            "address_zipcode": None,
+                            "address_country": None,
+                            "address_key": key,
+                            "geo_query": ", ".join(parts),
+                            "accessions": set(),
+                        }
+                    )
+                groups[key]["accessions"].add(accession)
+
+                center = center_lookup.get((accession, org_name.lower()))
+                if center:
+                    _apply_center_geo(groups[key], center, _AE_CENTER_GEO_FIELDS)
+
+        _insert_geocode_batches(
+            pg_conn,
+            "arrayexpress_geocode",
+            _AE_GEOCODE_COLS,
+            groups,
+            batch_size,
+            count_col="n_experiments",
+        )
+
+
+def _insert_geocode_batches(
+    pg_conn: psycopg.Connection,
+    table_name: str,
+    cols_list: list[str],
+    groups: dict,
+    batch_size: int,
+    count_col: str | None = None,
+):
+    cols = ", ".join(cols_list)
+    placeholders = ", ".join(["%s"] * len(cols_list))
+    conflict_col = "center_name" if table_name == "sra_geocode" else "address_key"
+    insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_col}) DO NOTHING"
+
+    def _gen_rows():
+        for d in groups.values():
+            yield tuple(
+                d[c] if c != count_col else len(d["accessions"]) for c in cols_list
+            )
+
+    _execute_batch_inserts(
+        pg_conn,
+        insert_query,
+        _gen_rows(),
+        batch_size,
+        f"  {table_name}",
+        total=len(groups),
+        position=1,
+    )
+
+
+def _apply_center_geo(
+    g: dict,
+    center: dict,
+    fields: list[str],
+):
+    for field in fields:
+        val = center.get(field)
+        if val is not None and g.get("geo_" + field) is None:
+            g["geo_" + field] = val
+
+    if g["geo_formatted_address"] is None and center.get("place_name"):
+        g["geo_formatted_address"] = center["place_name"]
+    if g["geo_source"] is None:
+        g["geo_source"] = "unified"
+
+
+def _make_conn_cache() -> Callable[[Path], sqlite3.Connection]:
+    _conn_cache: dict[str, sqlite3.Connection] = {}
+
+    def _get_conn(path: Path) -> sqlite3.Connection:
+        key = str(path)
+        if key not in _conn_cache:
+            _conn_cache[key] = sqlite3.connect(path)
+        return _conn_cache[key]
+
+    return _get_conn
 
 
 def _normalize_country(name: str) -> str | None:
@@ -1142,18 +1084,6 @@ def _normalize_country(name: str) -> str | None:
         return c.alpha_3
 
     return s
-
-
-def _make_conn_cache() -> Callable[[Path], sqlite3.Connection]:
-    _conn_cache: dict[str, sqlite3.Connection] = {}
-
-    def _get_conn(path: Path) -> sqlite3.Connection:
-        key = str(path)
-        if key not in _conn_cache:
-            _conn_cache[key] = sqlite3.connect(path)
-        return _conn_cache[key]
-
-    return _get_conn
 
 
 def _ensure_list(value):
