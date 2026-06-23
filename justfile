@@ -139,6 +139,7 @@ transfer_pg:
         --geo-db-file $(just _latest_db geo) \
         --ena-db-file $(just _latest_db ena) \
         --ae-db-file $(just _latest_db ae) \
+        --pubmed-metadata-db-file {{ PUBMED_METADATA_DB }} \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
         --download-links-db-file {{ DOWNLOAD_LINKS_DB }} \
         --batch-size {{ BATCH_SIZE }} \
