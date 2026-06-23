@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -42,18 +43,7 @@ _GEO_SERIES_INSERT_COLS = [
     "alias_all",
     "platforms",
 ]
-_GEO_GEOCODE_COLS = [
-    "organization",
-    "department",
-    "address_line",
-    "address_city",
-    "address_state",
-    "address_zipcode",
-    "address_country",
-    "n_series",
-    "full_address",
-    "address_key",
-    "geo_query",
+_GEO_GEOCODE_NONE_FIELDS = [
     "geo_formatted_address",
     "geo_place_name",
     "geo_place_type",
@@ -74,6 +64,21 @@ _GEO_GEOCODE_COLS = [
     "geo_country_mismatch",
     "geo_error",
 ]
+_GEO_GEOCODE_COLS = [
+    "organization",
+    "department",
+    "address_line",
+    "address_city",
+    "address_state",
+    "address_zipcode",
+    "address_country",
+    "n_series",
+    "full_address",
+    "address_key",
+    "geo_query",
+    *_GEO_GEOCODE_NONE_FIELDS,
+]
+
 
 _SRA_STUDIES_SELECT_COLS = [
     "accession",
@@ -101,12 +106,50 @@ _SRA_STUDIES_INSERT_COLS = [
     "instrument_models",
     "platforms",
 ]
+_SRA_GEOCODE_SOURCE_FIELDS = [
+    "place_name",
+    "place_type",
+    "short_label",
+    "address_type",
+    "osm_id",
+    "osm_type",
+    "place_id",
+    "longitude",
+    "latitude",
+    "city",
+    "district",
+    "subdistrict",
+    "county",
+    "suburb",
+    "neighbourhood",
+    "state",
+    "state_district",
+    "territory",
+    "metro_area",
+    "postcode",
+    "country_code",
+    "country",
+    "country_mismatch",
+]
+_SRA_GEOCODE_COLS = [
+    "center_name",
+    "original_country",
+    "formatted_address",
+    "official_address",
+    *_SRA_GEOCODE_SOURCE_FIELDS,
+    "source",
+    "error",
+    "multiple_institutes",
+]
+
+
+type _Modifier = Callable[[list[dict]], list[dict]]
 
 
 @dataclass
 class _TableInfo:
     sqlite_db_file: Path
-    modifier: Callable[[list[dict]], list[dict]]
+    modifier: _Modifier
     select_cols: list[str] | None = None
     insert_cols: list[str] | None = None
     alternative_table_name: str | None = None
@@ -170,19 +213,40 @@ def pg_transfer(
         ),
     }
 
-    all_tasks: list[tuple] = []
+    all_tasks: list[tuple[str, Callable, tuple]] = []
     for table_name, info in table_info.items():
         if info.sqlite_db_file is not None and info.sqlite_db_file.exists():
             all_tasks.append(
                 (
                     table_name,
-                    info.sqlite_db_file,
-                    info.modifier,
-                    info.select_cols,
-                    info.insert_cols,
-                    info.alternative_table_name,
+                    _transfer_helper,
+                    (
+                        pg_url,
+                        info.sqlite_db_file,
+                        info.modifier,
+                        table_name,
+                        batch_size,
+                        info.select_cols,
+                        info.insert_cols,
+                        info.alternative_table_name,
+                    ),
                 )
             )
+
+    all_tasks.append(
+        (
+            "geo_geocode",
+            _transfer_geo_geocode,
+            (pg_url, geo_db_file, unified_metadata_db_file, batch_size),
+        )
+    )
+    all_tasks.append(
+        (
+            "sra_geocode",
+            _transfer_sra_geocode,
+            (pg_url, sra_db_file, unified_metadata_db_file, batch_size),
+        )
+    )
 
     with (
         ThreadPoolExecutor(max_workers=num_workers) as pool,
@@ -191,27 +255,13 @@ def pg_transfer(
         ) as outer_pbar,
         logging_redirect_tqdm(),
     ):
-        futures = {
-            pool.submit(
-                _transfer_helper,
-                pg_url,
-                info.sqlite_db_file,
-                info.modifier,
-                table_name,
-                batch_size,
-                info.select_cols,
-                info.insert_cols,
-                info.alternative_table_name,
-            ): table_name
-            for table_name, info in table_info.items()
-            if info.sqlite_db_file is not None and info.sqlite_db_file.exists()
-        }
+        futures = {}
+        for label, func, args in all_tasks:
+            futures[pool.submit(func, *args)] = label
 
         for f in as_completed(futures):
             f.result()
             outer_pbar.update(1)
-
-    _transfer_geo_geocode(pg_url, geo_db_file, unified_metadata_db_file, batch_size)
 
 
 def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str], str]:
@@ -224,10 +274,39 @@ def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str
     return col_list, pk
 
 
+def _execute_batch_inserts(
+    pg_conn: psycopg.Connection,
+    insert_query: str,
+    rows,
+    batch_size: int,
+    desc: str,
+    total: int | None = None,
+    **tqdm_kwargs,
+):
+    batch: list[tuple] = []
+
+    with tqdm(desc=desc, total=total, unit="rows", leave=False, **tqdm_kwargs) as pbar:
+        for row in rows:
+            batch.append(row)
+
+            if len(batch) >= batch_size:
+                with pg_conn.cursor() as cur:
+                    cur.executemany(cast(LiteralString, insert_query), batch)
+                pg_conn.commit()
+                pbar.update(len(batch))
+                batch = []
+
+        if batch:
+            with pg_conn.cursor() as cur:
+                cur.executemany(cast(LiteralString, insert_query), batch)
+            pg_conn.commit()
+            pbar.update(len(batch))
+
+
 def _transfer_helper(
     pg_url: str,
     sqlite_db_file: Path,
-    modifier: Callable[[list[dict]], list[dict]],
+    modifier: _Modifier,
     table_name: str,
     batch_size: int,
     select_cols: Optional[list[str]] = None,
@@ -262,27 +341,31 @@ def _transfer_helper(
         total = int(
             sqlite_conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
         )
-        offset = 0
 
-        with tqdm(
-            desc=f"transferring {table_name}", total=total, unit="rows", leave=False
-        ) as pbar:
+        def _gen_rows():
+            offset = 0
+
             while True:
                 batch = sqlite_conn.execute(
                     select_query.format(offset=offset)
                 ).fetchall()
+
                 if not batch:
                     break
 
-                modified_batch = modifier([dict(row) for row in batch])
-                modified_batch = [tuple(m[c] for c in col_list) for m in modified_batch]
+                for m in modifier([dict(row) for row in batch]):
+                    yield tuple(m[c] for c in col_list)
 
-                with pg_conn.cursor() as cur:
-                    cur.executemany(cast(LiteralString, insert_query), modified_batch)
-
-                pg_conn.commit()
                 offset += batch_size
-                pbar.update(len(batch))
+
+        _execute_batch_inserts(
+            pg_conn,
+            insert_query,
+            _gen_rows(),
+            batch_size,
+            f"transferring {table_name}",
+            total=total,
+        )
 
 
 def _no_op_batch_modifier(batch: list[dict]) -> list[dict]:
@@ -302,7 +385,7 @@ def _geo_series_batch_modifier(
     sra_db_file: Path,
     geo_db_file: Path,
     unified_metadata_db_file: Path,
-) -> Callable[[list[dict]], list[dict]]:
+) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
         _conn_cache: dict[str, sqlite3.Connection] = {}
 
@@ -514,7 +597,7 @@ def _sra_run_download_links_modifier(batch: list[dict]) -> list[dict]:
 def _sra_studies_batch_modifier(
     sra_db_file: Path,
     unified_metadata_db_file: Path,
-) -> Callable[[list[dict]], list[dict]]:
+) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
         _conn_cache: dict[str, sqlite3.Connection] = {}
 
@@ -623,10 +706,99 @@ def _sra_studies_batch_modifier(
     return modifier
 
 
+_unified_centers_cache: tuple | None = None
+_unified_centers_lock = threading.Lock()
+
+
+def _load_unified_centers(
+    unified_metadata_db_file: Path,
+) -> tuple[dict[tuple[str, str], dict], dict[str, dict]]:
+    global _unified_centers_cache
+    if _unified_centers_cache is not None:
+        return _unified_centers_cache
+
+    with _unified_centers_lock:
+        if _unified_centers_cache is not None:
+            return _unified_centers_cache
+
+        lookup: dict[tuple[str, str], dict] = {}
+        name_lookup: dict[str, dict] = {}
+        with sqlite3.connect(unified_metadata_db_file) as uc_conn:
+            for row in uc_conn.execute(
+                "SELECT canonical_accession, center_name, place_name, place_type, short_label, address_type, osm_id, osm_type, place_id, longitude, latitude, city, district, subdistrict, county, suburb, neighbourhood, state, state_district, territory, metro_area, postcode, country_code, country, country_mismatch FROM unified_centers"
+            ):
+                (
+                    acc,
+                    name,
+                    place_name,
+                    place_type,
+                    short_label,
+                    address_type,
+                    osm_id,
+                    osm_type,
+                    place_id,
+                    lon,
+                    lat,
+                    city,
+                    district,
+                    subdistrict,
+                    county,
+                    suburb,
+                    neighbourhood,
+                    state,
+                    state_district,
+                    territory,
+                    metro_area,
+                    postcode,
+                    country_code,
+                    country,
+                    country_mismatch,
+                ) = row
+
+                cname = name.strip().lower()
+                key = (acc, cname)
+
+                geo = {
+                    "place_name": place_name,
+                    "place_type": place_type,
+                    "short_label": short_label,
+                    "address_type": address_type,
+                    "osm_id": osm_id,
+                    "osm_type": osm_type,
+                    "place_id": place_id,
+                    "longitude": float(lon) if lon is not None else None,
+                    "latitude": float(lat) if lat is not None else None,
+                    "city": city,
+                    "district": district,
+                    "subdistrict": subdistrict,
+                    "county": county,
+                    "suburb": suburb,
+                    "neighbourhood": neighbourhood,
+                    "state": state,
+                    "state_district": state_district,
+                    "territory": territory,
+                    "metro_area": metro_area,
+                    "postcode": postcode,
+                    "country_code": country_code,
+                    "country": country,
+                    "country_mismatch": country_mismatch.strip().lower()
+                    in ("true", "1", "yes")
+                    if country_mismatch
+                    else None,
+                }
+
+                lookup[key] = geo
+                if cname not in name_lookup:
+                    name_lookup[cname] = geo
+
+        _unified_centers_cache = (lookup, name_lookup)
+        return _unified_centers_cache
+
+
 def _transfer_geo_geocode(
     pg_url: str,
     geo_db_file: Path,
-    unified_metadata_db_file: Path | None,
+    unified_metadata_db_file: Path,
     batch_size: int,
 ):
     with (
@@ -638,60 +810,12 @@ def _transfer_geo_geocode(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_geo_geocode_address_key ON geo_geocode (address_key)"
             )
 
-        center_lookup: dict[tuple[str, str], dict] = {}
-        if unified_metadata_db_file and unified_metadata_db_file.exists():
-            with sqlite3.connect(unified_metadata_db_file) as uc_conn:
-                for row in uc_conn.execute(
-                    "SELECT canonical_accession, center_name, place_name, place_type, address_type, longitude, latitude, city, district, subdistrict, county, suburb, neighbourhood, state, postcode, country_code, country, country_mismatch FROM unified_centers"
-                ).fetchall():
-                    (
-                        acc,
-                        name,
-                        place_name,
-                        place_type,
-                        address_type,
-                        lon,
-                        lat,
-                        city,
-                        district,
-                        subdistrict,
-                        county,
-                        suburb,
-                        neighbourhood,
-                        state,
-                        postcode,
-                        country_code,
-                        country,
-                        country_mismatch,
-                    ) = row
-                    center_lookup[(acc, name.strip().lower())] = {
-                        "geo_place_name": place_name,
-                        "geo_place_type": place_type,
-                        "geo_address_type": address_type,
-                        "geo_longitude": float(lon) if lon is not None else None,
-                        "geo_latitude": float(lat) if lat is not None else None,
-                        "geo_city": city,
-                        "geo_district": district,
-                        "geo_subdistrict": subdistrict,
-                        "geo_county": county,
-                        "geo_suburb": suburb,
-                        "geo_neighbourhood": neighbourhood,
-                        "geo_state": state,
-                        "geo_postcode": postcode,
-                        "geo_country_code": country_code,
-                        "geo_country": country,
-                        "geo_country_mismatch": country_mismatch.strip().lower()
-                        in ("true", "1", "yes")
-                        if country_mismatch
-                        else None,
-                    }
-
-        rows = src_conn.execute(
-            "SELECT DISTINCT organization, department, address_line, address_city, address_state, address_zipcode, address_country, accession FROM geo_contributors WHERE organization IS NOT NULL AND organization != ''"
-        ).fetchall()
+        center_lookup, _ = _load_unified_centers(unified_metadata_db_file)
 
         groups: dict[str, dict] = {}
-        for org, dept, addr, city, state, zipcode, country, acc in rows:
+        for org, dept, addr, city, state, zipcode, country, acc in src_conn.execute(
+            "SELECT DISTINCT organization, department, address_line, address_city, address_state, address_zipcode, address_country, accession FROM geo_contributors WHERE organization IS NOT NULL AND organization != ''"
+        ):
             org_s = org or ""
             dept_s = dept or ""
             addr_s = addr or ""
@@ -705,66 +829,50 @@ def _transfer_geo_geocode(
                 parts = [
                     p for p in [org_s, dept_s, addr_s, city_s, state_s, country_s] if p
                 ]
-                groups[key] = {
-                    "organization": org_s,
-                    "department": dept_s,
-                    "address_line": addr_s,
-                    "address_city": city_s,
-                    "address_state": state_s,
-                    "address_zipcode": zipcode or "",
-                    "address_country": country_s,
-                    "full_address": ", ".join(parts),
-                    "address_key": key,
-                    "geo_query": ", ".join(parts),
-                    "geo_formatted_address": None,
-                    "geo_place_name": None,
-                    "geo_place_type": None,
-                    "geo_address_type": None,
-                    "geo_longitude": None,
-                    "geo_latitude": None,
-                    "geo_city": None,
-                    "geo_district": None,
-                    "geo_subdistrict": None,
-                    "geo_county": None,
-                    "geo_suburb": None,
-                    "geo_neighbourhood": None,
-                    "geo_state": None,
-                    "geo_postcode": None,
-                    "geo_country": None,
-                    "geo_country_code": None,
-                    "geo_source": None,
-                    "geo_country_mismatch": None,
-                    "geo_error": None,
-                    "accessions": set(),
-                }
+                groups[key] = {f: None for f in _GEO_GEOCODE_NONE_FIELDS}
+                groups[key].update(
+                    {
+                        "organization": org_s,
+                        "department": dept_s,
+                        "address_line": addr_s,
+                        "address_city": city_s,
+                        "address_state": state_s,
+                        "address_zipcode": zipcode or "",
+                        "address_country": country_s,
+                        "full_address": ", ".join(parts),
+                        "address_key": key,
+                        "geo_query": ", ".join(parts),
+                        "accessions": set(),
+                    }
+                )
             groups[key]["accessions"].add(acc)
 
             center = center_lookup.get((acc, org_s.strip().lower()))
             if center:
                 g = groups[key]
-                for field in (
-                    "geo_place_name",
-                    "geo_place_type",
-                    "geo_address_type",
-                    "geo_longitude",
-                    "geo_latitude",
-                    "geo_city",
-                    "geo_district",
-                    "geo_subdistrict",
-                    "geo_county",
-                    "geo_suburb",
-                    "geo_neighbourhood",
-                    "geo_state",
-                    "geo_postcode",
-                    "geo_country_code",
-                    "geo_country",
-                    "geo_country_mismatch",
+                for src_field, dst_field in (
+                    ("place_name", "geo_place_name"),
+                    ("place_type", "geo_place_type"),
+                    ("address_type", "geo_address_type"),
+                    ("longitude", "geo_longitude"),
+                    ("latitude", "geo_latitude"),
+                    ("city", "geo_city"),
+                    ("district", "geo_district"),
+                    ("subdistrict", "geo_subdistrict"),
+                    ("county", "geo_county"),
+                    ("suburb", "geo_suburb"),
+                    ("neighbourhood", "geo_neighbourhood"),
+                    ("state", "geo_state"),
+                    ("postcode", "geo_postcode"),
+                    ("country_code", "geo_country_code"),
+                    ("country", "geo_country"),
+                    ("country_mismatch", "geo_country_mismatch"),
                 ):
-                    if center.get(field) is not None and g.get(field) is None:
-                        g[field] = center[field]
+                    if center.get(src_field) is not None and g.get(dst_field) is None:
+                        g[dst_field] = center[src_field]
 
-                if g["geo_formatted_address"] is None and center.get("geo_place_name"):
-                    g["geo_formatted_address"] = center["geo_place_name"]
+                if g["geo_formatted_address"] is None and center.get("place_name"):
+                    g["geo_formatted_address"] = center["place_name"]
 
                 if g["geo_source"] is None:
                     g["geo_source"] = "unified"
@@ -773,29 +881,113 @@ def _transfer_geo_geocode(
         placeholders = ", ".join(["%s"] * len(_GEO_GEOCODE_COLS))
         insert_query = f"INSERT INTO geo_geocode ({cols}) VALUES ({placeholders}) ON CONFLICT (address_key) DO NOTHING"
 
-        batch: list[tuple] = []
-        total = len(groups)
-
-        with tqdm(desc="transferring geo_geocode", total=total, unit="rows") as pbar:
-            for key, data in groups.items():
-                batch.append(
-                    tuple(
-                        data[c] if c != "n_series" else len(data["accessions"])
-                        for c in _GEO_GEOCODE_COLS
-                    )
+        _execute_batch_inserts(
+            pg_conn,
+            insert_query,
+            (
+                tuple(
+                    d[c] if c != "n_series" else len(d["accessions"])
+                    for c in _GEO_GEOCODE_COLS
                 )
-                pbar.update(1)
+                for d in groups.values()
+            ),
+            batch_size,
+            "  geo_geocode",
+            total=len(groups),
+            position=1,
+        )
 
-                if len(batch) >= batch_size:
-                    with pg_conn.cursor() as cur:
-                        cur.executemany(cast(LiteralString, insert_query), batch)
-                    pg_conn.commit()
-                    batch = []
 
-            if batch:
-                with pg_conn.cursor() as cur:
-                    cur.executemany(cast(LiteralString, insert_query), batch)
-                pg_conn.commit()
+def _transfer_sra_geocode(
+    pg_url: str,
+    sra_db_file: Path,
+    unified_metadata_db_file: Path,
+    batch_size: int,
+):
+    with (
+        sqlite3.connect(sra_db_file) as src_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sra_geocode_center_name ON sra_geocode (center_name)"
+            )
+
+        center_lookup, center_name_lookup = _load_unified_centers(
+            unified_metadata_db_file
+        )
+
+        sub_to_study: dict[str, str] = {}
+        for submission, accession in src_conn.execute(
+            "SELECT DISTINCT submission, accession FROM sra_studies"
+        ):
+            sub_to_study[submission] = accession
+
+        groups: dict[str, dict] = {}
+        for center_name, submission_acc in src_conn.execute(
+            "SELECT DISTINCT center_name, accession FROM sra_submissions WHERE center_name IS NOT NULL AND center_name != ''"
+        ):
+            cn = center_name.strip()
+            if not cn:
+                continue
+            key = cn.lower()
+
+            study_acc = sub_to_study.get(submission_acc)
+            geo = None
+            if study_acc:
+                geo = center_lookup.get((study_acc, key))
+            if not geo:
+                geo = center_name_lookup.get(key)
+
+            if key not in groups:
+                groups[key] = {
+                    f: geo.get(f) if geo else None for f in _SRA_GEOCODE_SOURCE_FIELDS
+                }
+                groups[key].update(
+                    {
+                        "center_name": cn,
+                        "original_country": geo.get("country") if geo else None,
+                        "formatted_address": geo.get("place_name") if geo else None,
+                        "official_address": ", ".join(
+                            p
+                            for p in [
+                                geo.get("place_name"),
+                                geo.get("city"),
+                                geo.get("state"),
+                                geo.get("postcode"),
+                                geo.get("country"),
+                            ]
+                            if p
+                        )
+                        if geo
+                        else None,
+                        "loc_name": None,
+                        "match_id": None,
+                        "source": "unified" if geo else None,
+                        "error": None,
+                        "multiple_institutes": False,
+                        "accessions": set(),
+                    }
+                )
+
+            groups[key]["accessions"].add(submission_acc)
+
+        for data in groups.values():
+            data["multiple_institutes"] = len(data["accessions"]) > 1
+
+        cols = ", ".join(_SRA_GEOCODE_COLS)
+        placeholders = ", ".join(["%s"] * len(_SRA_GEOCODE_COLS))
+        insert_query = f"INSERT INTO sra_geocode ({cols}) VALUES ({placeholders}) ON CONFLICT (center_name) DO NOTHING"
+
+        _execute_batch_inserts(
+            pg_conn,
+            insert_query,
+            (tuple(d[c] for c in _SRA_GEOCODE_COLS) for d in groups.values()),
+            batch_size,
+            "  sra_geocode",
+            total=len(groups),
+            position=1,
+        )
 
 
 def _normalize_country(name: str) -> str | None:
