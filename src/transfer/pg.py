@@ -19,6 +19,10 @@ from transfer.pg_fields import (
     _AE_EXPERIMENTS_SELECT_COLS,
     _AE_GEOCODE_COLS,
     _AE_GEOCODE_NONE_FIELDS,
+    _ENA_GEOCODE_COLS,
+    _ENA_GEOCODE_SOURCE_FIELDS,
+    _ENA_STUDIES_SEARCH_INSERT_COLS,
+    _ENA_STUDIES_SEARCH_SELECT_COLS,
     _GEO_CENTER_GEO_FIELDS,
     _GEO_GEOCODE_COLS,
     _GEO_GEOCODE_NONE_FIELDS,
@@ -39,7 +43,7 @@ class _TableInfo:
     modifier: _Modifier
     select_cols: list[str] | None = None
     insert_cols: list[str] | None = None
-    alternative_table_name: str | None = None
+    select_table_name: str | None = None
 
 
 def pg_transfer(
@@ -95,10 +99,10 @@ def pg_transfer(
         "sra_runs": _TableInfo(
             sqlite_db_file=sra_db_file, modifier=_no_op_batch_modifier
         ),
-        "run_download_links": _TableInfo(
+        "sra_run_download_links": _TableInfo(
             sqlite_db_file=download_links_db_file,
             modifier=_sra_run_download_links_modifier,
-            alternative_table_name="sra_run_download_links",
+            select_table_name="run_download_links",
         ),
         "ena_experiments": _TableInfo(
             sqlite_db_file=ena_db_file,
@@ -111,6 +115,13 @@ def pg_transfer(
         "ena_samples": _TableInfo(
             sqlite_db_file=ena_db_file,
             modifier=_no_op_batch_modifier,
+        ),
+        "ena_studies_search": _TableInfo(
+            sqlite_db_file=ena_db_file,
+            modifier=_ena_studies_search_batch_modifier,
+            select_cols=_ENA_STUDIES_SEARCH_SELECT_COLS,
+            insert_cols=_ENA_STUDIES_SEARCH_INSERT_COLS,
+            select_table_name="ena_studies",
         ),
         "arrayexpress_experiments": _TableInfo(
             sqlite_db_file=ae_db_file,
@@ -139,7 +150,7 @@ def pg_transfer(
                         batch_size,
                         info.select_cols,
                         info.insert_cols,
-                        info.alternative_table_name,
+                        info.select_table_name,
                     ),
                 )
             )
@@ -156,6 +167,13 @@ def pg_transfer(
             "sra_geocode",
             _transfer_sra_geocode,
             (pg_url, sra_db_file, unified_metadata_db_file, batch_size),
+        )
+    )
+    all_tasks.append(
+        (
+            "ena_geocode",
+            _transfer_ena_geocode,
+            (pg_url, ena_db_file, unified_metadata_db_file, batch_size),
         )
     )
     all_tasks.append(
@@ -229,9 +247,9 @@ def _transfer_helper(
     batch_size: int,
     select_cols: Optional[list[str]] = None,
     insert_cols: Optional[list[str]] = None,
-    alternative_table_name: str | None = None,
+    select_table_name: str | None = None,
 ):
-    pg_table_name = alternative_table_name or table_name
+    select_pg_table_name = select_table_name or table_name
 
     with (
         sqlite3.connect(sqlite_db_file) as sqlite_conn,
@@ -242,22 +260,22 @@ def _transfer_helper(
         if select_cols:
             col_list = select_cols
         else:
-            col_list, pk = _get_table_info(sqlite_conn, table_name)
+            col_list, pk = _get_table_info(sqlite_conn, select_pg_table_name)
 
         columns = ", ".join(col_list)
         placeholders = ", ".join(["%s"] * len(col_list))
-        select_query = (
-            f"SELECT {columns} FROM {table_name} LIMIT {batch_size} OFFSET {{offset}}"
-        )
+        select_query = f"SELECT {columns} FROM {select_pg_table_name} LIMIT {batch_size} OFFSET {{offset}}"
 
         if insert_cols:
             col_list = insert_cols
             columns = ", ".join(col_list)
             placeholders = ", ".join(["%s"] * len(col_list))
 
-        insert_query = f"INSERT INTO {pg_table_name} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
         total = int(
-            sqlite_conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+            sqlite_conn.execute(
+                f"SELECT COUNT(*) FROM {select_pg_table_name}"
+            ).fetchone()[0]
         )
 
         def _gen_rows():
@@ -618,6 +636,12 @@ def _sra_studies_batch_modifier(
     return modifier
 
 
+def _ena_studies_search_batch_modifier(batch: list[dict]) -> list[dict]:
+    for value in batch:
+        value["accession"] = value.pop("study_accession")
+    return batch
+
+
 def _arrayexpress_experiments_batch_modifier(
     unified_metadata_db_file: Path,
 ) -> _Modifier:
@@ -940,6 +964,72 @@ def _transfer_sra_geocode(
         )
 
 
+def _transfer_ena_geocode(
+    pg_url: str,
+    ena_db_file: Path,
+    unified_metadata_db_file: Path,
+    batch_size: int,
+):
+    with (
+        sqlite3.connect(ena_db_file) as src_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ena_geocode_center_name ON ena_geocode (center_name)"
+            )
+
+        center_lookup, center_name_lookup = _load_unified_centers(
+            unified_metadata_db_file
+        )
+
+        groups: dict[str, dict] = {}
+        for center_name, study_accession in src_conn.execute(
+            "SELECT DISTINCT center_name, study_accession FROM ena_studies WHERE center_name IS NOT NULL AND center_name != ''"
+        ):
+            cn = center_name.strip()
+            if not cn:
+                continue
+            key = cn.lower()
+
+            geo = center_lookup.get((study_accession, key))
+            if not geo:
+                geo = center_name_lookup.get(key)
+
+            if key not in groups:
+                groups[key] = {
+                    f: geo.get(f) if geo else None for f in _ENA_GEOCODE_SOURCE_FIELDS
+                }
+                groups[key].update(
+                    {
+                        "center_name": cn,
+                        "formatted_address": geo.get("place_name") if geo else None,
+                        "source": "unified" if geo else None,
+                        "error": None,
+                        "accessions": set(),
+                    }
+                )
+            groups[key]["accessions"].add(study_accession)
+
+        exp_counts: dict[str, int] = {}
+        for center_name, cnt in src_conn.execute(
+            "SELECT center_name, COUNT(*) FROM ena_experiments WHERE center_name IS NOT NULL AND center_name != '' GROUP BY center_name"
+        ):
+            exp_counts[center_name.strip().lower()] = cnt
+
+        for key, data in groups.items():
+            data["n_studies"] = len(data["accessions"])
+            data["n_experiments"] = exp_counts.get(key, 0)
+
+        _insert_geocode_batches(
+            pg_conn,
+            "ena_geocode",
+            _ENA_GEOCODE_COLS,
+            groups,
+            batch_size,
+        )
+
+
 def _transfer_ae_geocode(
     pg_url: str,
     ae_db_file: Path,
@@ -1016,7 +1106,9 @@ def _insert_geocode_batches(
 ):
     cols = ", ".join(cols_list)
     placeholders = ", ".join(["%s"] * len(cols_list))
-    conflict_col = "center_name" if table_name == "sra_geocode" else "address_key"
+    conflict_col = (
+        "center_name" if table_name in ("sra_geocode", "ena_geocode") else "address_key"
+    )
     insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_col}) DO NOTHING"
 
     def _gen_rows():

@@ -226,3 +226,38 @@ _AE_GEOCODE_COLS = [
     "geo_query",
     *_AE_GEOCODE_NONE_FIELDS,
 ]
+
+_ENA_STUDIES_SEARCH_SELECT_COLS = [
+    "study_accession",
+    "study_title",
+    "study_description",
+    "study_name",
+    "center_name",
+    "project_name",
+    "last_updated",
+    "first_public",
+]
+_ENA_STUDIES_SEARCH_INSERT_COLS = [
+    "accession",
+    *[x for x in _ENA_STUDIES_SEARCH_SELECT_COLS if x != "study_accession"],
+]
+_ENA_GEOCODE_SOURCE_FIELDS = [
+    "longitude",
+    "latitude",
+    "city",
+    "district",
+    "subdistrict",
+    "neighbourhood",
+    "state",
+    "postcode",
+    "country",
+]
+_ENA_GEOCODE_COLS = [
+    "center_name",
+    "formatted_address",
+    *_ENA_GEOCODE_SOURCE_FIELDS,
+    "source",
+    "error",
+    "n_experiments",
+    "n_studies",
+]
