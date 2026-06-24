@@ -419,15 +419,28 @@ def _geo_series_batch_modifier(
             unique_samples = list(set(all_samples))
             conn = _get_conn(geo_db_file)
 
-            for sample_acc, org_json, platform in _query_in(
+            for sample_acc, org_json, channels_json, platform in _query_in(
                 conn,
-                "SELECT gs.accession, gp.organism, gs.platform_ref FROM geo_samples AS gs JOIN geo_platforms gp ON gs.platform_ref = gp.accession WHERE gs.accession",
+                "SELECT gs.accession, gp.organism, gs.channels, gs.platform_ref FROM geo_samples AS gs LEFT JOIN geo_platforms gp ON gs.platform_ref = gp.accession WHERE gs.accession",
                 unique_samples,
             ):
-                org_parsed = json.loads(org_json)
-                for item in org_parsed:
-                    sample_organisms[sample_acc].add(item["#text"])
-                sample_platforms[sample_acc].add(platform)
+                if org_json:
+                    org_parsed = json.loads(org_json)
+                    for item in org_parsed:
+                        text = item.get("#text")
+                        if text:
+                            sample_organisms[sample_acc].add(text)
+                else:
+                    channels = _ensure_list(json.loads(channels_json))
+                    for ch in channels:
+                        org = ch.get("Organism", {})
+                        if isinstance(org, dict):
+                            text = org.get("#text")
+                            if text:
+                                sample_organisms[sample_acc].add(text)
+
+                if platform:
+                    sample_platforms[sample_acc].add(platform)
 
         alias_strategies: dict[str, set[str]] = defaultdict(set[str])
         alias_models: dict[str, set[str]] = defaultdict(set[str])

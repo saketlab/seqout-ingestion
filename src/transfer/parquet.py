@@ -1,3 +1,4 @@
+import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -69,8 +70,9 @@ def _export_to_pq(output_dir: Path, table_name: str, db_file: Path, batch_size: 
         unified_schema = _reconcile_schemas([c.schema for c in chunks])
         chunks = [c.cast(unified_schema) for c in chunks]
 
-        file_name = db_file.name.rsplit("_", 1)[0] + ".parquet"
-        output_path = output_dir / file_name
+        filename = db_file.with_suffix(".parquet").name
+        filename = re.sub(r"_\d{4}-\d{2}-\d{2}", "", filename)
+        output_path = output_dir / filename
 
         with pq.ParquetWriter(
             output_path,

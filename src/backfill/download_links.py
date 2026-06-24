@@ -107,8 +107,8 @@ def backfill_download_links(
     output_dir = base_output_dir / "download_links"
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    db_file = output_dir / "download_links.db"
-    with sqlite3.connect(db_file) as conn:
+    output_db_file = output_dir / "download_links.db"
+    with sqlite3.connect(output_db_file) as conn:
         exec_query_from_file("tables/download_links.sql", conn=conn)
         exec_query_from_file("tables/study_fetch_log.sql", conn=conn)
         exec_query_from_file("indexes/download_links.sql", conn=conn)
@@ -160,7 +160,7 @@ def backfill_download_links(
                     _ncbi_worker,
                     keys[i],
                     worker_data[i],
-                    db_file,
+                    output_db_file,
                     pbar,
                 )
                 for i in range(num_workers)
@@ -183,7 +183,7 @@ def backfill_download_links(
                     _ena_worker,
                     "",
                     worker_data[i],
-                    db_file,
+                    output_db_file,
                     pbar,
                 )
                 for i in range(num_workers)
@@ -251,7 +251,7 @@ def _ncbi_worker(
     pbar: tqdm,
 ):
     sra = SRAweb(api_key, verbose=False)
-    conn = sqlite3.connect(str(output_db_file))
+    conn = sqlite3.connect(output_db_file)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=120000")
 
