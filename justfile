@@ -11,18 +11,24 @@ WORKERS := env("WORKERS", "10")
 BATCH_SIZE := env("BATCH_SIZE", "500")
 RATELIMIT := env("RATELIMIT", "3")
 
+SRA_DB_FILE := env_var_or_default("SRA_DB_FILE", `just _latest_db sra`)
+GEO_DB_FILE := env_var_or_default("GEO_DB_FILE", `just _latest_db geo`)
+ENA_DB_FILE := env_var_or_default("ENA_DB_FILE", `just _latest_db ena`)
+AE_DB_FILE := env_var_or_default("AE_DB_FILE", `just _latest_db ae`)
+NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/_keys/ncbi.txt")
+UNIFIED_CATALOG_DB := env("UNIFIED_CATALOG_DB", DATA_DIR + "/unified_catalog/unified_catalog.db")
+UNIFIED_METADATA_DB := env("UNIFIED_METADATA_DB", DATA_DIR + "/unified_metadata/unified_metadata.db")
+DOWNLOAD_LINKS_DB := env("DOWNLOAD_LINKS_DB", DATA_DIR + "/download_links/download_links.db")
+PUBMED_METADATA_DB := env("PUBMED_METADATA_DB", DATA_DIR + "/pubmed_meta/pubmed_meta.db")
+
+OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/_keys/openalex.txt")
+ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", DATA_DIR + "/_csv/assay_mapping.csv")
+TAXONOMY_MAPPING_FILE := env("TAXONOMY_MAPPING_FILE", DATA_DIR + "/_csv/ncbi_taxonomy_common_names.csv")
+GEOCODING_CACHE_FILE := env("GEOCODING_CACHE_FILE", DATA_DIR + "/geocoding/geocode_cache.json")
+DOWNLOAD_LINKS_SOURCE := env("DOWNLOAD_LINKS_SOURCE", "ncbi")
+
 PYTHON := ".venv/bin/python"
 ENTRYPOINT := "./src/main.py --log-level " + LOG_LEVEL
-
-NCBI_KEYS_FILE := DATA_DIR + "/_keys/ncbi.txt"
-OPENALEX_KEYS_FILE := DATA_DIR + "/_keys/openalex.txt"
-ASSAY_MAPPING_FILE := DATA_DIR + "/_csv/assay_mapping.csv"
-TAXONOMY_MAPPING_FILE := DATA_DIR + "/_csv/ncbi_taxonomy_common_names.csv"
-GEOCODING_CACHE_FILE := DATA_DIR + "/geocoding/geocode_cache.json"
-UNIFIED_METADATA_DB := DATA_DIR + "/unified_metadata/unified_metadata.db"
-UNIFIED_CATALOG_DB := DATA_DIR + "/unified_catalog/unified_catalog.db"
-PUBMED_METADATA_DB := DATA_DIR + "/pubmed_meta/pubmed_meta.db"
-DOWNLOAD_LINKS_DB := DATA_DIR + "/download_links/download_links.db"
 
 _latest_db source:
     @latest=$(ls {{ DATA_DIR }}/{{ source }}/db/ | sort -r | head -1) && \
@@ -63,28 +69,28 @@ ingest_ae:
 backfill_download_links:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill download-links \
         --output-dir {{ DATA_DIR }} \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --source ncbi \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --source {{ DOWNLOAD_LINKS_SOURCE }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --workers {{ WORKERS }}
 
 backfill_pm_ids:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-ids \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --batch-size {{ BATCH_SIZE }} \
 
 backfill_pm_meta:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-meta \
         --output-dir {{ DATA_DIR }} \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --openalex-keys-file {{ OPENALEX_KEYS_FILE }} \
         --update-journal-metrics \
@@ -94,18 +100,18 @@ backfill_pm_meta:
 unify_build_catalog:
     {{ PYTHON }} {{ ENTRYPOINT }} unify build-catalog \
         --output-dir {{ DATA_DIR }} \
-        --sra-db-file $(just _latest_db sra) \
-        --geo-db-file $(just _latest_db geo) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
 
 unify_build_metadata:
     {{ PYTHON }} {{ ENTRYPOINT }} unify build-metadata \
         --output-dir {{ DATA_DIR }} \
-        --geo-db-file $(just _latest_db geo) \
-        --sra-db-file $(just _latest_db sra) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
         --unified-catalog-db-file {{ UNIFIED_CATALOG_DB }} \
         --pubmed-metadata-db-file {{ PUBMED_METADATA_DB }} \
         --assay-mapping-csv-file {{ ASSAY_MAPPING_FILE }} \
@@ -114,7 +120,7 @@ unify_build_metadata:
 geocode_missing:
     {{ PYTHON }} {{ ENTRYPOINT }} geocode \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
-        --geo-db-file $(just _latest_db geo) \
+        --geo-db-file {{ GEO_DB_FILE }} \
         --cache-file {{ GEOCODING_CACHE_FILE }} \
         --save-every {{ BATCH_SIZE }} \
         --rate-limit {{ RATELIMIT }} \
@@ -128,30 +134,30 @@ sc_enrich_detector:
     {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich detector \
         --output-dir {{ DATA_DIR }} \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
-        --geo-db-file $(just _latest_db geo) \
-        --ae-db-file $(just _latest_db ae) \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
         --workers {{ WORKERS }}
 
-transfer_pg:
-    {{ PYTHON }} {{ ENTRYPOINT }} transfer pg \
+transfer_postgres:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer postgres \
         --pg-url "$PG_URL" \
-        --sra-db-file $(just _latest_db sra) \
-        --geo-db-file $(just _latest_db geo) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
         --pubmed-metadata-db-file {{ PUBMED_METADATA_DB }} \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
         --download-links-db-file {{ DOWNLOAD_LINKS_DB }} \
         --batch-size {{ BATCH_SIZE }} \
         --workers {{ WORKERS }}
 
-transfer_pq:
-    {{ PYTHON }} {{ ENTRYPOINT }} transfer pq \
+transfer_parquet:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer parquet \
         --output-dir {{ DATA_DIR }}/parquet \
-        --sra-db-file $(just _latest_db sra) \
-        --geo-db-file $(just _latest_db geo) \
-        --ena-db-file $(just _latest_db ena) \
-        --ae-db-file $(just _latest_db ae) \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
         --pubmed-metadata-db-file {{ PUBMED_METADATA_DB }} \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
         --download-links-db-file {{ DOWNLOAD_LINKS_DB }} \

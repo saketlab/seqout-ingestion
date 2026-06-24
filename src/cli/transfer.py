@@ -2,14 +2,14 @@ from pathlib import Path
 
 import typer
 
-from transfer.parquet import pq_transfer
-from transfer.pg import pg_transfer
+from transfer.parquet import parquet_transfer
+from transfer.postgres import postgres_transfer
 
 transfer_app = typer.Typer()
 
 
 @transfer_app.command()
-def pg(
+def postgres(
     pg_url: str = typer.Option(...),
     sra_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
@@ -21,7 +21,7 @@ def pg(
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
 ):
-    pg_transfer(
+    postgres_transfer(
         pg_url,
         sra_db_file,
         geo_db_file,
@@ -36,7 +36,7 @@ def pg(
 
 
 @transfer_app.command()
-def pq(
+def parquet(
     output_dir: Path = typer.Option(...),
     sra_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
@@ -48,7 +48,7 @@ def pq(
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
 ):
-    pq_transfer(
+    parquet_transfer(
         output_dir,
         sra_db_file,
         geo_db_file,

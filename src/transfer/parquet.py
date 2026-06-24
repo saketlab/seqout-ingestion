@@ -8,7 +8,7 @@ import pyarrow.parquet as pq
 from tqdm import tqdm
 
 
-def pq_transfer(
+def parquet_transfer(
     output_dir: Path,
     sra_db_file: Path,
     geo_db_file: Path,

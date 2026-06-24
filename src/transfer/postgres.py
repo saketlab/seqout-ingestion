@@ -50,7 +50,7 @@ class _TableInfo:
     select_table_name: str | None = None
 
 
-def pg_transfer(
+def postgres_transfer(
     pg_url: str,
     sra_db_file: Path,
     geo_db_file: Path,
