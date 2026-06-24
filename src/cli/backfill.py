@@ -5,7 +5,7 @@ import typer
 
 from backfill.download_links import backfill_download_links
 from backfill.pubmed_ids import backfill_pubmed_ids
-from backfill.pubmed_meta import backfill_pubmed_meta
+from backfill.pubmed_meta import backfill_pubmed_metadata
 
 backfill_app = typer.Typer()
 
@@ -57,7 +57,7 @@ def pm_meta(
     refresh_all_journals_metrics: bool = typer.Option(False),
     is_dry_run: bool = typer.Option(False),
 ):
-    backfill_pubmed_meta(
+    backfill_pubmed_metadata(
         base_output_dir,
         geo_db_file,
         sra_db_file,

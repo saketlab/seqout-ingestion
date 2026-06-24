@@ -27,7 +27,7 @@ class Counters:
     journals: Optional[Synchronized[int]]
 
 
-PUBMED_META_OUTPUT_DIR = "pubmed_meta"
+PUBMED_METADATA_OUTPUT_DIR = "pubmed_metadata"
 
 PMID_EXTRACT_QUERIES = {
     "sra": [
@@ -90,7 +90,7 @@ WHERE journal = ?;
 """
 
 
-def backfill_pubmed_meta(
+def backfill_pubmed_metadata(
     base_output_dir: Path,
     geo_db_file: Optional[Path],
     sra_db_file: Optional[Path],
@@ -118,9 +118,9 @@ def backfill_pubmed_meta(
             "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
         )
 
-    output_dir = base_output_dir / PUBMED_META_OUTPUT_DIR
+    output_dir = base_output_dir / PUBMED_METADATA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
-    db_file = db_file or (output_dir / "pubmed_meta.db")
+    db_file = db_file or (output_dir / "pubmed_metadata.db")
 
     raw_mapping: dict[Datasource, Path | None] = {
         Datasource.Geo: geo_db_file,
@@ -132,7 +132,7 @@ def backfill_pubmed_meta(
         k: v for k, v in raw_mapping.items() if v is not None
     }
 
-    exec_query_from_file("tables/pubmed_meta.sql", db_file)
+    exec_query_from_file("tables/pubmed_metadata.sql", db_file)
 
     if update_journal_metrics:
         _process_via_per_journal_lookup(
