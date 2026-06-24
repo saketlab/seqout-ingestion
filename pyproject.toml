@@ -9,7 +9,6 @@ dependencies = [
     "pycountry>=24.6.1",
     "humanfriendly>=10.0",
     "libarchive-c>=5.3",
-    "lmdb>=2.2.1",
     "lxml>=7.0.0a1",
     "pysradb",
     "requests>=2.34.2",
@@ -17,11 +16,16 @@ dependencies = [
     "typer>=0.26.7",
     "h5py>=3.16.0",
     "pyreadr>=0.5.6",
-    "lxml-stubs>=0.5.1",
     "psycopg>=3.3.4",
     "results>=1.4.1772627293",
     "testing-postgresql>=1.3.0",
+    "pyarrow>=24.0.0",
 ]
 
 [tool.uv.sources]
 pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
+
+[dependency-groups]
+dev = [
+    "lxml-stubs>=0.5.1",
+]

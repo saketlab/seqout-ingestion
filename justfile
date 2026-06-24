@@ -144,3 +144,16 @@ transfer_pg:
         --download-links-db-file {{ DOWNLOAD_LINKS_DB }} \
         --batch-size {{ BATCH_SIZE }} \
         --workers {{ WORKERS }}
+
+transfer_pq:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer pq \
+        --output-dir {{ DATA_DIR }}/parquet \
+        --sra-db-file $(just _latest_db sra) \
+        --geo-db-file $(just _latest_db geo) \
+        --ena-db-file $(just _latest_db ena) \
+        --ae-db-file $(just _latest_db ae) \
+        --pubmed-metadata-db-file {{ PUBMED_METADATA_DB }} \
+        --unified-metadata-db-file {{ UNIFIED_METADATA_DB }} \
+        --download-links-db-file {{ DOWNLOAD_LINKS_DB }} \
+        --batch-size {{ BATCH_SIZE }} \
+        --workers {{ WORKERS }}
