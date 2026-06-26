@@ -29,6 +29,145 @@ def _is_retryable(exc: Exception) -> bool:
     )
 
 
+def send_req(
+    method: str,
+    url: str,
+    *,
+    params: dict | None = None,
+    headers: dict | None = None,
+    json: dict | None = None,
+    timeout: int,
+    num_retries: int,
+    max_wait: int,
+    stream: bool = False,
+    **kwargs,
+) -> requests.Response | None:
+    for attempt in range(num_retries):
+        try:
+            r = requests.request(
+                method,
+                url,
+                params=params,
+                headers=headers,
+                json=json,
+                timeout=timeout,
+                stream=stream,
+                **kwargs,
+            )
+            r.raise_for_status()
+            return r
+        except requests.RequestException as exc:
+            if not _is_retryable(exc) or attempt == num_retries - 1:
+                raise
+
+            wait = min(2**attempt, max_wait)
+            logging.warning(
+                "failed to send %s req to %s (attempt %d/%d, retrying in %.0fs) - %s",
+                method,
+                url,
+                attempt + 1,
+                num_retries,
+                wait,
+                exc,
+            )
+
+            time.sleep(wait)
+
+    raise RuntimeError(f"failed after {num_retries} retries")
+
+
+def simple_file_download(
+    url: str,
+    dest_path: Path,
+    chunk_size: int,
+    num_retries: int,
+    timeout: int,
+    max_wait: int,
+    with_pbar: bool = True,
+) -> Path:
+    dest_path.parent.mkdir(exist_ok=True, parents=True)
+    already_downloaded = dest_path.stat().st_size if dest_path.exists() else 0
+
+    for attempt in range(num_retries):
+        bytes_this_attempt = 0
+        try:
+            headers = {}
+            if already_downloaded > 0:
+                headers["Range"] = f"bytes={already_downloaded}-"
+
+            r = requests.get(url, headers=headers, stream=True, timeout=timeout)
+            if r.status_code == 416:
+                return dest_path
+
+            r.raise_for_status()
+
+            content_length = int(r.headers.get("Content-Length", -1))
+            if content_length == -1:
+                raise ValueError(f"missing Content-Length for {url}")
+
+            if r.status_code == 206:
+                open_mode = "ab"
+                resumed_from = already_downloaded
+            else:
+                open_mode = "wb"
+                resumed_from = 0
+            total = resumed_from + content_length
+
+            pbar = (
+                tqdm(
+                    total=total,
+                    initial=resumed_from,
+                    unit="B",
+                    unit_scale=True,
+                    desc=f"downloading {url[:100]}",
+                )
+                if with_pbar
+                else None
+            )
+
+            with open(dest_path, open_mode) as f:
+                for chunk in r.iter_content(chunk_size):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    n = len(chunk)
+                    bytes_this_attempt += n
+                    already_downloaded += n
+                    if pbar:
+                        pbar.update(n)
+
+            actual_size = dest_path.stat().st_size
+            if actual_size != total:
+                raise IOError(
+                    f"downloaded {actual_size} bytes, expected {total} for {url}"
+                )
+
+            if pbar:
+                pbar.close()
+            r.close()
+
+            return dest_path
+
+        except Exception as exc:
+            if not _is_retryable(exc) or attempt == num_retries - 1:
+                raise
+
+            already_downloaded -= bytes_this_attempt
+
+            wait = min(2**attempt, max_wait)
+            logging.warning(
+                "failed to download %s (attempt %d/%d): %s. retrying in %.0fs",
+                url,
+                attempt + 1,
+                num_retries,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
+
+    raise RuntimeError(f"failed after {num_retries} retries")
+
+
 def better_downloader(
     url: str,
     dest_path: Path,
@@ -39,9 +178,9 @@ def better_downloader(
     max_timeout: int,
 ) -> None:
     dest_path.parent.mkdir(exist_ok=True, parents=True)
-
     content_length = -1
     accepts_range = ""
+
     for attempt in range(retries):
         try:
             with requests.head(url, timeout=timeout) as r:
@@ -55,7 +194,7 @@ def better_downloader(
 
             wait = min(2**attempt, max_timeout)
             logging.warning(
-                "HEAD %s failed (attempt %d/%d): %s — retrying in %.0fs",
+                "failed to send head request to %s (attempt %d/%d): %s. retrying in %.2fs",
                 url,
                 attempt + 1,
                 retries,
@@ -72,7 +211,9 @@ def better_downloader(
     if dest_path.exists():
         already_downloaded = dest_path.stat().st_size
         if already_downloaded >= content_length:
-            logging.info("skipping %s — already fully downloaded", dest_path.name)
+            logging.info(
+                "skipping %s as it is already fully downloaded", dest_path.name
+            )
             return
 
     if already_downloaded == 0:
@@ -146,7 +287,7 @@ def better_downloader(
 
                     wait = min(2**attempt, max_timeout)
                     logging.warning(
-                        "chunk %d-%d failed (attempt %d/%d): %s — retrying in %.0fs",
+                        "chunk %d-%d failed (attempt %d/%d): %s. retrying in %.0fs",
                         chunk_start,
                         chunk_end,
                         attempt + 1,
@@ -179,143 +320,6 @@ def better_downloader(
             raise RuntimeError(
                 f"downloaded file size {actual_size} does not match expected content length {content_length} for {url}"
             )
-
-
-def simple_file_download(
-    url: str,
-    dest_path: Path,
-    chunk_size: int,
-    retries: int,
-    timeout: int,
-    max_timeout: int,
-    with_pbar: bool = True,
-) -> Path:
-    dest_path.parent.mkdir(exist_ok=True, parents=True)
-    already_downloaded = dest_path.stat().st_size if dest_path.exists() else 0
-
-    for attempt in range(retries):
-        bytes_this_attempt = 0
-        try:
-            headers = {}
-            if already_downloaded > 0:
-                headers["Range"] = f"bytes={already_downloaded}-"
-
-            r = requests.get(url, headers=headers, stream=True, timeout=timeout)
-            r.raise_for_status()
-
-            if r.status_code == 206:
-                open_mode = "ab"
-                resumed_from = already_downloaded
-            else:
-                open_mode = "wb"
-                resumed_from = 0
-
-            content_length = int(r.headers.get("Content-Length", -1))
-            if content_length == -1:
-                raise ValueError(f"missing Content-Length for {url}")
-
-            total = resumed_from + content_length
-
-            pbar = (
-                tqdm(
-                    total=total,
-                    initial=resumed_from,
-                    unit="B",
-                    unit_scale=True,
-                    desc=f"downloading {url[:100]}",
-                )
-                if with_pbar
-                else None
-            )
-
-            with open(dest_path, open_mode) as f:
-                for chunk in r.iter_content(chunk_size):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    n = len(chunk)
-                    bytes_this_attempt += n
-                    already_downloaded += n
-                    if pbar:
-                        pbar.update(n)
-
-            actual_size = dest_path.stat().st_size
-            if actual_size != total:
-                raise IOError(
-                    f"downloaded {actual_size} bytes, expected {total} for {url}"
-                )
-
-            if pbar:
-                pbar.close()
-            r.close()
-
-            return dest_path
-
-        except Exception as exc:
-            if not _is_retryable(exc) or attempt == retries - 1:
-                raise
-
-            already_downloaded -= bytes_this_attempt
-
-            wait = min(2**attempt, max_timeout)
-            logging.warning(
-                "failed to download %s (attempt %d/%d, retrying in %.0fs): %s",
-                url,
-                attempt + 1,
-                retries,
-                wait,
-                exc,
-            )
-            time.sleep(wait)
-
-    return dest_path
-
-
-def send_req(
-    method: str,
-    url: str,
-    *,
-    params: dict | None = None,
-    headers: dict | None = None,
-    json: dict | None = None,
-    timeout: int,
-    num_retries: int,
-    max_wait: int,
-    stream: bool = False,
-    **kwargs,
-) -> requests.Response | None:
-    for attempt in range(num_retries):
-        try:
-            r = requests.request(
-                method,
-                url,
-                params=params,
-                headers=headers,
-                json=json,
-                timeout=timeout,
-                stream=stream,
-                **kwargs,
-            )
-            r.raise_for_status()
-            return r
-        except requests.RequestException as exc:
-            if not _is_retryable(exc) or attempt == num_retries - 1:
-                raise
-
-            wait = min(2**attempt, max_wait)
-            logging.warning(
-                "failed to send %s req to %s (attempt %d/%d, retrying in %.0fs) - %s",
-                method,
-                url,
-                attempt + 1,
-                num_retries,
-                wait,
-                exc,
-            )
-
-            time.sleep(wait)
-
-    raise RuntimeError(f"failed after {num_retries} retries")
 
 
 def exec_query_from_file(

@@ -66,7 +66,7 @@ def postgres_transfer(
         "geo_series": _TableInfo(
             sqlite_db_file=geo_db_file,
             modifier=_geo_series_batch_modifier(
-                sra_db_file, geo_db_file, unified_metadata_db_file
+                sra_db_file, geo_db_file, unified_metadata_db_file, batch_size
             ),
             select_cols=_GEO_SERIES_SELECT_COLS,
             insert_cols=_GEO_SERIES_INSERT_COLS,
@@ -85,7 +85,9 @@ def postgres_transfer(
         ),
         "sra_studies": _TableInfo(
             sqlite_db_file=sra_db_file,
-            modifier=_sra_studies_batch_modifier(sra_db_file, unified_metadata_db_file),
+            modifier=_sra_studies_batch_modifier(
+                sra_db_file, unified_metadata_db_file, batch_size
+            ),
             select_cols=_SRA_STUDIES_SELECT_COLS,
             insert_cols=_SRA_STUDIES_INSERT_COLS,
         ),
@@ -130,7 +132,9 @@ def postgres_transfer(
         ),
         "arrayexpress_experiments": _TableInfo(
             sqlite_db_file=ae_db_file,
-            modifier=_arrayexpress_experiments_batch_modifier(unified_metadata_db_file),
+            modifier=_arrayexpress_experiments_batch_modifier(
+                unified_metadata_db_file, batch_size
+            ),
             select_cols=_AE_EXPERIMENTS_SELECT_COLS,
             insert_cols=_AE_EXPERIMENTS_INSERT_COLS,
         ),
@@ -250,6 +254,24 @@ def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str
     return col_list, pk
 
 
+def _query_in(
+    conn: sqlite3.Connection,
+    query_prefix: str,
+    items: list[str],
+    batch_size: int,
+    query_suffix: str = "",
+):
+    results = []
+
+    for i in range(0, len(items), batch_size):
+        chunk = items[i : i + batch_size]
+        ph = ", ".join(["?"] * len(chunk))
+        results.extend(
+            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall()
+        )
+    return results
+
+
 def _execute_batch_inserts(
     pg_conn: psycopg.Connection,
     insert_query: str,
@@ -277,17 +299,6 @@ def _execute_batch_inserts(
                 cur.executemany(cast(LiteralString, insert_query), batch)
             pg_conn.commit()
             pbar.update(len(batch))
-
-
-def _query_in(conn, query_prefix, items, query_suffix="", chunk_size=900):
-    results = []
-    for i in range(0, len(items), chunk_size):
-        chunk = items[i : i + chunk_size]
-        ph = ", ".join(["?"] * len(chunk))
-        results.extend(
-            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall()
-        )
-    return results
 
 
 def _transfer_helper(
@@ -372,6 +383,7 @@ def _geo_series_batch_modifier(
     sra_db_file: Path,
     geo_db_file: Path,
     unified_metadata_db_file: Path,
+    batch_size: int,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
         _get_conn = _make_conn_cache()
@@ -423,6 +435,7 @@ def _geo_series_batch_modifier(
                 conn,
                 "SELECT gs.accession, gp.organism, gs.channels, gs.platform_ref FROM geo_samples AS gs LEFT JOIN geo_platforms gp ON gs.platform_ref = gp.accession WHERE gs.accession",
                 unique_samples,
+                batch_size=batch_size,
             ):
                 if org_json:
                     org_parsed = json.loads(org_json)
@@ -453,6 +466,7 @@ def _geo_series_batch_modifier(
                 conn,
                 "SELECT study, library_strategy, instrument_model FROM sra_experiments WHERE study",
                 unique_aliases,
+                batch_size,
             ):
                 if strategy:
                     alias_strategies[study].add(strategy)
@@ -469,6 +483,7 @@ def _geo_series_batch_modifier(
                 conn,
                 "SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession",
                 unique_accessions,
+                batch_size,
             ):
                 aliases_data = json.loads(aliases_json)
                 if aliases_data:
@@ -484,6 +499,7 @@ def _geo_series_batch_modifier(
                 conn,
                 "SELECT accession, person, department, organization, address_country FROM geo_contributors WHERE accession",
                 unique_accessions,
+                batch_size,
             ):
                 entry = accession_contributors.setdefault(
                     acc,
@@ -599,6 +615,7 @@ def _sra_run_download_links_modifier(batch: list[dict]) -> list[dict]:
 def _sra_studies_batch_modifier(
     sra_db_file: Path,
     unified_metadata_db_file: Path,
+    batch_size: int,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
         _get_conn = _make_conn_cache()
@@ -633,7 +650,8 @@ def _sra_studies_batch_modifier(
                 conn,
                 "SELECT submission, scientific_name FROM sra_samples WHERE submission",
                 unique_submissions,
-                "AND scientific_name IS NOT NULL",
+                query_suffix="AND scientific_name IS NOT NULL",
+                batch_size=batch_size,
             ):
                 submission_organisms.setdefault(sub, set[str]()).add(org)
 
@@ -649,6 +667,7 @@ def _sra_studies_batch_modifier(
                 conn,
                 "SELECT submission, library_strategy, instrument_model, platform FROM sra_experiments WHERE submission",
                 unique_submissions,
+                batch_size,
             ):
                 if strategy:
                     submission_strategies[sub].add(strategy)
@@ -667,7 +686,8 @@ def _sra_studies_batch_modifier(
                 conn,
                 "SELECT canonical_accession, country FROM unified_centers WHERE canonical_accession",
                 unique_accessions,
-                "AND country IS NOT NULL",
+                query_suffix="AND country IS NOT NULL",
+                batch_size=batch_size,
             ):
                 accession_countries.setdefault(acc, set[str]()).add(country)
 
@@ -715,7 +735,7 @@ def _ena_studies_search_batch_modifier(batch: list[dict]) -> list[dict]:
 
 
 def _arrayexpress_experiments_batch_modifier(
-    unified_metadata_db_file: Path,
+    unified_metadata_db_file: Path, batch_size: int
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
         _get_conn = _make_conn_cache()
@@ -730,7 +750,8 @@ def _arrayexpress_experiments_batch_modifier(
                 conn,
                 "SELECT canonical_accession, country FROM unified_centers WHERE canonical_accession",
                 unique_accessions,
-                "AND country IS NOT NULL",
+                query_suffix="AND country IS NOT NULL",
+                batch_size=batch_size,
             ):
                 accession_countries.setdefault(acc, set[str]()).add(country)
 
@@ -1243,6 +1264,7 @@ def _transfer_study_publications(
                 pm_conn,
                 "SELECT * FROM pubmed_metadata WHERE pmid",
                 unique_pmids,
+                batch_size=batch_size,
             ):
                 d = dict(row)
                 pmid_to_pub[d["pmid"]] = d

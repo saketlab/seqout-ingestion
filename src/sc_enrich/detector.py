@@ -51,7 +51,10 @@ class DownloadLink:
 
 
 SC_ENRICH_OUTPUT_DIR = "sc_enrich"
+MIN_DISK_SPACE_BYTES = 5 * 1024**3
 POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
+
+
 FILE_TYPE_PRIORITY = [
     FileType.Barcodes,
     FileType.H5,
@@ -77,10 +80,27 @@ def sc_detector(
     retries: int,
     timeout: int,
     max_timeout: int,
-    batch_size: int = 100,
+    batch_size: int,
 ):
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
+    if output_dir.exists():
+        shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(exist_ok=True, parents=True)
+
+    if not _check_disk_space(output_dir):
+        logging.error(
+            "insufficient disk space at %s: cannot start sc_enrich detector",
+            output_dir,
+        )
+        return
+
+    for db_path in (unified_metadata_db_file, geo_db_file, ae_db_file):
+        if not _check_disk_space(db_path.parent):
+            logging.error(
+                "insufficient disk space at %s: database operations may fail",
+                db_path.parent,
+            )
+            return
 
     def _cleanup(signum, frame):
         shutil.rmtree(output_dir, ignore_errors=True)
@@ -111,10 +131,13 @@ def sc_detector(
         else:
             accessions.append(accession)
 
-    placeholders = ", ".join(repr(acc) for acc in search_for_aliases)
-    rows: list[tuple[str, str]] = conn.execute(
-        f"SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession IN ({placeholders}) GROUP BY canonical_accession"
-    ).fetchall()
+    rows = _query_in(
+        conn,
+        "SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession",
+        search_for_aliases,
+        batch_size,
+        "GROUP BY canonical_accession",
+    )
 
     for accession, aliases_json in rows:
         aliases: dict[str, str] = json.loads(aliases_json)
@@ -136,20 +159,33 @@ def sc_detector(
 
     gsm_to_gse: dict[str, str] = {}
 
-    placeholders = ", ".join(
-        repr(acc) for acc in accessions_to_process if acc.startswith("GSE")
-    )
-    rows: list[tuple[str, str]] = geo_conn.execute(
-        f"SELECT accession, samples_ref FROM geo_series WHERE accession IN ({placeholders}) GROUP BY accession;"
-    ).fetchall()
+    gse_list = [acc for acc in accessions_to_process if acc.startswith("GSE")]
+    try:
+        rows = _query_in(
+            geo_conn,
+            "SELECT accession, samples_ref FROM geo_series WHERE accession",
+            gse_list,
+            batch_size,
+            "GROUP BY accession",
+        )
+    except sqlite3.OperationalError:
+        logging.error("database error querying geo_series (disk may be full)")
+        rows = []
 
     for accession, samples_ref_json in rows:
         if not samples_ref_json:
             continue
 
-        samples_ref: list[dict[str, str]] = json.loads(samples_ref_json)
+        samples_ref = json.loads(samples_ref_json)
         for v in samples_ref:
-            gsm_to_gse[v["@ref"]] = accession
+            if isinstance(v, dict):
+                gsm_to_gse[v["@ref"]] = accession
+            elif isinstance(v, str):
+                gsm_to_gse[v] = accession
+            else:
+                raise ValueError(
+                    "samples_ref of geo_series table is of either list[str] of list[dict] type"
+                )
 
     download_links_mapping: dict[str, list[DownloadLink]] = defaultdict(
         list[DownloadLink]
@@ -157,10 +193,12 @@ def sc_detector(
 
     all_gsms = list(gsm_to_gse.keys())
     if all_gsms:
-        placeholders = ", ".join(repr(g) for g in all_gsms)
-        rows: list[tuple[str, str]] = geo_conn.execute(
-            f"SELECT accession, supplementary_data FROM geo_samples WHERE accession IN ({placeholders})"
-        ).fetchall()
+        rows = _query_in(
+            geo_conn,
+            "SELECT accession, supplementary_data FROM geo_samples WHERE accession",
+            all_gsms,
+            batch_size,
+        )
 
         for gsm_accession, supl_data_json in rows:
             if not supl_data_json:
@@ -251,14 +289,14 @@ def sc_detector(
 
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
         download_futures: dict[Future, tuple[str, int]] = {}
-        process_futures: dict[Future, tuple[str, Path, FileType, int]] = {}
+        process_futures: dict[Future, tuple[str, Path, Path, FileType, int]] = {}
         downloaded_paths: set[Path] = set()
         downloader = functools.partial(
             simple_file_download,
             chunk_size=chunk_size,
-            retries=retries,
+            num_retries=retries,
             timeout=timeout,
-            max_timeout=max_timeout,
+            max_wait=max_timeout,
             with_pbar=False,
         )
         accessions_to_update: list[str] = []
@@ -268,17 +306,25 @@ def sc_detector(
             links = accession_links.get(accession) or []
             for idx in range(start_idx, len(links)):
                 link = links[idx]
-                dest_path = output_dir / link._extract_filename()
+                dest_path = output_dir / accession / link._extract_filename()
 
                 if dest_path.exists():
                     result = _resolve_file_type(dest_path, link.type, chunk_size)
                     if result is None:
                         logging.debug("unable to find file type for %s", dest_path)
+                        decompressed = dest_path.with_suffix("")
+                        if decompressed != dest_path:
+                            decompressed.unlink(missing_ok=True)
                         continue
                     file_type, sniffed_path = result
                     process_futures[
                         pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
-                    ] = (accession, dest_path, file_type, idx)
+                    ] = (accession, dest_path, sniffed_path, file_type, idx)
+                    return
+
+                if not _check_disk_space(output_dir):
+                    logging.warning("skipping %s: insufficient disk space", link.url)
+                    _try_links(accession, idx + 1)
                     return
 
                 future = pool.submit(
@@ -316,19 +362,24 @@ def sc_detector(
             for f in done:
                 if f in download_futures:
                     accession, link_idx = download_futures.pop(f)
+                    link = accession_links[accession][link_idx]
+
                     try:
                         dest_path = f.result()
-                        link = accession_links[accession][link_idx]
                         result = _resolve_file_type(dest_path, link.type, chunk_size)
                         if result is None:
                             logging.debug("unable to find file type for %s", dest_path)
+                            dest_path.unlink(missing_ok=True)
+                            decompressed = dest_path.with_suffix("")
+                            if decompressed != dest_path:
+                                decompressed.unlink(missing_ok=True)
                             _try_links(accession, link_idx + 1)
                             continue
 
                         file_type, sniffed_path = result
                         process_futures[
                             pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
-                        ] = (accession, dest_path, file_type, link_idx)
+                        ] = (accession, dest_path, sniffed_path, file_type, link_idx)
                         downloaded_paths.add(dest_path)
                     except Exception as e:
                         logging.error("failed to download %s: %s", link.url, e)
@@ -336,10 +387,15 @@ def sc_detector(
 
                 if f in process_futures:
                     is_sc = f.result()
-                    accession, dest_path, file_type, link_idx = process_futures.pop(f)
+                    accession, dest_path, sniffed_path, file_type, link_idx = (
+                        process_futures.pop(f)
+                    )
 
                     if dest_path in downloaded_paths:
                         dest_path.unlink(missing_ok=True)
+
+                    if sniffed_path != dest_path:
+                        sniffed_path.unlink(missing_ok=True)
 
                     if accession in done_accessions:
                         continue
@@ -358,6 +414,33 @@ def sc_detector(
     pbar.close()
     _db_flush()
     shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def _check_disk_space(path: Path, min_bytes: int = MIN_DISK_SPACE_BYTES) -> bool:
+    try:
+        usage = shutil.disk_usage(path)
+        return usage.free >= min_bytes
+    except OSError:
+        return False
+
+
+def _query_in(
+    conn: sqlite3.Connection,
+    query_prefix: str,
+    items: list[str],
+    batch_size: int,
+    query_suffix: str = "",
+):
+    results = []
+
+    for i in range(0, len(items), batch_size):
+        chunk = items[i : i + batch_size]
+        ph = ", ".join(["?"] * len(chunk))
+        results.extend(
+            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall()
+        )
+
+    return results
 
 
 def _flush_updates(conn: sqlite3.Connection, accessions: list[str]) -> None:
@@ -518,11 +601,18 @@ def _process_tar(path: Path, chunk_size: int) -> bool:
 
                 result = _resolve_file_type(tmp_path, file_type, chunk_size)
                 if result is None:
+                    Path(tmp_path).unlink(missing_ok=True)
+                    decompressed = tmp_path.with_suffix("")
+                    if decompressed != tmp_path:
+                        decompressed.unlink(missing_ok=True)
                     continue
-                file_type, _ = result
 
-                is_sc = _is_sc(tmp_path, file_type, chunk_size)
+                file_type, sniffed_path = result
+                is_sc = _is_sc(sniffed_path, file_type, chunk_size)
                 Path(tmp_path).unlink(missing_ok=True)
+
+                if sniffed_path != tmp_path:
+                    sniffed_path.unlink(missing_ok=True)
                 if is_sc:
                     return True
 

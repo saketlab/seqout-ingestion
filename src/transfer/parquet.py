@@ -36,10 +36,19 @@ def parquet_transfer(
         _fetch_all_tables(db_file, table_infos)
 
     with ThreadPoolExecutor(num_workers) as pool:
-        futures = [
-            pool.submit(_export_to_pq, output_dir, table_name, db_file, batch_size)
-            for table_name, db_file in table_infos
-        ]
+        futures = []
+
+        for table_name, db_file in table_infos:
+            if (
+                ("_fts" in table_name)
+                or ("sqlite_" in table_name)
+                or (table_name == "study_fetch_log")
+            ):
+                continue
+
+            futures.append(
+                pool.submit(_export_to_pq, output_dir, table_name, db_file, batch_size)
+            )
 
         with tqdm(
             total=len(futures),
@@ -70,9 +79,7 @@ def _export_to_pq(output_dir: Path, table_name: str, db_file: Path, batch_size: 
         unified_schema = _reconcile_schemas([c.schema for c in chunks])
         chunks = [c.cast(unified_schema) for c in chunks]
 
-        filename = db_file.with_suffix(".parquet").name
-        filename = re.sub(r"_\d{4}-\d{2}-\d{2}", "", filename)
-        output_path = output_dir / filename
+        output_path = output_dir / f"{table_name}.parquet"
 
         with pq.ParquetWriter(
             output_path,
