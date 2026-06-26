@@ -14,12 +14,13 @@ from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 import h5py
 import pyreadr
 import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
+from rpy2.robjects.vectors import Vector
 from tqdm import tqdm
 
 from helpers import simple_file_download
@@ -794,23 +795,68 @@ def _process_rds_rpy2(path: Path) -> int:
     try:
         ro.r(f'obj <- readRDS("{path}")')
 
-        n_cells = int(
+        vec = cast(
+            Vector,
             ro.r("""
             n_cells <- 0
+
             if (inherits(obj, "Seurat")) {
                 counts <- tryCatch(
-                    Seurat::GetAssayData(obj, slot = "counts"),
+                    Seurat::GetAssayData(obj, layer = "counts"),
+                    error = function(e) tryCatch(
+                        Seurat::GetAssayData(obj, slot = "counts"),
+                        error = function(e2) NULL
+                    )
+                )
+                if (!is.null(counts)) {
+                    n_cells <- ncol(counts)
+                }
+            } else if (inherits(obj, "SeuratObject")) {
+                counts <- tryCatch(
+                    SeuratObject::GetAssayData(obj, layer = "counts"),
                     error = function(e) NULL
                 )
                 if (!is.null(counts)) {
                     n_cells <- ncol(counts)
                 }
+            } else if (inherits(obj, "cell_data_set")) {
+                n_cells <- ncol(obj)
+            } else if (inherits(obj, "SingleCellExperiment")) {
+                counts <- tryCatch(
+                    SingleCellExperiment::counts(obj),
+                    error = function(e) NULL
+                )
+                if (!is.null(counts)) {
+                    n_cells <- ncol(counts)
+                }
+            } else if (inherits(obj, "ExpressionSet")) {
+                exprs_mat <- tryCatch(
+                    Biobase::exprs(obj),
+                    error = function(e) NULL
+                )
+                if (!is.null(exprs_mat)) {
+                    n_cells <- ncol(exprs_mat)
+                }
+            } else if (inherits(obj, "liger")) {
+                raw_data <- tryCatch(
+                    obj@raw.data,
+                    error = function(e) NULL
+                )
+                if (!is.null(raw_data)) {
+                    n_cells <- sum(sapply(raw_data, ncol))
+                }
+            } else if (inherits(obj, "Pagoda2")) {
+                n_cells <- nrow(obj$counts)
             } else if (is.data.frame(obj) || is.matrix(obj)) {
                 n_cells <- ncol(obj)
+            } else {
+                n_cells <- tryCatch(ncol(obj), error = function(e) 0)
+                if (is.null(n_cells) || is.na(n_cells)) n_cells <- 0
             }
             n_cells
-        """)[0]
+        """),
         )
+        n_cells = int(vec[0])
 
         return n_cells if n_cells > 1 else 0
     except Exception as e:
