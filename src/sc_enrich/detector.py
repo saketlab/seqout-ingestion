@@ -18,6 +18,8 @@ from typing import Callable
 
 import h5py
 import pyreadr
+import rpy2.robjects as ro
+from pyreadr.custom_errors import LibrdataError
 from tqdm import tqdm
 
 from helpers import simple_file_download
@@ -112,6 +114,12 @@ def sc_detector(
     conn = sqlite3.connect(unified_metadata_db_file)
     geo_conn = sqlite3.connect(geo_db_file)
     ae_conn = sqlite3.connect(ae_db_file)
+
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(unified_metadata)")]
+    if "single_cell_count" not in columns:
+        conn.execute(
+            "ALTER TABLE unified_metadata ADD COLUMN single_cell_count INTEGER DEFAULT 0;"
+        )
 
     def _db_flush():
         ae_conn.close()
@@ -287,7 +295,15 @@ def sc_detector(
     pbar_accessions: set[str] = set()
     accession_links: dict[str, list[DownloadLink]] = dict(download_links_mapping)
 
-    with ThreadPoolExecutor(max_workers=num_workers) as pool:
+    download_workers = min(
+        num_workers // 2, 8
+    )  # 8 parallel download workers works very well with NCBI and EBI FTP server without hitting much rate limit errors
+    process_workers = num_workers - download_workers
+
+    with (
+        ThreadPoolExecutor(max_workers=download_workers) as download_pool,
+        ThreadPoolExecutor(max_workers=process_workers) as process_pool,
+    ):
         download_futures: dict[Future, tuple[str, int]] = {}
         process_futures: dict[Future, tuple[str, Path, Path, FileType, int]] = {}
         downloaded_paths: set[Path] = set()
@@ -299,7 +315,7 @@ def sc_detector(
             max_wait=max_timeout,
             with_pbar=False,
         )
-        accessions_to_update: list[str] = []
+        updates: list[tuple[str, int]] = []
         done_accessions: set[str] = set()
 
         def _try_links(accession: str, start_idx: int):
@@ -316,9 +332,10 @@ def sc_detector(
                         if decompressed != dest_path:
                             decompressed.unlink(missing_ok=True)
                         continue
+
                     file_type, sniffed_path = result
                     process_futures[
-                        pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
+                        process_pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
                     ] = (accession, dest_path, sniffed_path, file_type, idx)
                     return
 
@@ -327,18 +344,18 @@ def sc_detector(
                     _try_links(accession, idx + 1)
                     return
 
-                future = pool.submit(
+                future = download_pool.submit(
                     downloader, url=link._parse_url(), dest_path=dest_path
                 )
                 download_futures[future] = (accession, idx)
                 return
 
             done_accessions.add(accession)
-            accessions_to_update.append(accession)
+            updates.append((accession, 0))
 
-            if len(accessions_to_update) >= batch_size:
-                _flush_updates(conn, accessions_to_update)
-                accessions_to_update.clear()
+            if len(updates) >= batch_size:
+                _flush_updates(conn, updates)
+                updates.clear()
 
             if accession not in pbar_accessions:
                 pbar_accessions.add(accession)
@@ -378,7 +395,9 @@ def sc_detector(
 
                         file_type, sniffed_path = result
                         process_futures[
-                            pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
+                            process_pool.submit(
+                                _is_sc, sniffed_path, file_type, chunk_size
+                            )
                         ] = (accession, dest_path, sniffed_path, file_type, link_idx)
                         downloaded_paths.add(dest_path)
                     except Exception as e:
@@ -386,7 +405,7 @@ def sc_detector(
                         _try_links(accession, link_idx + 1)
 
                 if f in process_futures:
-                    is_sc = f.result()
+                    single_cell_count = f.result()
                     accession, dest_path, sniffed_path, file_type, link_idx = (
                         process_futures.pop(f)
                     )
@@ -400,16 +419,20 @@ def sc_detector(
                     if accession in done_accessions:
                         continue
 
-                    if is_sc:
+                    if single_cell_count > 0:
                         done_accessions.add(accession)
+                        updates.append((accession, single_cell_count))
+                        if len(updates) >= batch_size:
+                            _flush_updates(conn, updates)
+                            updates.clear()
                         if accession not in pbar_accessions:
                             pbar_accessions.add(accession)
                             pbar.update(1)
                     else:
                         _try_links(accession, link_idx + 1)
 
-        if accessions_to_update:
-            _flush_updates(conn, accessions_to_update)
+        if updates:
+            _flush_updates(conn, updates)
 
     pbar.close()
     _db_flush()
@@ -443,11 +466,22 @@ def _query_in(
     return results
 
 
-def _flush_updates(conn: sqlite3.Connection, accessions: list[str]) -> None:
-    placeholders = ", ".join(repr(acc) for acc in accessions)
-    conn.execute(
-        f"UPDATE unified_metadata SET is_single_cell = 0, single_cell_modality = '' WHERE canonical_accession IN ({placeholders})"
-    )
+def _flush_updates(conn: sqlite3.Connection, updates: list[tuple[str, int]]) -> None:
+    non_sc = [acc for acc, cnt in updates if cnt == 0]
+    sc = [(acc, cnt) for acc, cnt in updates if cnt > 0]
+
+    if non_sc:
+        placeholders = ", ".join(repr(acc) for acc in non_sc)
+        conn.execute(
+            f"UPDATE unified_metadata SET is_single_cell = 0, single_cell_modality = '', single_cell_count = 0 WHERE canonical_accession IN ({placeholders})"
+        )
+
+    for accession, single_cell_count in sc:
+        conn.execute(
+            "UPDATE unified_metadata SET single_cell_count = ? WHERE canonical_accession = ?",
+            (single_cell_count, accession),
+        )
+
     conn.commit()
 
 
@@ -490,20 +524,38 @@ def _classify_file(path: str) -> FileType:
     return FileType.Unknown
 
 
+def _is_gzipped(path: Path) -> bool:
+    GZIP_MAGIC = b"\x1f\x8b"
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) == GZIP_MAGIC
+    except OSError:
+        return False
+
+
 def _resolve_file_type(
     path: Path, file_type: FileType, chunk_size: int
 ) -> tuple[FileType, Path] | None:
     if path.suffix == ".gz":
+        if not _is_gzipped(path):
+            stripped = path.with_suffix("")
+            if not stripped.exists():
+                path.rename(stripped)
+            return _resolve_file_type(stripped, file_type, chunk_size)
+
         tmp_path = path.with_suffix("")
         if not tmp_path.exists():
             with gzip.open(path, "rb") as f_in, open(tmp_path, "wb") as f_out:
                 shutil.copyfileobj(f_in, f_out)
         path = tmp_path
+
     if file_type not in POSSIBLE_MISNOMER_FILE_TYPES:
         return file_type, path
+
     resolved_type, resolved_path = _file_type_sniffer(path, chunk_size)
     if resolved_type == FileType.Unknown:
         return None
+
     return resolved_type, resolved_path
 
 
@@ -541,7 +593,7 @@ def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:
         return FileType.Txt, path
 
 
-def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> bool:
+def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> int:
     if file_type == FileType.Barcodes:
         return _process_barcodes(dest_path, chunk_size)
     elif file_type == FileType.H5:
@@ -565,24 +617,27 @@ def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> bool:
     elif file_type == FileType.Rds:
         return _process_rds(dest_path, chunk_size)
 
-    return False
+    return 0
 
 
-def safe_process(func: Callable[[Path, int], bool]) -> Callable[[Path, int], bool]:
+def safe_process(
+    func: Callable[[Path, int], int],
+) -> Callable[[Path, int], int]:
     @functools.wraps(func)
     def wrapper(path: Path, chunk_size: int, *args, **kwargs):
         try:
             return func(path, chunk_size, *args, **kwargs)
         except Exception as e:
             logging.error("failed to process %s: %s", path, e)
-            return True
+            return -1
 
     return wrapper
 
 
-def _process_tar(path: Path, chunk_size: int) -> bool:
+def _process_tar(path: Path, chunk_size: int) -> int:
     try:
         with tarfile.open(path, "r:*") as tar:
+            max_count = 0
             for member in tar.getmembers():
                 name = member.name.lower()
                 file_type = _classify_file(name)
@@ -608,30 +663,32 @@ def _process_tar(path: Path, chunk_size: int) -> bool:
                     continue
 
                 file_type, sniffed_path = result
-                is_sc = _is_sc(sniffed_path, file_type, chunk_size)
+                single_cell_count = _is_sc(sniffed_path, file_type, chunk_size)
                 Path(tmp_path).unlink(missing_ok=True)
 
                 if sniffed_path != tmp_path:
                     sniffed_path.unlink(missing_ok=True)
-                if is_sc:
-                    return True
+                if single_cell_count > max_count:
+                    max_count = single_cell_count
 
-        return False
+        return max_count
     except Exception as e:
         logging.error("failed to process %s: %s", path, e)
-        return True
+        return -1
 
 
 @safe_process
-def _process_barcodes(path: Path, chunk_size: int) -> bool:
+def _process_barcodes(path: Path, chunk_size: int) -> int:
     with open(path, "rb") as f:
         chunk = f.read(chunk_size)
     idx = chunk.find(b"\n")
-    return idx != -1 and len(chunk) > idx + 1
+    if idx == -1 or len(chunk) <= idx + 1:
+        return 0
+    return len(chunk[idx + 1 :].splitlines())
 
 
 @safe_process
-def _process_h5(path: Path, _: int) -> bool:
+def _process_h5(path: Path, _: int) -> int:
     n_cells = None
 
     with h5py.File(path, "r") as f:
@@ -648,32 +705,36 @@ def _process_h5(path: Path, _: int) -> bool:
 
         f.visititems(find_barcodes)
 
-    return n_cells is not None and n_cells > 1
+    return n_cells if n_cells is not None and n_cells > 1 else 0
 
 
 @safe_process
-def _process_h5ad(path: Path, _: int) -> bool:
+def _process_h5ad(path: Path, _: int) -> int:
     n_cells = None
 
     with h5py.File(path, "r") as f:
         if "obs/_index" in f:
             n_cells = len(f["obs/_index"])
         elif "X" in f:
-            n_cells = f["X"].shape[0]
+            x = f["X"]
+            if hasattr(x, "shape"):
+                n_cells = x.shape[0]
+            elif "shape" in x:
+                n_cells = x["shape"][0]
 
-    return n_cells is not None and n_cells > 1
+    return n_cells if n_cells is not None and n_cells > 1 else 0
 
 
 @safe_process
-def _process_txt(path: Path, chunk_size: int) -> bool:
+def _process_txt(path: Path, chunk_size: int) -> int:
     with open(path, "rb") as f:
         chunk = f.read(chunk_size)
     lines = chunk.strip().splitlines()
-    return len(lines) > 2
+    return len(lines) if len(lines) > 2 else 0
 
 
 @safe_process
-def _process_mtx(path: Path, chunk_size: int) -> bool:
+def _process_mtx(path: Path, chunk_size: int) -> int:
     with open(path, "rb") as f:
         header = f.read(chunk_size)
 
@@ -684,16 +745,16 @@ def _process_mtx(path: Path, chunk_size: int) -> bool:
         if len(parts) >= 2:
             try:
                 n_cells = int(parts[1])
-                return n_cells > 1
+                return n_cells if n_cells > 1 else 0
             except (ValueError, IndexError):
-                return False
+                return 0
 
-    return False
+    return 0
 
 
-def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], bool]:
+def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
     @safe_process
-    def _wrapper(path: Path, chunk_size: int) -> bool:
+    def _wrapper(path: Path, chunk_size: int) -> int:
         with open(path, "rb") as f:
             chunk = f.read(chunk_size)
 
@@ -703,14 +764,55 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], bool]
             if first_newline != -1
             else chunk.decode().split(delimiter)
         )
-        return len(header) > 3
+        n_cols = len(header)
+        return n_cols if n_cols > 3 else 0
 
     return _wrapper
 
 
 @safe_process
-def _process_rds(path: Path, _: int) -> bool:
-    result = pyreadr.read_r(path)
+def _process_rds(path: Path, _: int) -> int:
+    try:
+        result = pyreadr.read_r(path)
+    except LibrdataError:
+        return _process_rds_rpy2(path)
+
+    if not result:
+        logging.error("no objects found in rds %s", path)
+        return 0
+
     df = list(result.values())[0]
+    if not hasattr(df, "shape") or len(df.shape) != 2:
+        logging.error("unexpected object type in rds %s: %s", path, type(df))
+        return 0
+
     n_cells = df.shape[1]
-    return n_cells > 1
+    return n_cells if n_cells > 1 else 0
+
+
+def _process_rds_rpy2(path: Path) -> int:
+    try:
+        ro.r(f'obj <- readRDS("{path}")')
+
+        n_cells = int(
+            ro.r("""
+            n_cells <- 0
+            if (inherits(obj, "Seurat")) {
+                counts <- tryCatch(
+                    Seurat::GetAssayData(obj, slot = "counts"),
+                    error = function(e) NULL
+                )
+                if (!is.null(counts)) {
+                    n_cells <- ncol(counts)
+                }
+            } else if (is.data.frame(obj) || is.matrix(obj)) {
+                n_cells <- ncol(obj)
+            }
+            n_cells
+        """)[0]
+        )
+
+        return n_cells if n_cells > 1 else 0
+    except Exception as e:
+        logging.error("rpy2 fallback failed for %s: %s", path, e)
+        return 0
