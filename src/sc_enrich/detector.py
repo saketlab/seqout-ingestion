@@ -296,9 +296,8 @@ def sc_detector(
     pbar_accessions: set[str] = set()
     accession_links: dict[str, list[DownloadLink]] = dict(download_links_mapping)
 
-    download_workers = min(
-        num_workers // 2, 8
-    )  # 8 parallel download workers works very well with NCBI and EBI FTP server without hitting much rate limit errors
+    # 8 parallel download workers works very well with ncbi and ebi ftp server without hitting much rate limit errors
+    download_workers = min(num_workers // 2, 8)
     process_workers = num_workers - download_workers
 
     with (
@@ -315,6 +314,9 @@ def sc_detector(
             timeout=timeout,
             max_wait=max_timeout,
             with_pbar=False,
+            # a lot of the rds files have hugely varying expected (`Content-Length`) and actual download size
+            # due to which the download fails, so this check is silenced particularly for this script
+            validate_content_length=False,
         )
         updates: list[tuple[str, int]] = []
         done_accessions: set[str] = set()

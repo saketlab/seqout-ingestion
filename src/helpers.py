@@ -84,6 +84,7 @@ def simple_file_download(
     timeout: int,
     max_wait: int,
     with_pbar: bool = True,
+    validate_content_length: bool = True,
 ) -> Path:
     dest_path.parent.mkdir(exist_ok=True, parents=True)
     already_downloaded = dest_path.stat().st_size if dest_path.exists() else 0
@@ -102,7 +103,7 @@ def simple_file_download(
             r.raise_for_status()
 
             content_length = int(r.headers.get("Content-Length", -1))
-            if content_length == -1:
+            if validate_content_length and content_length == -1:
                 raise ValueError(f"missing Content-Length for {url}")
 
             if r.status_code == 206:
@@ -137,7 +138,7 @@ def simple_file_download(
                         pbar.update(n)
 
             actual_size = dest_path.stat().st_size
-            if actual_size != total:
+            if validate_content_length and actual_size != total:
                 raise IOError(
                     f"downloaded {actual_size} bytes, expected {total} for {url}"
                 )
@@ -204,7 +205,7 @@ def better_downloader(
             time.sleep(wait)
 
     if content_length == -1 or accepts_range == "":
-        simple_file_download(url, dest_path, chunk_size, retries, timeout, max_timeout)
+        simple_file_download(url, dest_path, chunk_size, retries, timeout, max_timeout, validate_content_length=validate_content_length)
         return
 
     already_downloaded = 0
