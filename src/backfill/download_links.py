@@ -98,7 +98,7 @@ def backfill_download_links(
     ncbi_keys_file: Optional[Path],
     num_workers: int,
     is_dry_run: bool,
-    source: str = "ena",
+    source: str,
     limit: Optional[int] = None,
 ):
     if not sra_db_file and not ena_db_file:
