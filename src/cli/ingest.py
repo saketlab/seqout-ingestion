@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 from pathlib import Path
 from typing import Optional
@@ -71,23 +72,27 @@ def geo(
     num_workers: int = _NUM_WORKERS_FLAG,
     chunk_size: int = _CHUNK_SIZE_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
+    check_accession_subdirs: bool = typer.Option(False),
     series_limit: Optional[int] = typer.Option(None),
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,
     max_timeout: int = _MAX_TIMEOUT,
 ):
-    ingest_geo(
-        base_output_dir,
-        db_file,
-        start_date,
-        end_date,
-        num_workers,
-        chunk_size,
-        batch_size,
-        series_limit,
-        retries,
-        timeout,
-        max_timeout,
+    asyncio.run(
+        ingest_geo(
+            base_output_dir,
+            db_file,
+            start_date,
+            end_date,
+            num_workers,
+            chunk_size,
+            batch_size,
+            check_accession_subdirs,
+            series_limit,
+            retries,
+            timeout,
+            max_timeout,
+        )
     )
 
 

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import functools
 import json
@@ -12,12 +13,13 @@ from enum import StrEnum
 from pathlib import Path
 from typing import IO, Optional
 
+import aiohttp
 import humanfriendly
 import lxml.etree as ET
-from bs4 import BeautifulSoup
-from tqdm import tqdm
+from bs4 import BeautifulSoup, Tag
+from tqdm.asyncio import tqdm
 
-from helpers import exec_query_from_file, send_req, simple_file_download
+from helpers import exec_query_from_file, simple_file_download
 
 
 class TableType(StrEnum):
@@ -38,7 +40,7 @@ GEO_SQL_STATEMENTS: dict[TableType, str] = {
 }
 
 
-def ingest_geo(
+async def ingest_geo(
     base_output_dir: Path,
     db_file: Optional[Path],
     start_date: Optional[datetime.date],
@@ -46,6 +48,7 @@ def ingest_geo(
     num_workers: int,
     chunk_size: int,
     batch_size: int,
+    check_accession_subdirs: bool,
     series_limit: Optional[int],
     retries: int,
     timeout: int,
@@ -58,6 +61,7 @@ def ingest_geo(
     data_dir.mkdir(exist_ok=True, parents=True)
 
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    (output_dir / "db").mkdir(exist_ok=True, parents=True)
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"geo_metadata_{date_str}.db")
@@ -68,6 +72,7 @@ def ingest_geo(
 - chunk size: %s
 - batch size: %d
 - series limit: %s
+- check accession subdirs: %s
 - start date: %s
 - end date: %s
 - retries: %d
@@ -77,6 +82,7 @@ def ingest_geo(
         humanfriendly.format_size(chunk_size),
         batch_size,
         str(series_limit) or "None",
+        check_accession_subdirs,
         str(start_date) or "None",
         str(end_date) or "None",
         retries,
@@ -84,9 +90,10 @@ def ingest_geo(
         humanfriendly.format_timespan(max_timeout),
     )
 
-    geo_dict = _build_geo_dict(
+    geo_dict = await _build_geo_dict(
         num_workers,
         series_limit,
+        check_accession_subdirs,
         start_date,
         end_date,
         retries,
@@ -117,170 +124,187 @@ def ingest_geo(
     exec_query_from_file("indexes/geo.sql", db_file)
 
 
-def _build_geo_dict(
+async def _build_geo_dict(
     num_workers: int,
     series_limit: int | None,
+    check_accession_subdirs: bool,
     start_date: datetime.date | None,
     end_date: datetime.date | None,
     retries: int,
     timeout: int,
     max_timeout: int,
 ) -> dict[str, list[str]]:
-    resp = send_req(
-        "GET",
-        "https://ftp.ncbi.nlm.nih.gov/geo/series/",
-        num_retries=retries,
-        timeout=timeout,
-        max_wait=max_timeout,
+    sem = asyncio.Semaphore(num_workers)
+    connector = aiohttp.TCPConnector(
+        limit=num_workers,
+        limit_per_host=num_workers,
+        ttl_dns_cache=300,  # 300 seconds
     )
-    assert resp is not None, "failed to fetch geo series"
+    timeout_config = aiohttp.ClientTimeout(total=max_timeout, connect=timeout)
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    anchors = soup.find_all("a")
-    series_list = [
-        str(a["href"][:-1]) for a in anchors if str(a["href"]).startswith("GSE")
-    ]
+    async with aiohttp.ClientSession(
+        connector=connector, timeout=timeout_config
+    ) as session:
+        resp_text = await _get(
+            session,
+            sem,
+            "https://ftp.ncbi.nlm.nih.gov/geo/series",
+            retries,
+        )
+        assert resp_text is not None, "failed to fetch geo series"
 
-    if series_limit:
-        series_list = series_list[:series_limit]
+        soup = BeautifulSoup(resp_text, "html.parser")
+        anchors = soup.find_all("a")
+        series_list = [
+            str(a["href"][:-1]) for a in anchors if str(a["href"]).startswith("GSE")
+        ]
 
-    all_series_accession_mapping: dict[str, list[str]] = {}
+        if series_limit:
+            series_list = series_list[:series_limit]
 
-    with (
-        ThreadPoolExecutor(num_workers) as pool,
-        tqdm(total=len(series_list), desc="fetching all accessions") as pbar,
-    ):
-        futures = {
-            pool.submit(
-                _fetch_all_accessions_worker, s, retries, timeout, max_timeout
-            ): s
+        fetch_all_tasks = [
+            _fetch_all_accessions_worker(
+                session, sem, start_date, end_date, check_accession_subdirs, s, retries
+            )
             for s in series_list
+        ]
+        fetch_all_results: list[list[str]] = await tqdm.gather(
+            *fetch_all_tasks, desc="fetching all accessions"
+        )
+
+        all_series_accession_mapping: dict[str, list[str]] = {
+            series: accessions
+            for series, accessions in zip(series_list, fetch_all_results)
+            if accessions
         }
 
-        for f in as_completed(futures):
-            accessions = f.result()
-            series = futures[f]
-            if not accessions:
-                pbar.update(1)
-                continue
+        if not check_accession_subdirs or (start_date is None and end_date is None):
+            return all_series_accession_mapping
 
-            all_series_accession_mapping[series] = accessions
-            pbar.update(1)
+        flat: list[tuple[str, str]] = [
+            (series, acc)
+            for series, accs in all_series_accession_mapping.items()
+            for acc in accs
+        ]
 
-    if start_date is None and end_date is None:
-        return all_series_accession_mapping
+        filter_tasks = [
+            _filter_accessions_worker(
+                session, sem, acc, series, start_date, end_date, retries
+            )
+            for series, acc in flat
+        ]
+        filter_results = await tqdm.gather(*filter_tasks, desc="filtering accessions")
 
-    total_accessions = sum([len(x) for x in all_series_accession_mapping.values()])
-    to_process_series_accession_mapping: dict[str, list[str]] = defaultdict(list[str])
+        to_process: dict[str, list[str]] = defaultdict(list)
+        for (series, acc), keep in zip(flat, filter_results):
+            if keep:
+                to_process[series].append(acc)
 
-    with (
-        ThreadPoolExecutor(num_workers) as pool,
-        tqdm(total=total_accessions, desc="filtering accessions to process") as pbar,
-    ):
-        futures = {}
+        return dict(to_process)
 
-        for series, accessions in all_series_accession_mapping.items():
-            for accession in accessions:
-                futures[
-                    pool.submit(
-                        _filter_accessions_worker,
-                        accession,
-                        series,
-                        start_date,
-                        end_date,
-                        retries,
-                        timeout,
-                        max_timeout,
-                    )
-                ] = (
-                    series,
-                    accession,
+
+async def _get(
+    session: aiohttp.ClientSession, sem: asyncio.Semaphore, url: str, retries: int
+) -> str | None:
+    for attempt in range(retries + 1):
+        try:
+            async with sem:
+                async with session.get(url) as resp:
+                    resp.raise_for_status()
+                    return await resp.text()
+        except Exception as e:
+            if attempt == retries:
+                logging.error(
+                    "failed to fetch %s after %d retries: %s", url, retries, e
                 )
-
-        for f in as_completed(futures):
-            to_process = f.result()
-            if not to_process:
-                pbar.update(1)
-                continue
-
-            (series, accession) = futures[f]
-            to_process_series_accession_mapping[series].append(accession)
-            pbar.update(1)
-
-    return to_process_series_accession_mapping
+                return None
+            await asyncio.sleep(2**attempt)
+    return None
 
 
-def _fetch_all_accessions_worker(
+async def _fetch_all_accessions_worker(
+    session: aiohttp.ClientSession,
+    sem: asyncio.Semaphore,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
+    check_accession_subdirs: bool,
     series: str,
     retries: int,
-    timeout: int,
-    max_timeout: int,
 ) -> list[str] | None:
-    resp = send_req(
-        method="GET",
-        url=f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}",
-        num_retries=retries,
-        timeout=timeout,
-        max_wait=max_timeout,
+    resp_text = await _get(
+        session, sem, f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}", retries
     )
-
-    if resp is None:
+    if resp_text is None:
         logging.error("failed to fetch geo accession ids for %s series", series)
         return None
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp_text, "html.parser")
     anchors = soup.find_all("a")
-    accessions = [
-        str(a["href"]).rstrip("/") for a in anchors if str(a["href"]).startswith("GSE")
-    ]
+    accessions: list[str] = []
 
+    if check_accession_subdirs:
+        accessions = [
+            str(a["href"]).rstrip("/")
+            for a in anchors
+            if str(a["href"]).startswith("GSE")
+        ]
+    else:
+        for a in anchors:
+            accession = str(a["href"]).rstrip("/")
+
+            if start_date is not None and end_date is not None:
+                if not _process_anchor_tag(a, start_date, end_date):
+                    continue
+
+            accessions.append(accession)
     return accessions
 
 
-def _filter_accessions_worker(
+async def _filter_accessions_worker(
+    session: aiohttp.ClientSession,
+    sem: asyncio.Semaphore,
     accession: str,
     series: str,
     start_date: datetime.date | None,
     end_date: datetime.date | None,
     retries: int,
-    timeout: int,
-    max_timeout: int,
 ) -> bool:
-    resp = send_req(
-        method="GET",
-        url=f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}/{accession}",
-        num_retries=retries,
-        timeout=timeout,
-        max_wait=max_timeout,
+    resp_text = await _get(
+        session,
+        sem,
+        f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}/{accession}",
+        retries,
     )
-
-    if resp is None:
+    if resp_text is None:
         logging.error("failed to fetch %s geo accession dir", accession)
         return False
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp_text, "html.parser")
 
     for a in soup.find_all("a"):
-        href = a.get("href", "")
-        if not href:
-            continue
-
-        next = a.next_sibling
-        if next is None:
-            continue
-
-        date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(next))
-        if date_match is None:
-            continue
-
-        modified_date = datetime.date.fromisoformat(date_match.group(1))
-        if start_date and modified_date < start_date:
-            continue
-        if end_date and modified_date > end_date:
-            continue
-
-        return True
+        if _process_anchor_tag(a, start_date, end_date):
+            return True
     return False
+
+
+def _process_anchor_tag(
+    anchor: Tag, start_date: datetime.date | None, end_date: datetime.date | None
+) -> bool:
+    next = anchor.next_sibling
+    if next is None:
+        return False
+
+    date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(next))
+    if date_match is None:
+        return False
+
+    modified_date = datetime.date.fromisoformat(date_match.group(1))
+    if start_date and modified_date < start_date:
+        return False
+    if end_date and modified_date > end_date:
+        return False
+
+    return True
 
 
 def _download_worker(

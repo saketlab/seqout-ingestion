@@ -81,6 +81,7 @@ def ingest_sra(
     output_dir.mkdir(exist_ok=True, parents=True)
 
     date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    (output_dir / "db").mkdir(exist_ok=True, parents=True)
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"sra_metadata_{date_str}.db")
