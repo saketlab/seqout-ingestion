@@ -205,7 +205,15 @@ def better_downloader(
             time.sleep(wait)
 
     if content_length == -1 or accepts_range == "":
-        simple_file_download(url, dest_path, chunk_size, retries, timeout, max_timeout, validate_content_length=validate_content_length)
+        simple_file_download(
+            url,
+            dest_path,
+            chunk_size,
+            retries,
+            timeout,
+            max_timeout,
+            validate_content_length=True,
+        )
         return
 
     already_downloaded = 0

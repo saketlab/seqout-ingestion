@@ -2,7 +2,6 @@ import datetime
 import functools
 import json
 import logging
-import pickle
 import re
 import sqlite3
 import tarfile
@@ -47,7 +46,6 @@ def ingest_geo(
     num_workers: int,
     chunk_size: int,
     batch_size: int,
-    series_pickle: Optional[Path],
     series_limit: Optional[int],
     retries: int,
     timeout: int,
@@ -86,10 +84,8 @@ def ingest_geo(
         humanfriendly.format_timespan(max_timeout),
     )
 
-    geo_series_pkl_file = series_pickle or (output_dir / "geo_series.pkl")
     geo_dict = _build_geo_dict(
         num_workers,
-        geo_series_pkl_file,
         series_limit,
         start_date,
         end_date,
@@ -99,7 +95,10 @@ def ingest_geo(
     )
 
     downloader = functools.partial(
-        simple_file_download, retries=retries, timeout=timeout, max_timeout=max_timeout
+        simple_file_download,
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
     )
 
     exec_query_from_file("tables/geo.sql", db_file)
@@ -120,7 +119,6 @@ def ingest_geo(
 
 def _build_geo_dict(
     num_workers: int,
-    pkl_file: Path,
     series_limit: int | None,
     start_date: datetime.date | None,
     end_date: datetime.date | None,
@@ -128,22 +126,16 @@ def _build_geo_dict(
     timeout: int,
     max_timeout: int,
 ) -> dict[str, list[str]]:
-    if pkl_file.exists() and start_date is None and end_date is None:
-        with open(pkl_file, "rb") as f:
-            return pickle.load(f)
-
-    geo_dict: dict[str, list[str]] = {}
-
-    series_resp = send_req(
+    resp = send_req(
         "GET",
         "https://ftp.ncbi.nlm.nih.gov/geo/series/",
         num_retries=retries,
         timeout=timeout,
         max_wait=max_timeout,
     )
-    assert series_resp is not None, "failed to fetch geo series"
+    assert resp is not None, "failed to fetch geo series"
 
-    soup = BeautifulSoup(series_resp.text, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")
     anchors = soup.find_all("a")
     series_list = [
         str(a["href"][:-1]) for a in anchors if str(a["href"]).startswith("GSE")
@@ -152,77 +144,143 @@ def _build_geo_dict(
     if series_limit:
         series_list = series_list[:series_limit]
 
-    def _worker(s: str) -> list[str] | None:
-        dir_resp = send_req(
-            "GET",
-            f"https://ftp.ncbi.nlm.nih.gov/geo/series/{s}",
-            num_retries=retries,
-            timeout=timeout,
-            max_wait=max_timeout,
-        )
-
-        if dir_resp is None:
-            logging.error("failed to fetch geo accession ids (series=%s)", s)
-            return None
-
-        soup = BeautifulSoup(dir_resp.text, "html.parser")
-        accessions = []
-
-        for a in soup.find_all("a"):
-            href = a.get("href", "")
-            if not href:
-                continue
-            if not str(href).startswith("GSE"):
-                continue
-
-            acc = str(href).rstrip("/")
-
-            if start_date is not None or end_date is not None:
-                nxt = a.next_sibling
-                if nxt is None:
-                    continue
-
-                date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(nxt))
-                if date_match is None:
-                    continue
-
-                modified_date = datetime.date.fromisoformat(date_match.group(1))
-                if start_date is not None and modified_date < start_date:
-                    continue
-                if end_date is not None and modified_date > end_date:
-                    continue
-
-            accessions.append(acc)
-        return accessions
+    all_series_accession_mapping: dict[str, list[str]] = {}
 
     with (
         ThreadPoolExecutor(num_workers) as pool,
-        tqdm(total=len(series_list), desc="building geo series dict") as pbar,
+        tqdm(total=len(series_list), desc="fetching all accessions") as pbar,
     ):
-        futures = {pool.submit(_worker, s): s for s in series_list}
+        futures = {
+            pool.submit(
+                _fetch_all_accessions_worker, s, retries, timeout, max_timeout
+            ): s
+            for s in series_list
+        }
 
-        for future in as_completed(futures):
-            series_group = futures[future]
-            try:
-                accessions = future.result()
-            except Exception:
-                logging.exception(
-                    "failed to fetch accessions for series group %s", series_group
-                )
-                pbar.update(1)
-                continue
-
+        for f in as_completed(futures):
+            accessions = f.result()
+            series = futures[f]
             if not accessions:
                 pbar.update(1)
                 continue
 
-            geo_dict[series_group] = accessions
+            all_series_accession_mapping[series] = accessions
             pbar.update(1)
 
-    with open(pkl_file, "wb") as f:
-        pickle.dump(geo_dict, f)
+    if start_date is None and end_date is None:
+        return all_series_accession_mapping
 
-    return geo_dict
+    total_accessions = sum([len(x) for x in all_series_accession_mapping.values()])
+    to_process_series_accession_mapping: dict[str, list[str]] = defaultdict(list[str])
+
+    with (
+        ThreadPoolExecutor(num_workers) as pool,
+        tqdm(total=total_accessions, desc="filtering accessions to process") as pbar,
+    ):
+        futures = {}
+
+        for series, accessions in all_series_accession_mapping.items():
+            for accession in accessions:
+                futures[
+                    pool.submit(
+                        _filter_accessions_worker,
+                        accession,
+                        series,
+                        start_date,
+                        end_date,
+                        retries,
+                        timeout,
+                        max_timeout,
+                    )
+                ] = (
+                    series,
+                    accession,
+                )
+
+        for f in as_completed(futures):
+            to_process = f.result()
+            if not to_process:
+                pbar.update(1)
+                continue
+
+            (series, accession) = futures[f]
+            to_process_series_accession_mapping[series].append(accession)
+            pbar.update(1)
+
+    return to_process_series_accession_mapping
+
+
+def _fetch_all_accessions_worker(
+    series: str,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
+) -> list[str] | None:
+    resp = send_req(
+        method="GET",
+        url=f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}",
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
+    )
+
+    if resp is None:
+        logging.error("failed to fetch geo accession ids for %s series", series)
+        return None
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    anchors = soup.find_all("a")
+    accessions = [
+        str(a["href"]).rstrip("/") for a in anchors if str(a["href"]).startswith("GSE")
+    ]
+
+    return accessions
+
+
+def _filter_accessions_worker(
+    accession: str,
+    series: str,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
+) -> bool:
+    resp = send_req(
+        method="GET",
+        url=f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}/{accession}",
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
+    )
+
+    if resp is None:
+        logging.error("failed to fetch %s geo accession dir", accession)
+        return False
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    for a in soup.find_all("a"):
+        href = a.get("href", "")
+        if not href:
+            continue
+
+        next = a.next_sibling
+        if next is None:
+            continue
+
+        date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(next))
+        if date_match is None:
+            continue
+
+        modified_date = datetime.date.fromisoformat(date_match.group(1))
+        if start_date and modified_date < start_date:
+            continue
+        if end_date and modified_date > end_date:
+            continue
+
+        return True
+    return False
 
 
 def _download_worker(
