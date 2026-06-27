@@ -58,7 +58,6 @@ MODALITY_RULES: list[tuple[str, re.Pattern]] = [
             re.IGNORECASE,
         ),
     ),
-    # snRNA before scRNA so single-nuclei titles don't match scRNA first
     (
         "snRNA-seq",
         re.compile(
@@ -92,17 +91,21 @@ def sc_regex_enricher(
 ):
     conn = sqlite3.connect(unified_metadata_db_file)
     rows = conn.execute(
-        "SELECT canonical_accession, title, dominant_assay_l2 FROM unified_metadata"
+        "SELECT canonical_accession, title, description, dominant_assay_l2 FROM unified_metadata"
     ).fetchall()
 
     sc_count = 0
     modality_counter: Counter[str] = Counter()
     updates: list[tuple[bool, str | None, str]] = []
 
-    for accession, title, dominant_assay_l2 in tqdm(
+    for accession, title, description, dominant_assay_l2 in tqdm(
         rows, unit="acc", desc="classifying studies"
     ):
-        is_sc = bool(dominant_assay_l2 == "scRNA-seq" or SC_PATTERNS.search(title))
+        is_sc = bool(
+            dominant_assay_l2 == "scRNA-seq"
+            or SC_PATTERNS.search(title)
+            or SC_PATTERNS.search(description)
+        )
         modality = _classify_modality(title) if is_sc else None
 
         if is_sc:
