@@ -46,7 +46,6 @@ ingest_geo:
         --output-dir {{ DATA_DIR }} \
         --start-date {{ START_DATE }} \
         --end-date {{ END_DATE }} \
-        --series-limit 1 \
         --workers {{ WORKERS }} \
         --retries {{ RETRIES }}
 
