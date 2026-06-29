@@ -22,12 +22,40 @@ dependencies = [
     "pyarrow>=24.0.0",
     "rpy2>=3.6.7",
     "aiohttp>=3.14.1",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv.sources]
 pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
 
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ANN401",
+    "BLE001",
+    "C901",
+    "D100", "D101", "D103", "D104",
+    "EM102",
+    "FBT001",
+    "PLR0913", "PLR0912","PLR0915",
+    "TRY003", "TRY301",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.ty]
+typeCheckingMode = "basic"
+reportPrivateImportUsage = false
+
 [dependency-groups]
 dev = [
     "lxml-stubs>=0.5.1",
+    "ruff>=0.11.8",
+    "pre-commit>=4.2.0",
 ]

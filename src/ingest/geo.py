@@ -2,24 +2,25 @@ import asyncio
 import datetime
 import functools
 import json
-import logging
+import queue
 import re
 import sqlite3
 import tarfile
-import time
+import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
-from typing import IO, Optional
+from typing import IO
 
 import aiohttp
 import humanfriendly
-import lxml.etree as ET
+import lxml.etree as ET  # noqa: N812
 from bs4 import BeautifulSoup, Tag
 from tqdm.asyncio import tqdm
 
-from helpers import exec_query_from_file, simple_file_download
+from helpers import download_file, exec_query_from_file
+from main import logger
 
 
 class TableType(StrEnum):
@@ -33,51 +34,72 @@ GEO_OUTPUT_DIR = "geo"
 MINIML_NAMESPACE = "http://www.ncbi.nlm.nih.gov/geo/info/MINiML"
 
 GEO_SQL_STATEMENTS: dict[TableType, str] = {
-    TableType.Platforms: "INSERT OR REPLACE INTO geo_platforms (accession, description, title, technology, published_at, updated_at, organism, manufacturer, relation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    TableType.Samples: "INSERT OR REPLACE INTO geo_samples (accession, channel_count, channels, description, platform_ref, published_at,updated_at, supplementary_data, title, sample_type, hybridization_protocol, scan_protocol) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    TableType.Series: "INSERT OR REPLACE INTO geo_series (accession, overall_design, pubmed_id, relation, samples_ref, published_at, updated_at, summary, supplementary_data, title, series_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    TableType.Contributors: "INSERT INTO geo_contributors (accession, person, department, organization, address_line, address_city, address_state, address_zipcode, address_country) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    TableType.Platforms: (
+        "INSERT OR REPLACE INTO geo_platforms "
+        "(accession, description, title, technology, published_at, updated_at, "
+        "organism, manufacturer, relation) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ),
+    TableType.Samples: (
+        "INSERT OR REPLACE INTO geo_samples "
+        "(accession, channel_count, channels, description, platform_ref, "
+        "published_at, updated_at, supplementary_data, title, sample_type, "
+        "hybridization_protocol, scan_protocol) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ),
+    TableType.Series: (
+        "INSERT OR REPLACE INTO geo_series "
+        "(accession, overall_design, pubmed_id, relation, samples_ref, "
+        "published_at, updated_at, summary, supplementary_data, title, series_type) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ),
+    TableType.Contributors: (
+        "INSERT OR REPLACE INTO geo_contributors "
+        "(accession, person, department, organization, address_line, address_city, "
+        "address_state, address_zipcode, address_country) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    ),
 }
 
 
 async def ingest_geo(
     base_output_dir: Path,
-    db_file: Optional[Path],
-    start_date: Optional[datetime.date],
-    end_date: Optional[datetime.date],
+    db_file: Path | None,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
     num_workers: int,
     chunk_size: int,
     batch_size: int,
     check_accession_subdirs: bool,
-    series_limit: Optional[int],
+    series_limit: int | None,
     retries: int,
-    timeout: int,
+    timeout_: int,
     max_timeout: int,
-):
+) -> None:
     output_dir = Path(base_output_dir) / GEO_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
     data_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     (output_dir / "db").mkdir(exist_ok=True, parents=True)
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"geo_metadata_{date_str}.db")
 
-    logging.info(
-        """starting geo ingest with following config:
-- num workers: %d
-- chunk size: %s
-- batch size: %d
-- series limit: %s
-- check accession subdirs: %s
-- start date: %s
-- end date: %s
-- retries: %d
-- timeout: %s
-- max timeout: %s""",
+    logger.info(
+        "starting geo ingest with following config:\n"
+        "- num workers: %d\n"
+        "- chunk size: %s\n"
+        "- batch size: %d\n"
+        "- series limit: %s\n"
+        "- check accession subdirs: %s\n"
+        "- start date: %s\n"
+        "- end date: %s\n"
+        "- retries: %d\n"
+        "- timeout: %s\n"
+        "- max timeout: %s",
         num_workers,
         humanfriendly.format_size(chunk_size),
         batch_size,
@@ -86,7 +108,7 @@ async def ingest_geo(
         str(start_date) or "None",
         str(end_date) or "None",
         retries,
-        humanfriendly.format_timespan(timeout),
+        humanfriendly.format_timespan(timeout_),
         humanfriendly.format_timespan(max_timeout),
     )
 
@@ -97,14 +119,14 @@ async def ingest_geo(
         start_date,
         end_date,
         retries,
-        timeout,
+        timeout_,
         max_timeout,
     )
 
     downloader = functools.partial(
-        simple_file_download,
+        download_file,
         num_retries=retries,
-        timeout=timeout,
+        timeout=timeout_,
         max_wait=max_timeout,
     )
 
@@ -118,7 +140,7 @@ async def ingest_geo(
         batch_size,
         chunk_size,
         retries,
-        timeout,
+        timeout_,
         max_timeout,
     )
     exec_query_from_file("indexes/geo.sql", db_file)
@@ -131,7 +153,7 @@ async def _build_geo_dict(
     start_date: datetime.date | None,
     end_date: datetime.date | None,
     retries: int,
-    timeout: int,
+    timeout_: int,
     max_timeout: int,
 ) -> dict[str, list[str]]:
     sem = asyncio.Semaphore(num_workers)
@@ -140,10 +162,11 @@ async def _build_geo_dict(
         limit_per_host=num_workers,
         ttl_dns_cache=300,  # 300 seconds
     )
-    timeout_config = aiohttp.ClientTimeout(total=max_timeout, connect=timeout)
+    timeout_config = aiohttp.ClientTimeout(total=max_timeout, connect=timeout_)
 
     async with aiohttp.ClientSession(
-        connector=connector, timeout=timeout_config
+        connector=connector,
+        timeout=timeout_config,
     ) as session:
         resp_text = await _get(
             session,
@@ -151,7 +174,9 @@ async def _build_geo_dict(
             "https://ftp.ncbi.nlm.nih.gov/geo/series",
             retries,
         )
-        assert resp_text is not None, "failed to fetch geo series"
+        if resp_text is None:
+            msg = "failed to fetch geo series"
+            raise ValueError(msg)
 
         soup = BeautifulSoup(resp_text, "html.parser")
         anchors = soup.find_all("a")
@@ -164,17 +189,24 @@ async def _build_geo_dict(
 
         fetch_all_tasks = [
             _fetch_all_accessions_worker(
-                session, sem, start_date, end_date, check_accession_subdirs, s, retries
+                session,
+                sem,
+                start_date,
+                end_date,
+                check_accession_subdirs,
+                s,
+                retries,
             )
             for s in series_list
         ]
         fetch_all_results: list[list[str]] = await tqdm.gather(
-            *fetch_all_tasks, desc="fetching all accessions"
+            *fetch_all_tasks,
+            desc="fetching all accessions",
         )
 
         all_series_accession_mapping: dict[str, list[str]] = {
             series: accessions
-            for series, accessions in zip(series_list, fetch_all_results)
+            for series, accessions in zip(series_list, fetch_all_results, strict=False)
             if accessions
         }
 
@@ -189,14 +221,20 @@ async def _build_geo_dict(
 
         filter_tasks = [
             _filter_accessions_worker(
-                session, sem, acc, series, start_date, end_date, retries
+                session,
+                sem,
+                acc,
+                series,
+                start_date,
+                end_date,
+                retries,
             )
             for series, acc in flat
         ]
         filter_results = await tqdm.gather(*filter_tasks, desc="filtering accessions")
 
         to_process: dict[str, list[str]] = defaultdict(list)
-        for (series, acc), keep in zip(flat, filter_results):
+        for (series, acc), keep in zip(flat, filter_results, strict=False):
             if keep:
                 to_process[series].append(acc)
 
@@ -204,18 +242,22 @@ async def _build_geo_dict(
 
 
 async def _get(
-    session: aiohttp.ClientSession, sem: asyncio.Semaphore, url: str, retries: int
+    session: aiohttp.ClientSession,
+    sem: asyncio.Semaphore,
+    url: str,
+    retries: int,
 ) -> str | None:
     for attempt in range(retries + 1):
         try:
-            async with sem:
-                async with session.get(url) as resp:
-                    resp.raise_for_status()
-                    return await resp.text()
-        except Exception as e:
+            async with sem, session.get(url) as resp:
+                resp.raise_for_status()
+                return await resp.text()
+        except Exception:
             if attempt == retries:
-                logging.error(
-                    "failed to fetch %s after %d retries: %s", url, retries, e
+                logger.exception(
+                    "failed to fetch %s after %d retries",
+                    url,
+                    retries,
                 )
                 return None
             await asyncio.sleep(2**attempt)
@@ -232,10 +274,13 @@ async def _fetch_all_accessions_worker(
     retries: int,
 ) -> list[str] | None:
     resp_text = await _get(
-        session, sem, f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}", retries
+        session,
+        sem,
+        f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series}",
+        retries,
     )
     if resp_text is None:
-        logging.error("failed to fetch geo accession ids for %s series", series)
+        logger.error("failed to fetch geo accession ids for %s series", series)
         return None
 
     soup = BeautifulSoup(resp_text, "html.parser")
@@ -252,9 +297,12 @@ async def _fetch_all_accessions_worker(
         for a in anchors:
             accession = str(a["href"]).rstrip("/")
 
-            if start_date is not None and end_date is not None:
-                if not _process_anchor_tag(a, start_date, end_date):
-                    continue
+            if (
+                start_date is not None
+                and end_date is not None
+                and not _process_anchor_tag(a, start_date, end_date)
+            ):
+                continue
 
             accessions.append(accession)
     return accessions
@@ -276,35 +324,31 @@ async def _filter_accessions_worker(
         retries,
     )
     if resp_text is None:
-        logging.error("failed to fetch %s geo accession dir", accession)
+        logger.error("failed to fetch %s geo accession dir", accession)
         return False
 
     soup = BeautifulSoup(resp_text, "html.parser")
 
-    for a in soup.find_all("a"):
-        if _process_anchor_tag(a, start_date, end_date):
-            return True
-    return False
+    return any(_process_anchor_tag(a, start_date, end_date) for a in soup.find_all("a"))
 
 
 def _process_anchor_tag(
-    anchor: Tag, start_date: datetime.date | None, end_date: datetime.date | None
+    anchor: Tag,
+    start_date: datetime.date | None,
+    end_date: datetime.date | None,
 ) -> bool:
-    next = anchor.next_sibling
-    if next is None:
+    next_sib = anchor.next_sibling
+    if next_sib is None:
         return False
 
-    date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(next))
+    date_match = re.match(r"\s*(\d{4}-\d{2}-\d{2})", str(next_sib))
     if date_match is None:
         return False
 
     modified_date = datetime.date.fromisoformat(date_match.group(1))
     if start_date and modified_date < start_date:
         return False
-    if end_date and modified_date > end_date:
-        return False
-
-    return True
+    return not (end_date and modified_date > end_date)
 
 
 def _download_worker(
@@ -313,7 +357,7 @@ def _download_worker(
     accession: str,
     output_dir: Path,
     chunk_size: int,
-):
+) -> None:
     dest_path = output_dir / f"{accession}_family.xml.tgz"
     url = f"https://ftp.ncbi.nlm.nih.gov/geo/series/{series_group}/{accession}/miniml/{accession}_family.xml.tgz"
 
@@ -321,9 +365,9 @@ def _download_worker(
         return
 
     try:
-        downloader(url, dest_path, chunk_size, with_pbar=False)
+        downloader(url, dest_path, chunk_size=chunk_size, with_pbar=False)
     except Exception:
-        logging.exception("failed to download %s from %s", accession, url)
+        logger.exception("failed to download %s from %s", accession, url)
 
 
 def _wrap_ns(s: str) -> str:
@@ -348,32 +392,31 @@ def _parse_dates(root: ET._Element, s: str) -> datetime.date | None:
 def _et_to_dict(elem: ET._Element | list[ET._Element]) -> list | dict | str:
     if isinstance(elem, list):
         return [_et_to_dict(v) for v in elem]
-    else:
-        result: dict | str = {}
+    result: dict | str = {}
 
-        for key, value in elem.attrib.items():
-            result[f"@{key}"] = value
+    for key, value in elem.attrib.items():
+        result[f"@{key}"] = value
 
-        if elem.text and elem.text.strip():
-            if len(elem.attrib.items()) > 0:
-                result["#text"] = elem.text.strip()
-            else:
-                result = elem.text.strip()
+    if elem.text and elem.text.strip():
+        if len(elem.attrib.items()) > 0:
+            result["#text"] = elem.text.strip()
+        else:
+            result = elem.text.strip()
 
-        for child in elem:
-            child_tag = str(child.tag).split("}")[-1]
-            child_dict = _et_to_dict(child)
+    for child in elem:
+        child_tag = str(child.tag).split("}")[-1]
+        child_dict = _et_to_dict(child)
 
-            if isinstance(result, dict):
-                if child_tag in result:
-                    if not isinstance(result[child_tag], list):
-                        result[child_tag] = [result[child_tag], child_dict]
-                    else:
-                        result[child_tag].append(child_dict)
+        if isinstance(result, dict):
+            if child_tag in result:
+                if not isinstance(result[child_tag], list):
+                    result[child_tag] = [result[child_tag], child_dict]
                 else:
-                    result[child_tag] = child_dict
+                    result[child_tag].append(child_dict)
+            else:
+                result[child_tag] = child_dict
 
-        return result
+    return result
 
 
 def _get_platforms(root: ET._Element) -> list[tuple] | None:
@@ -396,10 +439,12 @@ def _get_platforms(root: ET._Element) -> list[tuple] | None:
         relations = json.dumps(relations_list) if relations_list else None
 
         published_at = _parse_dates(
-            platform, f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
+            platform,
+            f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}",
         )
         updated_at = _parse_dates(
-            platform, f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
+            platform,
+            f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}",
         )
 
         platforms.append(
@@ -413,7 +458,7 @@ def _get_platforms(root: ET._Element) -> list[tuple] | None:
                 organisms,
                 manufacturer,
                 relations,
-            )
+            ),
         )
 
     return platforms
@@ -450,10 +495,12 @@ def _get_samples(root: ET._Element) -> list[tuple] | None:
         scan_protocol = _findtext(sample, "Scan-Protocol")
 
         published_at = _parse_dates(
-            sample, f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
+            sample,
+            f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}",
         )
         updated_at = _parse_dates(
-            sample, f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
+            sample,
+            f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}",
         )
 
         samples.append(
@@ -470,7 +517,7 @@ def _get_samples(root: ET._Element) -> list[tuple] | None:
                 sample_type,
                 hybridization_protocol,
                 scan_protocol,
-            )
+            ),
         )
 
     return samples
@@ -500,10 +547,12 @@ def _get_series(root: ET._Element) -> list[tuple] | None:
     series_type = json.dumps([series_type_raw]) if series_type_raw else None
 
     published_at = _parse_dates(
-        series, f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}"
+        series,
+        f"{_wrap_ns('Status')}/{_wrap_ns('Release-Date')}",
     )
     updated_at = _parse_dates(
-        series, f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}"
+        series,
+        f"{_wrap_ns('Status')}/{_wrap_ns('Last-Update-Date')}",
     )
 
     return [
@@ -519,7 +568,7 @@ def _get_series(root: ET._Element) -> list[tuple] | None:
             supplementary_data,
             title,
             series_type,
-        )
+        ),
     ]
 
 
@@ -553,7 +602,7 @@ def _get_contributors(root: ET._Element, accession: str) -> list[tuple] | None:
             address_city = address_elem.findtext(_wrap_ns("City"))
             address_state = address_elem.findtext(_wrap_ns("State"))
             address_zipcode = address_elem.findtext(
-                _wrap_ns("Zip-Code")
+                _wrap_ns("Zip-Code"),
             ) or address_elem.findtext(_wrap_ns("Postal-Code"))
             address_country = address_elem.findtext(_wrap_ns("Country"))
 
@@ -568,7 +617,7 @@ def _get_contributors(root: ET._Element, accession: str) -> list[tuple] | None:
                 address_state,
                 address_zipcode,
                 address_country,
-            )
+            ),
         )
 
     return contributors
@@ -591,40 +640,70 @@ def _parse_miniml(f: IO[bytes], accession: str) -> dict[TableType, list | None]:
     }
 
 
-def _process_one(
-    accession: str,
-    dest_path: Path,
+def _coerce(val: object) -> object:
+    if isinstance(val, (str, int, float, bytes, type(None))):
+        return val
+    return str(val)
+
+
+def _writer_worker(
+    write_queue: queue.Queue,
     db_file: Path,
-    batch_size: int,
-    retries: int,
-    timeout: int,
-    max_timeout: int,
-) -> int:
-    conn = sqlite3.Connection(db_file, timeout=30)
+    write_batch_size: int,
+    parse_done: threading.Event,
+) -> None:
+    conn = sqlite3.connect(str(db_file))
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA synchronous=OFF")
+    conn.execute("PRAGMA journal_mode=OFF")
+    conn.execute("PRAGMA cache_size=-800000")
+
     cursor = conn.cursor()
+    rows_written = 0
+    buffer: dict[TableType, list] = {}
 
-    batch_by_type: dict[TableType, list] = defaultdict(list)
-    item_count = 0
+    def _flush(table_type: TableType) -> None:
+        nonlocal rows_written
+        batch = buffer.get(table_type)
+        if batch:
+            safe_batch = [tuple(_coerce(v) for v in row) for row in batch]
+            cursor.executemany(GEO_SQL_STATEMENTS[table_type], safe_batch)
+            conn.commit()
+            rows_written += len(batch)
+            buffer[table_type] = []
 
-    def _flush(batch: list, table_type: TableType):
-        if not batch:
-            return
+    while True:
+        try:
+            item = write_queue.get(timeout=1.0)
+        except queue.Empty:
+            if parse_done.is_set():
+                for ft in list(buffer.keys()):
+                    _flush(ft)
+                break
+            continue
 
-        delay = timeout
-        for attempt in range(retries):
-            try:
-                cursor.executemany(GEO_SQL_STATEMENTS[table_type], batch)
-                conn.commit()
-                batch_by_type[table_type] = []
-                return
-            except sqlite3.OperationalError as e:
-                if "locked" in str(e) and attempt < retries - 1:
-                    time.sleep(delay)
-                    delay = min(timeout * 2, max_timeout)
-                else:
-                    raise
+        table_type, rows = item
+        lst = buffer.setdefault(table_type, [])
+        lst.extend(rows)
+        if len(lst) >= write_batch_size:
+            _flush(table_type)
+
+    conn.close()
+
+
+def _process_one(
+    dest_path: Path,
+    accession: str,
+    write_queue: queue.Queue,
+    write_batch_size: int,
+) -> None:
+    buffer: dict[TableType, list] = {}
+
+    def _flush(table_type: TableType) -> None:
+        rows = buffer.get(table_type)
+        if rows:
+            write_queue.put((table_type, rows))
+            buffer[table_type] = []
 
     try:
         with tarfile.open(dest_path, "r:gz") as tar:
@@ -633,28 +712,23 @@ def _process_one(
                     continue
                 f = tar.extractfile(member)
                 if not f:
-                    logging.error("failed to extract file (path=%s)", dest_path)
-                    break
+                    logger.error("failed to extract file (path=%s)", dest_path)
+                    return
 
                 parsed_data = _parse_miniml(f, accession)
                 for table_type, rows in parsed_data.items():
                     if not rows:
                         continue
-                    item_count += 1
-                    batch_by_type[table_type].extend(rows)
-                    if len(batch_by_type[table_type]) >= batch_size:
-                        _flush(batch_by_type[table_type], table_type)
+                    lst = buffer.setdefault(table_type, [])
+                    lst.extend(rows)
+                    if len(lst) >= write_batch_size:
+                        _flush(table_type)
                 break
     except Exception:
-        logging.exception("failed to process %s (path=%s)", accession, dest_path)
-        conn.close()
-        return 0
+        logger.exception("failed to process %s (path=%s)", accession, dest_path)
 
-    for table_type, batch in batch_by_type.items():
-        _flush(batch, table_type)
-
-    conn.close()
-    return item_count
+    for table_type in buffer:
+        _flush(table_type)
 
 
 def _run_pipeline(
@@ -665,15 +739,15 @@ def _run_pipeline(
     num_workers: int,
     batch_size: int,
     chunk_size: int,
-    retries: int,
-    timeout: int,
-    max_timeout: int,
-):
+    _retries: int,
+    _timeout: int,
+    _max_timeout: int,
+) -> None:
     num_accessions = sum(len(v) for v in geo_dict.values())
-    logging.info("loaded %d groups and %d accessions", len(geo_dict), num_accessions)
+    logger.info("loaded %d groups and %d accessions", len(geo_dict), num_accessions)
 
     if num_accessions == 0:
-        logging.warning("geo_dict is empty, nothing to process")
+        logger.warning("geo_dict is empty, nothing to process")
         return
 
     download_tasks = [
@@ -686,8 +760,11 @@ def _run_pipeline(
         if (output_dir / f"{acc}_family.xml.tgz").exists()
     )
     cached_ratio = existing / num_accessions if num_accessions else 0
-    logging.info(
-        "cached files: %d/%d (%.0f%%)", existing, num_accessions, cached_ratio * 100
+    logger.info(
+        "cached files: %d/%d (%.0f%%)",
+        existing,
+        num_accessions,
+        cached_ratio * 100,
     )
 
     to_download = num_accessions - existing
@@ -711,7 +788,7 @@ def _run_pipeline(
                 try:
                     f.result()
                 except Exception:
-                    logging.exception("downloader future raised an exception")
+                    logger.exception("downloader future raised an exception")
                 pbar.update(1)
             pbar.close()
 
@@ -719,29 +796,47 @@ def _run_pipeline(
         (output_dir / f"{acc}_family.xml.tgz", acc) for _, acc in download_tasks
     ]
 
-    pbar = tqdm(total=num_accessions, unit="acc", desc="processing accessions")
+    num_parse = max(1, num_workers - 1)
+    num_writer = 1
 
-    with ThreadPoolExecutor(num_workers) as pool:
-        futures = {
-            pool.submit(
-                _process_one,
-                acc,
-                path,
-                db_file,
-                batch_size,
-                retries,
-                timeout,
-                max_timeout,
-            ): acc
-            for path, acc in file_list
-            if path.exists()
-        }
+    logger.debug(
+        "worker distribution: %d parse, %d writer",
+        num_parse,
+        num_writer,
+    )
 
-        for f in as_completed(futures):
+    write_queue: queue.Queue = queue.Queue()
+    parse_done = threading.Event()
+
+    existing_files = [(path, acc) for path, acc in file_list if path.exists()]
+
+    with (
+        ThreadPoolExecutor(max_workers=num_parse) as parse_pool,
+        ThreadPoolExecutor(max_workers=num_writer) as writer_pool,
+    ):
+        write_future = writer_pool.submit(
+            _writer_worker,
+            write_queue,
+            db_file,
+            batch_size,
+            parse_done,
+        )
+
+        parse_futures = [
+            parse_pool.submit(_process_one, path, acc, write_queue, batch_size)
+            for path, acc in existing_files
+        ]
+
+        for f in tqdm(
+            as_completed(parse_futures),
+            total=len(parse_futures),
+            unit="acc",
+            desc="processing accessions",
+        ):
             try:
                 f.result()
             except Exception:
-                logging.exception("failed to process accession %s", futures[f])
-            pbar.update(1)
+                logger.exception("failed to process accession")
 
-    pbar.close()
+        parse_done.set()
+        write_future.result()

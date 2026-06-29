@@ -1,6 +1,9 @@
 import datetime
 import functools
 import inspect
+import typing
+from collections.abc import Callable
+from typing import Any
 
 import humanfriendly
 import typer
@@ -10,24 +13,26 @@ def _parse_chunk_size(value: str) -> int:
     try:
         return humanfriendly.parse_size(value)
     except humanfriendly.InvalidSize:
-        raise typer.BadParameter(f"expected size string, got '{value}'")
+        raise typer.BadParameter(f"expected size string, got '{value}'") from None
 
 
 def _parse_timespan(value: str) -> int:
     try:
         return humanfriendly.parse_timespan(value)
     except humanfriendly.InvalidTimespan:
-        raise typer.BadParameter(f"expected timespan string, got '{value}'")
+        raise typer.BadParameter(f"expected timespan string, got '{value}'") from None
 
 
 def _parse_date(value: str) -> datetime.date:
     try:
-        return datetime.datetime.strptime(value, "%Y-%m-%d").date()
+        return datetime.datetime.strptime(value, "%Y-%m-%d").date()  # noqa: DTZ007
     except ValueError:
-        raise typer.BadParameter(f"expected YYYY-MM-DD date string, got '{value}'")
+        raise typer.BadParameter(
+            f"expected YYYY-MM-DD date string, got '{value}'",
+        ) from None
 
 
-def _validate_date_range(func):
+def _validate_date_range(func: Callable[..., Any]) -> Callable[..., Any]:
     sig = inspect.signature(func)
 
     @functools.wraps(func)
@@ -39,11 +44,10 @@ def _validate_date_range(func):
 
         if start is not None and end is not None and start > end:
             raise typer.BadParameter(
-                f"start date ({start}) must be <= end date ({end})"
+                f"start date ({start}) must be <= end date ({end})",
             )
 
         return func(*args, **kwargs)
 
-    # preserve original signature for typer introspection
-    wrapper.__signature__ = sig  # type: ignore
+    typing.cast("Any", wrapper).__signature__ = sig
     return wrapper

@@ -1,28 +1,28 @@
 import csv
 import datetime
 import json
-import logging
 import math
 import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
+import httpx
 import humanfriendly
-import requests
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
+from main import logger
 
 AE_OUTPUT_DIR = "ae"
 BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
 BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
+PAGE_SIZE = 100
 
 
 def ingest_ae(
     base_output_dir: Path,
-    db_file: Optional[Path],
+    db_file: Path | None,
     start_date: datetime.date,
     end_date: datetime.date,
     num_workers: int,
@@ -30,26 +30,26 @@ def ingest_ae(
     retries: int,
     timeout: int,
     max_timeout: int,
-):
+) -> None:
     output_dir = base_output_dir / AE_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
     data_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     (output_dir / "db").mkdir(exist_ok=True, parents=True)
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"ae_metadata_{date_str}.db")
 
-    logging.info(
-        """starting ae ingest with following config:
-- num workers: %d
-- batch size: %d
-- retries: %d
-- timeout: %s
-- max timeout: %s""",
+    logger.info(
+        "starting ae ingest with following config:\n"
+        "- num workers: %d\n"
+        "- batch size: %d\n"
+        "- retries: %d\n"
+        "- timeout: %s\n"
+        "- max timeout: %s",
         num_workers,
         batch_size,
         retries,
@@ -58,10 +58,20 @@ def ingest_ae(
     )
 
     accessions = _fetch_accessions(
-        start_date, end_date, num_workers, retries, timeout, max_timeout
+        start_date,
+        end_date,
+        num_workers,
+        retries,
+        timeout,
+        max_timeout,
     )
     _download_study_metadatas(
-        accessions, num_workers, data_dir, retries, timeout, max_timeout
+        accessions,
+        num_workers,
+        data_dir,
+        retries,
+        timeout,
+        max_timeout,
     )
     _download_magetab_files(data_dir, num_workers, retries, timeout, max_timeout)
 
@@ -71,7 +81,10 @@ def ingest_ae(
 
 
 def _send_search_req(
-    date: datetime.date, retries: int, timeout: int, max_timeout: int
+    date: datetime.date,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
 ) -> list[str] | None:
     r = send_req(
         method="GET",
@@ -85,9 +98,6 @@ def _send_search_req(
         timeout=timeout,
         max_wait=max_timeout,
     )
-    if r is None:
-        return []
-
     data = r.json()
     r.close()
     hits = data.get("hits")
@@ -126,31 +136,35 @@ def _fetch_accessions(
 
         while current_date <= end:
             per_page_accessions = _send_search_req(
-                current_date, retries, timeout, max_timeout
+                current_date,
+                retries,
+                timeout,
+                max_timeout,
             )
             if per_page_accessions is None or len(per_page_accessions) == 0:
                 current_date += datetime.timedelta(1)
                 days_processed += 1
                 continue
 
-            for hit in per_page_accessions:
-                accessions.append(hit)
+            accessions.extend(per_page_accessions)
 
-            if len(per_page_accessions) < 100:
+            if len(per_page_accessions) < PAGE_SIZE:
                 current_date += datetime.timedelta(1)
                 days_processed += 1
             else:
                 curr_accessions = len(per_page_accessions)
-                while curr_accessions >= 100:
+                while curr_accessions >= PAGE_SIZE:
                     per_page_accessions = _send_search_req(
-                        current_date, retries, timeout, max_timeout
+                        current_date,
+                        retries,
+                        timeout,
+                        max_timeout,
                     )
                     if per_page_accessions is None:
                         break
                     if len(per_page_accessions) == 0:
                         break
-                    for hit in per_page_accessions:
-                        accessions.append(hit)
+                    accessions.extend(per_page_accessions)
                     curr_accessions = len(per_page_accessions)
 
                 current_date += datetime.timedelta(1)
@@ -173,8 +187,12 @@ def _fetch_accessions(
 
 
 def _study_metadata_worker(
-    accession: str, output_dir: Path, retries: int, timeout: int, max_timeout: int
-):
+    accession: str,
+    output_dir: Path,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
+) -> None:
     output_file = output_dir / f"{accession}.json"
     if output_file.exists():
         return
@@ -186,12 +204,9 @@ def _study_metadata_worker(
         timeout=timeout,
         max_wait=max_timeout,
     )
-    if r is None:
-        return
-
     data = r.json()
     r.close()
-    with open(output_file, "w") as f:
+    with output_file.open("w") as f:
         json.dump(data, f)
 
 
@@ -202,18 +217,25 @@ def _download_study_metadatas(
     retries: int,
     timeout: int,
     max_timeout: int,
-):
+) -> None:
     output_dir.mkdir(exist_ok=True, parents=True)
 
     with (
         ThreadPoolExecutor(num_workers) as pool,
         tqdm(
-            total=len(accessions), unit="acc", desc="downloading study metadata"
+            total=len(accessions),
+            unit="acc",
+            desc="downloading study metadata",
         ) as pbar,
     ):
         futures = [
             pool.submit(
-                _study_metadata_worker, acc, output_dir, retries, timeout, max_timeout
+                _study_metadata_worker,
+                acc,
+                output_dir,
+                retries,
+                timeout,
+                max_timeout,
             )
             for acc in accessions
         ]
@@ -224,21 +246,25 @@ def _download_study_metadatas(
 
 
 def _download_magetab_files(
-    output_dir: Path, num_workers: int, retries: int, timeout: int, max_timeout: int
-):
+    output_dir: Path,
+    num_workers: int,
+    retries: int,
+    timeout: int,
+    _max_timeout: int,
+) -> None:
     metadata_json_files = output_dir.glob("*.json")
     files = []  # store (accession, filename) tuples
 
     for path in metadata_json_files:
         accession = str(path.name).split(".")[0]
 
-        with open(path) as f:
+        with path.open() as f:
             data = json.load(f)
             section = data.get("section", {})
             subsections = section.get("subsections", [])
 
-            for item in subsections:
-                item = item if isinstance(item, list) else [item]
+            for subsection in subsections:
+                item = subsection if isinstance(subsection, list) else [subsection]
                 for sub in item:
                     if not isinstance(sub, dict):
                         continue
@@ -250,7 +276,7 @@ def _download_magetab_files(
                     files.append((accession, f"{accession}.idf.txt"))
                     files.append((accession, f"{accession}.sdrf.txt"))
 
-    def _download_worker(accession: str, filename: str):
+    def _download_worker(accession: str, filename: str) -> None:
         dest_path = output_dir / filename
         if dest_path.exists():
             return
@@ -258,31 +284,27 @@ def _download_magetab_files(
         url = f"{BIOSTUDIES_FILES_BASE_URL}/{accession}/{filename}"
         try:
             r = send_req(
-                "GET", url, num_retries=retries, timeout=timeout, max_wait=timeout
+                "GET",
+                url,
+                num_retries=retries,
+                timeout=timeout,
+                max_wait=timeout,
             )
-            if r is None:
-                return
-        except requests.RequestException as e:
-            if (
-                isinstance(e, requests.HTTPError)
-                and e.response is not None
-                and e.response.status_code == 404
-            ):
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == httpx.codes.NOT_FOUND:
                 dest_path.touch()
-                return None
+                return
 
-            logging.warning(
+            logger.warning(
                 "magetab download failed for %s: %s (response=%s, status=%s)",
                 url,
                 e,
                 e.response,
-                e.response.status_code
-                if isinstance(e, requests.HTTPError) and e.response is not None
-                else None,
+                e.response.status_code,
             )
             raise
 
-        with open(dest_path, "wb") as f:
+        with dest_path.open("wb") as f:
             f.write(r.content)
         r.close()
 
@@ -301,7 +323,7 @@ def _download_magetab_files(
 
 
 def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
-    with open(filepath) as f:
+    with filepath.open() as f:
         data = json.load(f)
 
     result: dict[str, str | int | list | dict | None] = {
@@ -361,9 +383,9 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
                         "processed": attrs.get("Processed"),
                         "raw": attrs.get("Raw"),
                         "variables": attrs.get("Variables"),
-                    }
+                    },
                 )
-            elif sub_type == "Assays and Data" or sub_type == "Samples":
+            elif sub_type in {"Assays and Data", "Samples"}:
                 if sub_type == "Assays and Data":
                     count_str = attrs.get("Assay count", "")
                     if count_str:
@@ -389,21 +411,24 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
                                         {
                                             "path": path,
                                             "size": f.get("size"),
-                                            "url": f"{BIOSTUDIES_FILES_BASE_URL}/{accession}/{path}",
-                                        }
+                                            "url": (
+                                                f"{BIOSTUDIES_FILES_BASE_URL}/"
+                                                f"{accession}/{path}"
+                                            ),
+                                        },
                                     )
                         # experimental factor details
                         elif (
                             sub_type == "Samples"
                             and inner_type == "Experimental Factors"
                         ):
-                            for attr in s.get("attributes", []):
-                                exp_factors_detail.append(
-                                    {
-                                        "name": attr.get("name"),
-                                        "value": attr.get("value"),
-                                    }
-                                )
+                            exp_factors_detail.extend(
+                                {
+                                    "name": attr.get("name"),
+                                    "value": attr.get("value"),
+                                }
+                                for attr in s.get("attributes", [])
+                            )
 
     # external links
     for link_group in links:
@@ -450,9 +475,8 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
             result["description"] = value
         elif name == "Study type":
             result["study_type"] = value
-        else:
-            if name is not None and value is not None:
-                result["overflow"][name] = value
+        elif name is not None and value is not None:
+            result["overflow"][name] = value
 
     return result
 
@@ -474,7 +498,7 @@ def _parse_idf(filepath: Path) -> dict | None:
     result: dict[str, str | dict | None] = {"overflow": {}}
     rows = []
 
-    with open(filepath) as f:
+    with filepath.open() as f:
         reader = csv.reader(f, delimiter="\t")
         for row in reader:
             if len(row) == 0:
@@ -604,12 +628,10 @@ def normalize_sdrf_col(raw: str) -> str:
 
     # drop spaces around brackets
     # "characteristics[ organism part ]" -> "characteristics[organism part]"
-    s = re.sub(r"\s*\[|\]\s*", lambda m: m.group().strip(), s)
-
-    return s
+    return re.sub(r"\s*\[|\]\s*", lambda m: m.group().strip(), s)
 
 
-def _parse_sdrf(filepath: Path, accession: str):
+def _parse_sdrf(filepath: Path, accession: str) -> list | None:
     samples = []
     sample_col_mapping = {
         "source name": "source_name",
@@ -649,7 +671,7 @@ def _parse_sdrf(filepath: Path, accession: str):
     ]
 
     try:
-        with open(filepath) as f:
+        with filepath.open() as f:
             reader = csv.reader(f, delimiter="\t")
             raw_header = next(reader, None)
             if not raw_header:
@@ -693,12 +715,13 @@ def _parse_sdrf(filepath: Path, accession: str):
                 sample["attributes_json"] = json.dumps(overflow)
                 samples.append(sample)
 
-        return samples if samples else None
     except FileNotFoundError:
         return None
+    else:
+        return samples or None
 
 
-def _process_accession(accession: str, data_dir: Path):
+def _process_accession(accession: str, data_dir: Path) -> tuple | None:
     json_path = data_dir / f"{accession}.json"
     idf_path = data_dir / f"{accession}.idf.txt"
     sdrf_path = data_dir / f"{accession}.sdrf.txt"
@@ -719,7 +742,7 @@ def _process_accessions(
     data_dir: Path,
     num_workers: int,
     batch_size: int,
-):
+) -> None:
     with (
         tqdm(
             total=len(accessions),
@@ -745,7 +768,11 @@ def _process_accessions(
                     result[acc] = future.result()
 
             for acc in batch_accs:
-                experiment, samples = result.get(acc, (None, None))
+                value = result.get(acc)
+                if not value:
+                    continue
+
+                experiment, samples = value
                 if experiment:
                     _insert_experiment(cursor, experiment)
                 if samples:
@@ -756,7 +783,7 @@ def _process_accessions(
         conn.commit()
 
 
-def _insert_experiment(cursor: sqlite3.Cursor, exp: dict):
+def _insert_experiment(cursor: sqlite3.Cursor, exp: dict) -> None:
     sql = """
         INSERT OR REPLACE INTO arrayexpress_experiments (
             accession, title, organism, description, study_type,
@@ -769,7 +796,10 @@ def _insert_experiment(cursor: sqlite3.Cursor, exp: dict):
             external_links, processed_data_files, experimental_factors_detail,
             authors, organizations, protocols_description,
             assay_count, technology, assay_by_molecule, minseqe_score
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        )
     """
 
     cursor.execute(
@@ -808,7 +838,7 @@ def _insert_experiment(cursor: sqlite3.Cursor, exp: dict):
     )
 
 
-def _insert_samples(cursor: sqlite3.Cursor, samples: list[dict]):
+def _insert_samples(cursor: sqlite3.Cursor, samples: list[dict]) -> None:
     sql = """
         INSERT INTO arrayexpress_samples (
             experiment_accession, source_name,
@@ -845,9 +875,8 @@ def _insert_samples(cursor: sqlite3.Cursor, samples: list[dict]):
     )
 
 
-def _json_coerce_list(elem) -> list:
-    elem_list = elem if isinstance(elem, list) else [elem]
-    return elem_list
+def _json_coerce_list(elem: object) -> list:
+    return elem if isinstance(elem, list) else [elem]
 
 
 def _idf_first_or_none(values: list[str]) -> str | None:

@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -11,15 +10,15 @@ geocode_app = typer.Typer()
 
 @geocode_app.command()
 def geocode(
-    unified_metadata_db_file: Path = typer.Option(...),
-    geo_db_file: Path = typer.Option(...),
-    limit: Optional[int] = typer.Option(None, "--limit", "-n"),
-    cache_file: Optional[Path] = typer.Option(None, "--cache-file"),
+    unified_metadata_db_file: Path = typer.Option(...),  # noqa: B008
+    geo_db_file: Path = typer.Option(...),  # noqa: B008
+    limit: int | None = typer.Option(None, "--limit", "-n"),
+    cache_file: Path | None = typer.Option(None, "--cache-file"),  # noqa: B008
     save_every: int = typer.Option(50, "--save-every"),
     rate_limit: float = typer.Option(1.0, "--rate-limit", parser=_parse_timespan),
     retries: int = typer.Option(20, "--retries"),
-    is_dry_run: bool = typer.Option(False, "--dry-run"),
-):
+    is_dry_run: bool = typer.Option(default=False),
+) -> None:
     geocode_missing(
         unified_metadata_db_file,
         geo_db_file,

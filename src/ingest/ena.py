@@ -4,12 +4,12 @@ import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
 
 import humanfriendly
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
+from main import logger
 
 # to redirect urllib3 logs to warning instead of info level
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
@@ -197,7 +197,7 @@ SAMPLE_FIELDS = [
 
 def ingest_ena(
     base_output_dir: Path,
-    db_file: Optional[Path],
+    db_file: Path | None,
     start_date: datetime.date,
     end_date: datetime.date,
     num_workers: int,
@@ -207,43 +207,50 @@ def ingest_ena(
     retries: int,
     timeout: int,
     max_timeout: int,
-):
+) -> None:
     output_dir = base_output_dir / ENA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
     data_dir = output_dir / "data"
     data_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     (output_dir / "db").mkdir(exist_ok=True, parents=True)
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"ena_metadata_{date_str}.db")
 
-    logging.info(
-        """starting ena ingest with following config:
-- num workers: %d
-- retries: %d
-- timeout: %s
-- max timeout: %s""",
+    logger.info(
+        "starting ena ingest with following config:\n"
+        "- num workers: %d\n"
+        "- retries: %d\n"
+        "- timeout: %s\n"
+        "- max timeout: %s",
         num_workers,
         retries,
         humanfriendly.format_timespan(timeout),
         humanfriendly.format_timespan(max_timeout),
     )
 
-    logging.debug(
+    logger.debug(
         "extracting ena file dumps in range (start_date=%s, end_date=%s)",
         start_date,
         end_date,
     )
     study_accessions = _fetch_accessions(
-        start_date, end_date, use_last_updated, retries, timeout, max_timeout
+        start_date,
+        end_date,
+        use_last_updated,
+        retries,
+        timeout,
+        max_timeout,
     )
-    assert study_accessions is not None, "failed to fetch accessions"
-    assert len(study_accessions) > 0, (
-        f"no accessions found in {start_date} to {end_date} range"
-    )
+    if study_accessions is None:
+        msg = "failed to fetch accessions"
+        raise ValueError(msg)
+    if len(study_accessions) == 0:
+        msg = f"no accessions found in {start_date} to {end_date} range"
+        raise ValueError(msg)
 
     _run_per_study_download(
         study_accessions=study_accessions,
@@ -314,9 +321,6 @@ def _fetch_accessions(
         timeout=timeout,
         max_wait=max_timeout,
     )
-    if r is None:
-        return None
-
     data = r.json()
     r.close()
     study_accessions: list[str] = [
@@ -347,9 +351,7 @@ def _fetch_per_study(
         timeout=timeout,
         max_wait=max_timeout,
     )
-    if r is None:
-        return None
-    if r.status_code == 204:
+    if r.status_code == 204:  # noqa: PLR2004
         return []
 
     data = r.json()
@@ -367,21 +369,26 @@ def _run_per_study_download(
     retries: int,
     timeout: int,
     max_timeout: int,
-):
+) -> None:
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    def _worker(study_accession: str):
+    def _worker(study_accession: str) -> None:
         output_file = output_dir / f"{study_accession}.json"
         if output_file.exists():
             return
 
         data = _fetch_per_study(
-            study_accession, result_type, fields, retries, timeout, max_timeout
+            study_accession,
+            result_type,
+            fields,
+            retries,
+            timeout,
+            max_timeout,
         )
         if data is None:
             return
 
-        with open(output_file, "w") as f:
+        with output_file.open("w") as f:
             json.dump(data, f)
 
     with (
@@ -399,7 +406,7 @@ def _run_per_study_download(
             pbar.update(1)
 
 
-def _ingest_data(db_file: Path, output_dir: Path):
+def _ingest_data(db_file: Path, output_dir: Path) -> None:
     with sqlite3.connect(db_file) as conn:
         ingest_data = [
             (
@@ -428,7 +435,7 @@ def _ingest_data(db_file: Path, output_dir: Path):
         # rebuild fts
         conn.execute("INSERT INTO ena_studies_fts(ena_studies_fts) VALUES('rebuild')")
         conn.execute(
-            "INSERT INTO ena_experiments_fts(ena_experiments_fts) VALUES('rebuild')"
+            "INSERT INTO ena_experiments_fts(ena_experiments_fts) VALUES('rebuild')",
         )
         conn.execute("INSERT INTO ena_samples_fts(ena_samples_fts) VALUES('rebuild')")
         conn.commit()
@@ -440,7 +447,7 @@ def _ingest_table_to_sqlite(
     key_col: str,
     fields: list[str],
     desc: str,
-):
+) -> None:
     key_col_to_table = {
         "study_accession": "ena_studies",
         "run_accession": "ena_experiments",
@@ -456,7 +463,8 @@ def _ingest_table_to_sqlite(
         try:
             with path.open() as f:
                 rows = json.load(f)
-        except Exception:
+        except (json.JSONDecodeError, OSError):
+            logger.exception("failed to read %s", path)
             continue
 
         for row in rows:
@@ -469,13 +477,16 @@ def _ingest_table_to_sqlite(
     with tqdm(total=total, unit="acc", desc=desc) as pbar:
         cursor = conn.cursor()
         table = key_col_to_table[key_col]
-        sql = f"INSERT OR IGNORE INTO {table} ({', '.join(fields)}) VALUES ({', '.join('?' * len(fields))})"
+        fields_str = ", ".join(fields)
+        placeholders = ", ".join("?" * len(fields))
+        sql = f"INSERT OR REPLACE INTO {table} ({fields_str}) VALUES ({placeholders})"  # noqa: S608
 
         for path in sorted(output_dir.glob("*.json")):
             try:
                 with path.open() as f:
                     rows = json.load(f)
-            except Exception:
+            except (json.JSONDecodeError, OSError):
+                logger.exception("failed to read %s", path)
                 continue
 
             for row in rows:
@@ -493,7 +504,7 @@ def _ingest_table_to_sqlite(
 def _record_to_tuple(record: dict, cols: list[str]) -> tuple:
     values = []
     for col in cols:
-        v = record.get(col, None)
+        v = record.get(col)
         if v == "":
             v = None
         if col in ["tax_id", "base_count", "read_count"]:

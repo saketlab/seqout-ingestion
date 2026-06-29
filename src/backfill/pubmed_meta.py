@@ -1,12 +1,11 @@
 import functools
-import logging
 import multiprocessing as mp
 import sqlite3
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from multiprocessing.sharedctypes import Synchronized
 from pathlib import Path
-from typing import Callable, Optional
 
 import pandas as pd
 import tqdm
@@ -14,6 +13,7 @@ from pysradb.sraweb import SRAweb
 
 from backfill.backfill_utils import _chunked, _parse_pmid
 from helpers import exec_query_from_file
+from main import logger
 from pipeline_types import Datasource
 
 
@@ -22,28 +22,54 @@ class Counters:
     total: Synchronized[int]
     updated: Synchronized[int]
     errors: Synchronized[int]
-    skipped: Optional[Synchronized[int]]
-    citations: Optional[Synchronized[int]]
-    journals: Optional[Synchronized[int]]
+    skipped: Synchronized[int] | None
+    citations: Synchronized[int] | None
+    journals: Synchronized[int] | None
 
 
 PUBMED_METADATA_OUTPUT_DIR = "pubmed_metadata"
 
 PMID_EXTRACT_QUERIES = {
     "sra": [
-        "SELECT DISTINCT json_extract(links, '$.XREF_LINK.ID') FROM sra_studies WHERE json_valid(links) AND json_extract(links, '$.XREF_LINK.DB') = 'pubmed' AND json_extract(links, '$.XREF_LINK.ID') IS NOT NULL",
-        "SELECT DISTINCT pubmed_id_pysradb FROM sra_studies WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
+        (
+            "SELECT DISTINCT json_extract(links, '$.XREF_LINK.ID')"
+            " FROM sra_studies WHERE json_valid(links)"
+            " AND json_extract(links, '$.XREF_LINK.DB') = 'pubmed'"
+            " AND json_extract(links, '$.XREF_LINK.ID') IS NOT NULL"
+        ),
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM sra_studies"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
     ],
     "geo": [
-        "SELECT DISTINCT value FROM geo_series, json_each(geo_series.pubmed_id) WHERE pubmed_id IS NOT NULL AND pubmed_id != '' AND pubmed_id != '[]' AND json_valid(pubmed_id)",
-        "SELECT DISTINCT pubmed_id_pysradb FROM geo_series WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
+        (
+            "SELECT DISTINCT value"
+            " FROM geo_series, json_each(geo_series.pubmed_id)"
+            " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
+            " AND pubmed_id != '[]' AND json_valid(pubmed_id)"
+        ),
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM geo_series"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
     ],
     "ae": [
-        "SELECT DISTINCT pubmed_id FROM arrayexpress_experiments WHERE pubmed_id IS NOT NULL AND pubmed_id != ''",
-        "SELECT DISTINCT pubmed_id_pysradb FROM arrayexpress_experiments WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
+        (
+            "SELECT DISTINCT pubmed_id FROM arrayexpress_experiments"
+            " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
+        ),
+        (
+            "SELECT DISTINCT pubmed_id_pysradb"
+            " FROM arrayexpress_experiments"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
     ],
     "ena": [
-        "SELECT DISTINCT pubmed_id_pysradb FROM ena_studies WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM ena_studies"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
     ],
 }
 
@@ -92,11 +118,11 @@ WHERE journal = ?;
 
 def backfill_pubmed_metadata(
     base_output_dir: Path,
-    geo_db_file: Optional[Path],
-    sra_db_file: Optional[Path],
-    ena_db_file: Optional[Path],
-    ae_db_file: Optional[Path],
-    db_file: Optional[Path],
+    geo_db_file: Path | None,
+    sra_db_file: Path | None,
+    ena_db_file: Path | None,
+    ae_db_file: Path | None,
+    db_file: Path | None,
     ncbi_keys_file: Path,
     openalex_keys_file: Path,
     num_workers: int,
@@ -107,16 +133,18 @@ def backfill_pubmed_metadata(
     update_journal_metrics: bool,
     refresh_all_journals_metrics: bool,
     is_dry_run: bool,
-):
+) -> None:
     if (
         (not geo_db_file)
         and (not sra_db_file)
         and (not ena_db_file)
         and (not ae_db_file)
     ):
-        raise ValueError(
-            "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
+        msg = (
+            "expected at least one of --geo-db-file, --sra-db-file,"
+            " --ena-db-file or --ae-db-file. recieved none of them"
         )
+        raise ValueError(msg)
 
     output_dir = base_output_dir / PUBMED_METADATA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -169,7 +197,7 @@ def _process_via_per_journal_lookup(
     batch_size: int,
     refresh_all_journals_metrics: bool,
     is_dry_run: bool,
-):
+) -> None:
     with sqlite3.Connection(db_file) as conn:
         if refresh_all_journals_metrics:
             target = _collect_all_journals(conn)
@@ -177,7 +205,7 @@ def _process_via_per_journal_lookup(
             target = _collect_journals_with_missing_metrics(conn)
 
     total = len(target)
-    logging.info(
+    logger.info(
         "found %d unique journals to look up (refresh_all=%s)",
         total,
         refresh_all_journals_metrics,
@@ -186,13 +214,15 @@ def _process_via_per_journal_lookup(
     if is_dry_run or not target:
         return
 
-    with open(ncbi_keys_file, "r") as f:
-        ncbi_keys = f.read().splitlines()
-    with open(openalex_keys_file, "r") as f:
-        openalex_keys = f.read().splitlines()
+    ncbi_keys = ncbi_keys_file.read_text().splitlines()
+    openalex_keys = openalex_keys_file.read_text().splitlines()
 
     num_workers, _ = _calc_num_workers_and_batches(
-        target, num_workers, batch_size, len(ncbi_keys), len(openalex_keys)
+        target,
+        num_workers,
+        batch_size,
+        len(ncbi_keys),
+        len(openalex_keys),
     )
 
     worker_data: list[list[tuple[str, str]]] = [[] for _ in range(num_workers)]
@@ -233,7 +263,7 @@ def _process_via_per_journal_lookup(
         pbar,
     )
 
-    logging.info(
+    logger.info(
         "journal lookup finished: %d updated, %d errors out of %d journals",
         counters.updated.value,
         counters.errors.value,
@@ -253,20 +283,22 @@ def _process_via_per_pmid_lookup(
     update_metrics: bool,
     skip_journal_metrics: bool,
     is_dry_run: bool,
-):
-    logging.info("processing %s datasource...", datasource)
+) -> None:
+    logger.info("processing %s datasource...", datasource)
 
     with sqlite3.Connection(datasource_db_file) as conn:
         all_pmids = _collect_all_pmids(conn, datasource)
 
     with sqlite3.Connection(meta_db_file) as meta_conn:
         existing_pmids = _collect_existing_pmids(meta_conn)
-        log_prefix = f"pmids: {len(all_pmids)} unique, {len(existing_pmids)} already have metadata"
+        total_pmids = len(all_pmids)
+        existing = len(existing_pmids)
+        log_prefix = f"pmids: {total_pmids} unique, {existing} already have metadata"
 
         if fill_metrics:
             missing_metrics = _collect_pmids_with_missing_metrics(meta_conn)
             target = all_pmids & missing_metrics
-            logging.info(
+            logger.info(
                 "%s, %d missing metrics, filling metrics for %d",
                 log_prefix,
                 len(missing_metrics),
@@ -274,21 +306,23 @@ def _process_via_per_pmid_lookup(
             )
         elif update_metrics:
             target = all_pmids & existing_pmids
-            logging.info("%s, updating metrics for %d", log_prefix, len(target))
+            logger.info("%s, updating metrics for %d", log_prefix, len(target))
         else:
             target = all_pmids - existing_pmids
-            logging.info("%s, %d to fetch", log_prefix, len(target))
+            logger.info("%s, %d to fetch", log_prefix, len(target))
 
     if is_dry_run or not target:
         return
 
-    with open(ncbi_keys_file, "r") as f:
-        ncbi_keys = f.read().splitlines()
-    with open(openalex_keys_file, "r") as f:
-        openalex_keys = f.read().splitlines()
+    ncbi_keys = ncbi_keys_file.read_text().splitlines()
+    openalex_keys = openalex_keys_file.read_text().splitlines()
 
     num_workers, total_batches = _calc_num_workers_and_batches(
-        target, num_workers, batch_size, len(ncbi_keys), len(openalex_keys)
+        target,
+        num_workers,
+        batch_size,
+        len(ncbi_keys),
+        len(openalex_keys),
     )
 
     worker_data: list[list[str]] = [[] for _ in range(num_workers)]
@@ -333,7 +367,7 @@ def _process_via_per_pmid_lookup(
         pbar,
     )
 
-    logging.info(
+    logger.info(
         "pmid lookup finished: %d updated, %d errors out of %d pmids",
         counters.updated.value,
         counters.errors.value,
@@ -349,7 +383,7 @@ def _worker_loop(
     openalex_keys: list[str],
     counters: Counters,
     pbar: tqdm.tqdm,
-):
+) -> None:
     with (
         ThreadPoolExecutor(num_workers) as pool,
     ):
@@ -367,7 +401,7 @@ def _worker_loop(
                     openalex_key=openalex_key,
                     pbar=pbar,
                     counters=counters,
-                )
+                ),
             )
 
         for f in futures:
@@ -384,7 +418,7 @@ def _journal_lookup_worker(
     batch_size: int,
     counters: Counters,
     pbar: tqdm.tqdm,
-):
+) -> None:
     sra = SRAweb(api_key=ncbi_key, openalex_api_key=openalex_key)
     local_updated = 0
     local_errors = 0
@@ -394,7 +428,7 @@ def _journal_lookup_worker(
 
         rows = []
 
-        def _flush():
+        def _flush() -> None:
             nonlocal local_updated, rows
             if rows:
                 conn.executemany(sql, rows)
@@ -405,7 +439,7 @@ def _journal_lookup_worker(
                     counters.updated.value += len(rows)
                 rows = []
 
-        def _pbar_update():
+        def _pbar_update() -> None:
             pbar.set_postfix(
                 updated=counters.updated.value,
                 errors=counters.errors.value,
@@ -415,29 +449,29 @@ def _journal_lookup_worker(
 
         for journal, issn in data:
             try:
-                journal_metrics: dict = sra._openalex_source_lookup(issn, journal)
-                tuple = (
+                journal_metrics: dict = sra._openalex_source_lookup(issn, journal)  # noqa: SLF001
+                row = (
                     *to_tuple(
                         journal_metrics,
                     ),
                     journal,
                 )
 
-                h_index = tuple[0]
-                i10_index = tuple[1]
-                cited_by = tuple[2]
+                h_index = row[0]
+                i10_index = row[1]
+                cited_by = row[2]
 
                 if h_index is None or i10_index is None or cited_by is None:
                     if counters.skipped:
                         with counters.skipped.get_lock():
                             counters.skipped.value += 1
                 else:
-                    rows.append(tuple)
+                    rows.append(row)
                     if len(rows) >= batch_size:
                         _flush()
 
                 _pbar_update()
-            except Exception as e:
+            except Exception:
                 local_errors += 1
                 with counters.errors.get_lock():
                     counters.errors.value += 1
@@ -445,7 +479,7 @@ def _journal_lookup_worker(
                     counters.total.value += 1
 
                 _pbar_update()
-                logging.exception("failed to fetch journal lookup (%s): %s", journal, e)
+                logger.exception("failed to fetch journal lookup (%s)", journal)
 
         if rows:
             _flush()
@@ -465,12 +499,12 @@ def _pmid_lookup_worker(
     skip_journal_metrics: bool,
     counters: Counters,
     pbar: tqdm.tqdm,
-):
+) -> None:
     sra = SRAweb(api_key=ncbi_key, openalex_api_key=openalex_key)
     local_updated = 0
     local_errors = 0
 
-    def _pbar_update():
+    def _pbar_update() -> None:
         pbar.set_postfix(
             updated=counters.updated.value,
             errors=counters.errors.value,
@@ -517,7 +551,7 @@ def _pmid_lookup_worker(
                         counters.journals.value += batch_journals
 
                 _pbar_update()
-            except Exception as e:
+            except Exception:
                 local_errors += len(batch)
                 with counters.errors.get_lock():
                     counters.errors.value += len(batch)
@@ -525,7 +559,7 @@ def _pmid_lookup_worker(
                     counters.total.value += 1
 
                 _pbar_update()
-                logging.exception("batch failed (%d pubmed ids): %s", len(batch), e)
+                logger.exception("batch failed (%d pubmed ids)", len(batch))
 
 
 def _collect_all_pmids(conn: sqlite3.Connection, datasource: Datasource) -> set[str]:
@@ -556,7 +590,7 @@ def _collect_pmids_with_missing_metrics(conn: sqlite3.Connection) -> set[str]:
                 OR journal_2yr_mean_citedness IS NULL
                 OR journal_cited_by_count IS NULL
                 OR journal_works_count IS NULL;
-        """
+        """,
     ).fetchall()
     return {r[0] for r in rows}
 
@@ -566,7 +600,7 @@ def _collect_all_journals(conn: sqlite3.Connection) -> set[tuple[str, str]]:
         """
         SELECT DISTINCT journal, issn FROM pubmed_metadata
            WHERE journal IS NOT NULL AND journal != '';
-        """
+        """,
     ).fetchall()
     return set(rows)
 
@@ -583,12 +617,12 @@ def _collect_journals_with_missing_metrics(
                   OR journal_2yr_mean_citedness IS NULL
                   OR journal_cited_by_count IS NULL
                   OR journal_works_count IS NULL);
-        """
+        """,
     ).fetchall()
     return set(rows)
 
 
-def _setup_wal(conn: sqlite3.Connection):
+def _setup_wal(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA busy_timeout = 5000")
@@ -605,29 +639,32 @@ def _calc_num_workers_and_batches(
     optimal_num_workers = max(num_ncbi_keys, num_openalex_keys)
     if num_workers != optimal_num_workers:
         num_workers = optimal_num_workers
-        logging.warning("using %d as num workers", optimal_num_workers)
+        logger.warning("using %d as num workers", optimal_num_workers)
 
     return (num_workers, total_batches)
 
 
-def _normalize_val(v):
+def _normalize_val(v: object) -> str | None:
     if v is None:
         return None
     if not (pd.notna(v) if not isinstance(v, str) else bool(v)):
         return None
-    return v
+    return str(v)
 
 
-def _to_number(v):
+def _to_number(v: object) -> int | float | None:
     v = _normalize_val(v)
+    if v:
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            pass
 
-    try:
-        return int(v)
-    except (ValueError, TypeError):
-        pass
-    try:
-        return float(v)
-    except (ValueError, TypeError):
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+    else:
         return None
 
 

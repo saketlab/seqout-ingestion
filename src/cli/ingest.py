@@ -1,7 +1,6 @@
 import asyncio
 import datetime
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -22,7 +21,7 @@ _BASE_OUTPUT_DIR_FLAG = typer.Option(..., "--output-dir")
 _DB_FILE_FLAG = typer.Option(None, "--db-file")
 _NUM_WORKERS_FLAG = typer.Option(4, "--workers")
 _DATE_FLAG = typer.Option(
-    datetime.datetime.now().strftime("%Y-%m-%d"),
+    datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%d"),
     parser=_parse_date,
 )
 _CHUNK_SIZE_FLAG = typer.Option("20 MB", parser=_parse_chunk_size)
@@ -36,7 +35,7 @@ _MAX_TIMEOUT = typer.Option("2 mins", parser=_parse_timespan)
 @_validate_date_range
 def sra(
     base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
-    db_file: Optional[Path] = _DB_FILE_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
     start_date: datetime.date = _DATE_FLAG,
     end_date: datetime.date = _DATE_FLAG,
     num_workers: int = _NUM_WORKERS_FLAG,
@@ -46,7 +45,7 @@ def sra(
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,
     max_timeout: int = _MAX_TIMEOUT,
-):
+) -> None:
     ingest_sra(
         base_output_dir,
         db_file,
@@ -66,18 +65,18 @@ def sra(
 @_validate_date_range
 def geo(
     base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
-    db_file: Optional[Path] = _DB_FILE_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
     start_date: datetime.date = _DATE_FLAG,
     end_date: datetime.date = _DATE_FLAG,
     num_workers: int = _NUM_WORKERS_FLAG,
     chunk_size: int = _CHUNK_SIZE_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
-    check_accession_subdirs: bool = typer.Option(False),
-    series_limit: Optional[int] = typer.Option(None),
+    check_accession_subdirs: bool = typer.Option(default=False),
+    series_limit: int | None = typer.Option(None),
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,
     max_timeout: int = _MAX_TIMEOUT,
-):
+) -> None:
     asyncio.run(
         ingest_geo(
             base_output_dir,
@@ -92,7 +91,7 @@ def geo(
             retries,
             timeout,
             max_timeout,
-        )
+        ),
     )
 
 
@@ -100,17 +99,17 @@ def geo(
 @_validate_date_range
 def ena(
     base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
-    db_file: Optional[Path] = _DB_FILE_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
     start_date: datetime.date = _DATE_FLAG,
     end_date: datetime.date = _DATE_FLAG,
     num_workers: int = _NUM_WORKERS_FLAG,
-    use_last_updated: bool = typer.Option(False),
-    skip_experiments: bool = typer.Option(False),
-    skip_samples: bool = typer.Option(False),
+    use_last_updated: bool = typer.Option(default=False),
+    skip_experiments: bool = typer.Option(default=False),
+    skip_samples: bool = typer.Option(default=False),
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,
     max_timeout: int = _MAX_TIMEOUT,
-):
+) -> None:
     ingest_ena(
         base_output_dir,
         db_file,
@@ -130,7 +129,7 @@ def ena(
 @_validate_date_range
 def ae(
     base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
-    db_file: Optional[Path] = _DB_FILE_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
     start_date: datetime.date = _DATE_FLAG,
     end_date: datetime.date = _DATE_FLAG,
     num_workers: int = _NUM_WORKERS_FLAG,
@@ -138,7 +137,7 @@ def ae(
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,
     max_timeout: int = _MAX_TIMEOUT,
-):
+) -> None:
     ingest_ae(
         base_output_dir,
         db_file,

@@ -1,19 +1,19 @@
 import csv
+import http
 import io
 import json
-import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
-from typing import Optional
 
 import requests
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from helpers import exec_query_from_file
+from main import logger
 from pipeline_types import Datasource
 
 ENA_FILEREPORT_URL = "https://www.ebi.ac.uk/ena/portal/api/filereport"
@@ -51,7 +51,9 @@ INSERT INTO run_download_links (
     ncbi_sra_lite_s3_url, ncbi_sra_lite_gs_url
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (run_accession) DO UPDATE SET
-    experiment_accession      = COALESCE(EXCLUDED.experiment_accession, run_download_links.experiment_accession),
+    experiment_accession      = COALESCE(
+        EXCLUDED.experiment_accession, run_download_links.experiment_accession
+    ),
     ncbi_files                = EXCLUDED.ncbi_files,
     ncbi_sra_url              = EXCLUDED.ncbi_sra_url,
     ncbi_sra_url_aws          = EXCLUDED.ncbi_sra_url_aws,
@@ -93,16 +95,17 @@ STUDY_QUERIES: dict[Datasource, str] = {
 
 def backfill_download_links(
     base_output_dir: Path,
-    sra_db_file: Optional[Path],
-    ena_db_file: Optional[Path],
-    ncbi_keys_file: Optional[Path],
+    sra_db_file: Path | None,
+    ena_db_file: Path | None,
+    ncbi_keys_file: Path | None,
     num_workers: int,
     is_dry_run: bool,
     source: str,
-    limit: Optional[int] = None,
-):
+    limit: int | None = None,
+) -> None:
     if not sra_db_file and not ena_db_file:
-        raise ValueError("expected at least one of --sra-db-file or --ena-db-file")
+        msg = "expected at least one of --sra-db-file or --ena-db-file"
+        raise ValueError(msg)
 
     output_dir = base_output_dir / "download_links"
     output_dir.mkdir(exist_ok=True, parents=True)
@@ -129,13 +132,13 @@ def backfill_download_links(
             rows = conn.execute(query).fetchall()
         accessions = [r[0] for r in rows]
         study_accessions.update(accessions)
-        logging.info("%s: %d studies", datasource.value, len(accessions))
+        logger.info("%s: %d studies", datasource.value, len(accessions))
 
     target = sorted(study_accessions)
     if limit is not None:
         target = target[:limit]
 
-    logging.info("total studies to process: %d", len(target))
+    logger.info("total studies to process: %d", len(target))
 
     if is_dry_run or not target:
         return
@@ -146,7 +149,9 @@ def backfill_download_links(
 
     if source == "ncbi":
         if not keys:
-            raise ValueError("--ncbi-keys-file is required for ncbi source")
+            msg = "--ncbi-keys-file is required for ncbi source"
+            raise ValueError(msg)
+
         num_workers = min(num_workers, len(keys))
         worker_data: list[list[str]] = [[] for _ in range(num_workers)]
         for i, acc in enumerate(target):
@@ -170,7 +175,6 @@ def backfill_download_links(
 
         pbar.close()
     else:
-        num_workers = num_workers
         worker_data = [[] for _ in range(num_workers)]
         for i, acc in enumerate(target):
             worker_data[i % num_workers].append(acc)
@@ -181,7 +185,6 @@ def backfill_download_links(
             futures = [
                 pool.submit(
                     _ena_worker,
-                    "",
                     worker_data[i],
                     output_db_file,
                     pbar,
@@ -195,45 +198,44 @@ def backfill_download_links(
 
 
 def _ena_worker(
-    api_key: str,
     studies: list[str],
     output_db_file: Path,
     pbar: tqdm,
-):
+) -> None:
     conn = sqlite3.connect(str(output_db_file))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=120000")
 
     session = requests.Session()
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
 
     for study in studies:
         runs = _fetch_study_runs(session, study)
         if runs is None:
             conn.execute(UPSERT_LOG_SQL, (study, "error", 0, now))
             conn.commit()
-            logging.warning("ena fetch failed for %s", study)
+            logger.warning("ena fetch failed for %s", study)
         elif not runs:
             conn.execute(UPSERT_LOG_SQL, (study, "empty", 0, now))
             conn.commit()
         else:
-            rows = []
-            for run in runs:
-                rows.append(
-                    (
-                        run.get("run_accession", ""),
-                        study,
-                        _empty_to_none(run.get("experiment_accession")),
-                        _empty_to_none(run.get("library_layout")),
-                        _empty_to_none(run.get("fastq_ftp")),
-                        _empty_to_none(run.get("fastq_bytes")),
-                        _empty_to_none(run.get("fastq_md5")),
-                        _empty_to_none(run.get("sra_ftp")),
-                        _empty_to_none(run.get("sra_bytes")),
-                        _empty_to_none(run.get("sra_md5")),
-                        now,
-                    )
+            rows = [
+                (
+                    run.get("run_accession", ""),
+                    study,
+                    _empty_to_none(run.get("experiment_accession")),
+                    _empty_to_none(run.get("library_layout")),
+                    _empty_to_none(run.get("fastq_ftp")),
+                    _empty_to_none(run.get("fastq_bytes")),
+                    _empty_to_none(run.get("fastq_md5")),
+                    _empty_to_none(run.get("sra_ftp")),
+                    _empty_to_none(run.get("sra_bytes")),
+                    _empty_to_none(run.get("sra_md5")),
+                    now,
                 )
+                for run in runs
+            ]
+
             conn.executemany(UPSERT_RUN_SQL, rows)
             conn.execute(UPSERT_LOG_SQL, (study, "ok", len(rows), now))
             conn.commit()
@@ -249,22 +251,22 @@ def _ncbi_worker(
     studies: list[str],
     output_db_file: Path,
     pbar: tqdm,
-):
+) -> None:
     sra = SRAweb(api_key, verbose=False)
     conn = sqlite3.connect(output_db_file)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=120000")
 
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(UTC).isoformat(timespec="seconds")
 
     for study in studies:
         try:
             response = sra.get_efetch_response("sra", study)
-        except Exception:
-            logging.warning("ncbi efetch failed for %s", study)
+        except Exception as e:
             conn.execute(UPSERT_NCBI_LOG_SQL, (study, now, "error", 0, now))
             conn.commit()
             pbar.update(1)
+            logger.warning("ncbi efetch failed for %s: %s", study, e)
             continue
 
         if response is None:
@@ -315,7 +317,7 @@ def _ncbi_worker(
                         urls["ncbi_sra_lite_bytes"],
                         urls["ncbi_sra_lite_s3_url"],
                         urls["ncbi_sra_lite_gs_url"],
-                    )
+                    ),
                 )
 
         if run_rows:
@@ -332,23 +334,27 @@ def _ncbi_worker(
 
 
 def _fetch_study_runs(
-    session: requests.Session, study_accession: str
+    session: requests.Session,
+    study_accession: str,
+    retries: int = 3,
 ) -> list[dict] | None:
     params = {
         "result": "read_run",
         "fields": FILEREPORT_FIELDS,
         "accession": study_accession,
     }
-    for attempt in range(3):
+
+    for attempt in range(retries):
         try:
             resp = session.get(ENA_FILEREPORT_URL, params=params, timeout=120)
-            if resp.status_code == 204:
+            if resp.status_code == http.HTTPStatus.NO_CONTENT:
                 return []
+
             resp.raise_for_status()
             reader = csv.DictReader(io.StringIO(resp.text), delimiter="\t")
             return list(reader)
         except requests.RequestException:
-            if attempt < 2:
+            if attempt < retries - 1:
                 sleep(2 * (attempt + 1))
             else:
                 return None

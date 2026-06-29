@@ -1,5 +1,5 @@
 import logging
-from typing import Literal, Optional
+from typing import Literal
 
 import typer
 
@@ -11,16 +11,18 @@ from cli.transfer import transfer_app
 from cli.unify import unify_app
 
 cli = typer.Typer()
+logger = logging.getLogger(__name__)
 
 
 @cli.callback()
 def main(
     ctx: typer.Context,
-    log_file: Optional[str] = typer.Option(
-        None, help="redirect logs to a file instead"
+    log_file: str | None = typer.Option(
+        None,
+        help="redirect logs to a file instead",
     ),
     log_level: Literal["debug", "info", "warning", "error"] = typer.Option("info"),
-):
+) -> None:
     ctx.ensure_object(dict)
 
     handlers = []

@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Optional
 
 import typer
 
@@ -15,16 +14,16 @@ _BATCH_SIZE_FLAG = typer.Option(100)
 
 @backfill_app.command()
 def pm_ids(
-    geo_db_file: Optional[Path] = typer.Option(None),
-    sra_db_file: Optional[Path] = typer.Option(None),
-    ena_db_file: Optional[Path] = typer.Option(None),
-    ae_db_file: Optional[Path] = typer.Option(None),
-    ncbi_keys_file: Path = typer.Option(...),
+    geo_db_file: Path | None = typer.Option(None),  # noqa: B008
+    sra_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ena_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ae_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ncbi_keys_file: Path = typer.Option(...),  # noqa: B008
     num_workers: int = _NUM_WORKERS_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
-    is_dry_run: bool = typer.Option(False),
-    process_all: bool = typer.Option(False),
-):
+    is_dry_run: bool = typer.Option(default=False),
+    process_all: bool = typer.Option(default=False),
+) -> None:
     backfill_pubmed_ids(
         geo_db_file,
         sra_db_file,
@@ -40,23 +39,23 @@ def pm_ids(
 
 @backfill_app.command()
 def pm_meta(
-    base_output_dir: Path = typer.Option(..., "--output-dir"),
-    geo_db_file: Optional[Path] = typer.Option(None),
-    sra_db_file: Optional[Path] = typer.Option(None),
-    ena_db_file: Optional[Path] = typer.Option(None),
-    ae_db_file: Optional[Path] = typer.Option(None),
-    db_file: Optional[Path] = typer.Option(None),
-    ncbi_keys_file: Path = typer.Option(...),
-    openalex_keys_file: Path = typer.Option(...),
+    base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
+    geo_db_file: Path | None = typer.Option(None),  # noqa: B008
+    sra_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ena_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ae_db_file: Path | None = typer.Option(None),  # noqa: B008
+    db_file: Path | None = typer.Option(None),  # noqa: B008
+    ncbi_keys_file: Path = typer.Option(...),  # noqa: B008
+    openalex_keys_file: Path = typer.Option(...),  # noqa: B008
     num_workers: int = _NUM_WORKERS_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
-    fill_metrics: bool = typer.Option(False),
-    update_metrics: bool = typer.Option(False),
-    skip_journal_metrics: bool = typer.Option(False),
-    update_journal_metrics: bool = typer.Option(False),
-    refresh_all_journals_metrics: bool = typer.Option(False),
-    is_dry_run: bool = typer.Option(False),
-):
+    fill_metrics: bool = typer.Option(default=False),
+    update_metrics: bool = typer.Option(default=False),
+    skip_journal_metrics: bool = typer.Option(default=False),
+    update_journal_metrics: bool = typer.Option(default=False),
+    refresh_all_journals_metrics: bool = typer.Option(default=False),
+    is_dry_run: bool = typer.Option(default=False),
+) -> None:
     backfill_pubmed_metadata(
         base_output_dir,
         geo_db_file,
@@ -79,15 +78,15 @@ def pm_meta(
 
 @backfill_app.command()
 def download_links(
-    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
     source: str = typer.Option(...),
-    sra_db_file: Optional[Path] = typer.Option(None),
-    ena_db_file: Optional[Path] = typer.Option(None),
-    ncbi_keys_file: Optional[Path] = typer.Option(None),
+    sra_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ena_db_file: Path | None = typer.Option(None),  # noqa: B008
+    ncbi_keys_file: Path | None = typer.Option(None),  # noqa: B008
     num_workers: int = _NUM_WORKERS_FLAG,
-    is_dry_run: bool = typer.Option(False),
-    limit: Optional[int] = typer.Option(None),
-):
+    is_dry_run: bool = typer.Option(default=False),
+    limit: int | None = typer.Option(None),
+) -> None:
     backfill_download_links(
         base_output_dir,
         sra_db_file,

@@ -1,14 +1,13 @@
 import csv
 import json
-import logging
 import re
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from helpers import exec_query_from_file
+from main import logger
 
 
 @dataclass
@@ -29,7 +28,7 @@ CLEAN_CENTER_PREFIX = re.compile(r"^[\s(,;]*\d+[.\-)]\s*")
 
 def build_unified_metadata(
     base_output_dir: Path,
-    db_file: Optional[Path],
+    db_file: Path | None,
     geo_db_file: Path,
     sra_db_file: Path,
     ena_db_file: Path,
@@ -75,7 +74,8 @@ def build_unified_metadata(
         sm = source_data[source]
 
         org_counts, common_counts, dominant_sci, dominant_common = _collapse_organism(
-            sm.organism.get(acc), taxonomy
+            sm.organism.get(acc),
+            taxonomy,
         )
         if org_counts:
             stats["organism"] += 1
@@ -147,10 +147,10 @@ def build_unified_metadata(
         }
         rows.append(row)
 
-    logging.info(f"enriched {len(rows)} rows")
+    logger.info(f"enriched {len(rows)} rows")
     for k, v in stats.items():
-        logging.info(f"  {k}: {v} ({100 * v // len(rows)}%)" if rows else f"  {k}: {v}")
-    logging.info(f"center rows: {len(centers_rows)}")
+        logger.info(f"  {k}: {v} ({100 * v // len(rows)}%)" if rows else f"  {k}: {v}")
+    logger.info(f"center rows: {len(centers_rows)}")
 
     with sqlite3.Connection(db_file) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -161,12 +161,12 @@ def build_unified_metadata(
 
         cols = list(rows[0].keys())
         placeholders = ", ".join(["?"] * len(cols))
-        col_names = ", ".join(cols)
+        col_names = ", ".join(c for c in cols)
 
         for start in range(0, len(rows), batch_size):
             batch = rows[start : start + batch_size]
             conn.executemany(
-                f"INSERT OR IGNORE INTO unified_metadata ({col_names}) VALUES ({placeholders})",
+                f"INSERT OR IGNORE INTO unified_metadata ({col_names}) VALUES ({placeholders})",  # noqa: S608 E501
                 [tuple(r[c] for c in cols) for r in batch],
             )
 
@@ -186,21 +186,23 @@ def build_unified_metadata(
 
 
 def _load_unified_catalog(db_file: Path) -> list[tuple[str, str, str, str, dict]]:
-    logging.info("loading unified catalog...")
+    logger.info("loading unified catalog...")
     with sqlite3.Connection(db_file) as conn:
         catalog = conn.execute(
-            "SELECT canonical_accession, source, title, description, aliases FROM unified_studies"
+            """SELECT
+                canonical_accession, source, title, description, aliases
+            FROM unified_studies""",
         ).fetchall()
 
-    logging.info(f"\t{len(catalog)} entries loaded from unified catalog")
+    logger.info(f"\t{len(catalog)} entries loaded from unified catalog")
     return catalog
 
 
 def _load_pubmed_metadata(db_file: Path) -> dict[str, tuple[str | None, int | None]]:
-    logging.info("loading pubmed mapping...")
+    logger.info("loading pubmed mapping...")
     with sqlite3.Connection(db_file) as conn:
         rows = conn.execute(
-            "SELECT pmid, journal, citation_count FROM pubmed_metadata"
+            "SELECT pmid, journal, citation_count FROM pubmed_metadata",
         ).fetchall()
         pubmed_mapping: dict[str, tuple[str | None, int | None]] = {}
         for pmid, journal, citation_count in rows:
@@ -209,34 +211,34 @@ def _load_pubmed_metadata(db_file: Path) -> dict[str, tuple[str | None, int | No
             cc_val = int(citation_count) if citation_count is not None else None
             pubmed_mapping[pmid_str] = (journal_val, cc_val)
 
-    logging.info(f"\t{len(pubmed_mapping)} entries loaded from pubmed mapping")
+    logger.info(f"\t{len(pubmed_mapping)} entries loaded from pubmed mapping")
     return pubmed_mapping
 
 
 def _load_assay_mapping(csv_file: Path) -> dict[str, tuple[str, str]]:
-    logging.info("loading assay mapping...")
-    with open(csv_file) as f:
+    logger.info("loading assay mapping...")
+    with csv_file.open() as f:
         assay_mapping = {
             row["raw_term"]: (row["canonical_assay"], row["category"])
             for row in csv.DictReader(f)
         }
 
-    logging.info(f"\t{len(assay_mapping)} entries loaded from assay mapping")
+    logger.info(f"\t{len(assay_mapping)} entries loaded from assay mapping")
     return assay_mapping
 
 
 def _load_taxonomy_mapping(csv_file: Path) -> dict[str, str]:
-    logging.info("loading taxonomy common names mapping...")
+    logger.info("loading taxonomy common names mapping...")
     taxonomy_mapping = {}
-    with open(csv_file) as f:
+    with csv_file.open() as f:
         for row in csv.DictReader(f):
             name = row["scientific_name"].strip().lower()
             common = row["common_name"].strip()
             if name and common:
                 taxonomy_mapping[name] = common
 
-    logging.info(
-        f"\t{len(taxonomy_mapping)} entries loaded from taxonomy common names mapping"
+    logger.info(
+        f"\t{len(taxonomy_mapping)} entries loaded from taxonomy common names mapping",
     )
     return taxonomy_mapping
 
@@ -253,7 +255,7 @@ def _scan_geo(db_file: Path) -> SourceMap:
 
     # scanning geo_samples
     rows = conn.execute(
-        "SELECT accession, channels FROM geo_samples WHERE channels IS NOT NULL"
+        "SELECT accession, channels FROM geo_samples WHERE channels IS NOT NULL",
     ).fetchall()
 
     for acc, channels_str in rows:
@@ -268,11 +270,13 @@ def _scan_geo(db_file: Path) -> SourceMap:
             elif isinstance(organism, str) and organism.strip():
                 sample_organisms[acc].add(organism.strip())
 
-    logging.info(f"\t{len(sample_organisms)} samples with organism")
+    logger.info(f"\t{len(sample_organisms)} samples with organism")
 
     # scanning geo_series
     rows = conn.execute(
-        "SELECT accession, samples_ref, series_type, published_at, pubmed_id, pubmed_id_pysradb FROM geo_series WHERE samples_ref IS NOT NULL"
+        """SELECT accession, samples_ref, series_type, published_at, pubmed_id,
+            pubmed_id_pysradb
+        FROM geo_series WHERE samples_ref IS NOT NULL""",
     ).fetchall()
 
     series_to_samples = {
@@ -331,13 +335,20 @@ def _scan_geo(db_file: Path) -> SourceMap:
 
     # scanning geo_contributors
     rows = conn.execute(
-        "SELECT accession, organization FROM geo_contributors WHERE organization IS NOT NULL AND organization != '' AND organization != 'GEO' AND organization != 'NCBI/NLM/NIH' ORDER BY accession"
+        """SELECT accession, organization
+        FROM geo_contributors
+        WHERE
+            organization IS NOT NULL
+            AND organization != ''
+            AND organization != 'GEO'
+            AND organization != 'NCBI/NLM/NIH'
+            ORDER BY accession""",
     ).fetchall()
 
     center_orgs: dict[str, list[str]] = defaultdict(list)
     seen_orgs: dict[str, set[str]] = defaultdict(set)
-    for accession, organization in rows:
-        organization = organization.strip()
+    for accession, org_val in rows:
+        organization = org_val.strip()
         if not organization:
             continue
         org_lower = organization.lower()
@@ -371,47 +382,44 @@ def _scan_sra(db_file: Path) -> SourceMap:
 
     # scanning sra_samples
     rows = conn.execute(
-        "SELECT submission, scientific_name FROM sra_samples WHERE submission IS NOT NULL"
+        """SELECT submission, scientific_name
+            FROM sra_samples
+            WHERE submission IS NOT NULL""",
     ).fetchall()
 
-    for submission, scientific_name in rows:
+    for submission, sc_name_val in rows:
         submission_sample_count[submission] += 1
+        scientific_name = str(sc_name_val).strip()
         if not scientific_name:
             continue
-
-        scientific_name = str(scientific_name).strip()
-        if not scientific_name:
-            continue
-
         submission_organism_count[submission][scientific_name] += 1
 
-    logging.info(
-        f"\t{len(submission_organism_count)} submissions with organisms, {len(submission_sample_count)} submissions with samples"
+    logger.info(
+        f"\t{len(submission_organism_count)} submissions with organisms, {len(submission_sample_count)} submissions with samples",  # noqa: E501
     )
 
     # scanning sra_experiments
     rows = conn.execute(
-        "SELECT study, library_strategy FROM sra_experiments WHERE study IS NOT NULL"
+        "SELECT study, library_strategy FROM sra_experiments WHERE study IS NOT NULL",
     ).fetchall()
 
-    for study, strategy in rows:
+    for study, strategy_val in rows:
         study_experiment_count[study] += 1
-        if not strategy:
-            continue
-
-        strategy = str(strategy).strip()
+        strategy = str(strategy_val).strip()
         if not strategy:
             continue
 
         study_library_count[study][strategy] += 1
 
-    logging.info(
-        f"\t{len(study_library_count)} studies with library strategy, {len(study_experiment_count)} studies with experiments"
+    logger.info(
+        f"\t{len(study_library_count)} studies with library strategy, {len(study_experiment_count)} studies with experiments",  # noqa: E501
     )
 
     # scanning sra_studies
     rows = conn.execute(
-        "SELECT accession, submission, links, published_at, pubmed_id_pysradb, center_name FROM sra_studies"
+        """SELECT accession, submission, links, published_at,
+            pubmed_id_pysradb, center_name
+        FROM sra_studies""",
     ).fetchall()
 
     for (
@@ -474,7 +482,9 @@ def _scan_sra(db_file: Path) -> SourceMap:
 
     # scanning sra_submissions for center (fallback to study center_name)
     cursor = conn.execute(
-        "SELECT accession, center_name FROM sra_submissions WHERE center_name IS NOT NULL AND center_name != ''"
+        """SELECT accession, center_name
+        FROM sra_submissions
+        WHERE center_name IS NOT NULL AND center_name != ''""",
     )
     for sub_acc, center_name in cursor:
         sub_center[sub_acc] = center_name.strip()
@@ -510,35 +520,37 @@ def _scan_ae(db_file: Path) -> SourceMap:
 
     # scanning arrayexpress_samples
     rows = conn.execute(
-        "SELECT experiment_accession, organism, library_strategy FROM arrayexpress_samples"
+        """SELECT experiment_accession, organism, library_strategy
+        FROM arrayexpress_samples""",
     ).fetchall()
 
-    for accession, organism, library_strategy in rows:
+    for accession, org_val, lib_strat_val in rows:
         experiment_sample_count[accession] += 1
-
-        if organism:
-            organism = str(organism).strip()
+        if org_val:
+            organism = str(org_val).strip()
             if not organism:
                 continue
-
             experiment_organism_count[accession][organism] += 1
 
-        if library_strategy:
-            library_strategy = str(library_strategy).strip()
+        if lib_strat_val:
+            library_strategy = str(lib_strat_val).strip()
             if not library_strategy:
                 continue
-
             experiment_library_count[accession][library_strategy] += 1
 
     # scanning arrayexpress_experiments
     rows = conn.execute(
-        "SELECT accession, organizations, study_type, pubmed_id, pubmed_id_pysradb, release_date, contact_affiliation FROM arrayexpress_experiments"
+        """SELECT
+            accession, organizations, study_type,
+            pubmed_id, pubmed_id_pysradb, release_date,
+            contact_affiliation
+        FROM arrayexpress_experiments""",
     ).fetchall()
 
     for (
         accession,
         orgs_json,
-        study_type,
+        study_type_val,
         pubmed_id,
         pubmed_id_pysradb,
         release_date,
@@ -574,8 +586,8 @@ def _scan_ae(db_file: Path) -> SourceMap:
         if centers:
             m.center[accession] = centers
 
-        if study_type and accession not in m.library:
-            study_type = study_type.strip()
+        if study_type_val and accession not in m.library:
+            study_type = study_type_val.strip()
             if study_type:
                 m.library[accession] = {study_type: 1}
 
@@ -616,38 +628,46 @@ def _scan_ena(db_file: Path) -> SourceMap:
 
     # scanning ena_samples
     rows = conn.execute(
-        "SELECT study_accession, scientific_name FROM ena_samples WHERE study_accession IS NOT NULL"
+        """SELECT
+            study_accession, scientific_name
+        FROM ena_samples
+        WHERE study_accession IS NOT NULL""",
     ).fetchall()
 
-    for study_accession, name in rows:
+    for study_accession, name_val in rows:
         study_sample_count[study_accession] += 1
-        if name:
-            name = str(name).strip()
+        if name_val:
+            name = str(name_val).strip()
             if not name:
                 continue
             study_organism_count[study_accession][name] += 1
 
     # scanning ena_experiments
     rows = conn.execute(
-        "SELECT study_accession, library_strategy, center_name FROM ena_experiments WHERE study_accession IS NOT NULL"
+        """SELECT
+            study_accession, library_strategy, center_name
+        FROM ena_experiments
+        WHERE study_accession IS NOT NULL""",
     ).fetchall()
 
-    for study_accession, library_strategy, center_name in rows:
+    for study_accession, lib_strat_val, center_name_val in rows:
         study_experiment_count[study_accession] += 1
 
-        if library_strategy:
-            library_strategy = str(library_strategy).strip()
+        if lib_strat_val:
+            library_strategy = str(lib_strat_val).strip()
             if library_strategy:
                 study_library_count[study_accession][library_strategy] += 1
 
-        if center_name:
-            center_name = str(center_name).strip()
+        if center_name_val:
+            center_name = str(center_name_val).strip()
             if center_name:
                 study_center_count[study_accession][center_name] += 1
 
     # scanning ena_studies
     rows = conn.execute(
-        "SELECT study_accession, first_public, pubmed_id_pysradb, center_name FROM ena_studies"
+        """SELECT
+            study_accession, first_public, pubmed_id_pysradb, center_name
+        FROM ena_studies""",
     ).fetchall()
 
     for study_accession, first_public, pubmed_id_pysradb, center_name in rows:
@@ -687,7 +707,7 @@ def _scan_ena(db_file: Path) -> SourceMap:
     return m
 
 
-def _json_or_none(val) -> str | None:
+def _json_or_none(val: dict | list | None) -> str | None:
     if val is None:
         return None
     if isinstance(val, dict) and not val:

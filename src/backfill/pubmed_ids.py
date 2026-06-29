@@ -1,15 +1,14 @@
-import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from backfill.backfill_utils import _chunked, _parse_pmid
+from main import logger
 from pipeline_types import Datasource
 
 DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
@@ -27,47 +26,88 @@ DATASOURCE_COLUMN_MAPPING: dict[Datasource, str] = {
 }
 
 MISSING_QUERIES: dict[Datasource, str] = {
-    Datasource.Sra: "SELECT accession FROM sra_studies WHERE (links IS NULL OR NOT json_valid(links) OR json_extract(links, '$.XREF_LINK.DB') != 'pubmed') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
-    Datasource.Geo: "SELECT accession FROM geo_series WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
-    Datasource.ArrayExpress: "SELECT accession FROM arrayexpress_experiments WHERE (pubmed_id IS NULL OR pubmed_id = '') AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
-    Datasource.Ena: "SELECT study_accession FROM ena_studies WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')",
+    Datasource.Sra: (
+        "SELECT accession FROM sra_studies"
+        " WHERE (links IS NULL OR NOT json_valid(links)"
+        " OR json_extract(links, '$.XREF_LINK.DB') != 'pubmed')"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
+    Datasource.Geo: (
+        "SELECT accession FROM geo_series"
+        " WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]')"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
+    Datasource.ArrayExpress: (
+        "SELECT accession FROM arrayexpress_experiments"
+        " WHERE (pubmed_id IS NULL OR pubmed_id = '')"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
+    Datasource.Ena: (
+        "SELECT study_accession FROM ena_studies"
+        " WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
 }
 
 HAS_ORIGINAL_PMID_QUERIES: dict[Datasource, str] = {
-    Datasource.Sra: "SELECT COUNT(*) FROM sra_studies WHERE json_valid(links) AND json_extract(links, '$.XREF_LINK.DB') = 'pubmed' AND json_extract(links, '$.XREF_LINK.ID') IS NOT NULL",
-    Datasource.Geo: "SELECT COUNT(*) FROM geo_series WHERE pubmed_id IS NOT NULL AND pubmed_id != '' AND pubmed_id != '[]'",
-    Datasource.ArrayExpress: "SELECT COUNT(*) FROM arrayexpress_experiments WHERE pubmed_id IS NOT NULL AND pubmed_id != ''",
+    Datasource.Sra: (
+        "SELECT COUNT(*) FROM sra_studies"
+        " WHERE json_valid(links)"
+        " AND json_extract(links, '$.XREF_LINK.DB') = 'pubmed'"
+        " AND json_extract(links, '$.XREF_LINK.ID') IS NOT NULL"
+    ),
+    Datasource.Geo: (
+        "SELECT COUNT(*) FROM geo_series"
+        " WHERE pubmed_id IS NOT NULL AND pubmed_id != '' AND pubmed_id != '[]'"
+    ),
+    Datasource.ArrayExpress: (
+        "SELECT COUNT(*) FROM arrayexpress_experiments"
+        " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
+    ),
     Datasource.Ena: "SELECT 0",
 }
 
 BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
-    Datasource.Sra: "SELECT COUNT(*) FROM sra_studies WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
-    Datasource.Geo: "SELECT COUNT(*) FROM geo_series WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
-    Datasource.ArrayExpress: "SELECT COUNT(*) FROM arrayexpress_experiments WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
-    Datasource.Ena: "SELECT COUNT(*) FROM ena_studies WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''",
+    Datasource.Sra: (
+        "SELECT COUNT(*) FROM sra_studies"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+    Datasource.Geo: (
+        "SELECT COUNT(*) FROM geo_series"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+    Datasource.ArrayExpress: (
+        "SELECT COUNT(*) FROM arrayexpress_experiments"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+    Datasource.Ena: (
+        "SELECT COUNT(*) FROM ena_studies"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
 }
 
 
 def backfill_pubmed_ids(
-    geo_db_file: Optional[Path],
-    sra_db_file: Optional[Path],
-    ena_db_file: Optional[Path],
-    ae_db_file: Optional[Path],
+    geo_db_file: Path | None,
+    sra_db_file: Path | None,
+    ena_db_file: Path | None,
+    ae_db_file: Path | None,
     ncbi_keys_file: Path,
     num_workers: int,
     batch_size: int,
     is_dry_run: bool,
-    process_all: bool = False,
-):
+    process_all: bool = False,  # noqa:  FBT002
+) -> None:
     if (
         (not geo_db_file)
         and (not sra_db_file)
         and (not ena_db_file)
         and (not ae_db_file)
     ):
-        raise ValueError(
-            "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file or --ae-db-file. recieved none of them"
+        msg = (
+            "expected at least one of --geo-db-file, --sra-db-file,"
+            " --ena-db-file or --ae-db-file. recieved none of them"
         )
+        raise ValueError(msg)
 
     raw_mapping: dict[Datasource, Path | None] = {
         Datasource.Geo: geo_db_file,
@@ -95,23 +135,26 @@ def backfill_pubmed_ids(
             has_original_query = HAS_ORIGINAL_PMID_QUERIES[datasource]
             backfilled_query = BACKFILLED_PMID_QUERIES[datasource]
 
-            total += conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            total += conn.execute(
+                f"SELECT COUNT(*) FROM {table}",  # noqa: S608
+            ).fetchone()[0]
             already_checked += conn.execute(
-                f"SELECT COUNT(*) FROM {table} WHERE pubmed_last_checked IS NOT NULL"
+                f"SELECT COUNT(*) FROM {table} WHERE pubmed_last_checked IS NOT NULL",  # noqa: S608
             ).fetchone()[0]
             num_has_original += conn.execute(has_original_query).fetchone()[0]
             num_backfilled += conn.execute(backfilled_query).fetchone()[0]
 
             per_datasource_missing_pubmed_ids = conn.execute(missing_query).fetchall()
             missing_by_datasource[datasource] = [
-                id for (id,) in per_datasource_missing_pubmed_ids
+                item for (item,) in per_datasource_missing_pubmed_ids
             ]
 
     total_missing = sum(len(v) for v in missing_by_datasource.values())
-    logging.info(
-        "%d total, across {%s} datasources | %d have original pid | %d via pysradb | %d checked | %d to check (%.2f%%)",
+    logger.info(
+        "%d total, across {%s} datasources | %d have original pid"
+        " | %d via pysradb | %d checked | %d to check (%.2f%%)",
         total,
-        ",".join(mapping.keys()),
+        ",".join(str(d) for d in mapping),
         num_has_original,
         num_backfilled,
         already_checked,
@@ -122,20 +165,19 @@ def backfill_pubmed_ids(
     if is_dry_run or total_missing == 0:
         return
 
-    with open(str(ncbi_keys_file), "r") as f:
-        keys = f.read().splitlines()
+    keys = ncbi_keys_file.read_text().splitlines()
 
     optimal_num_workers = len(keys)
     if num_workers != optimal_num_workers:
         num_workers = optimal_num_workers
-        logging.warning("using %d as num workers", num_workers)
+        logger.warning("using %d as num workers", num_workers)
 
     for datasource, db_file in mapping.items():
         accessions = missing_by_datasource[datasource]
         if not accessions:
             continue
 
-        logging.info("processing %s - %d accessions\n", datasource, len(accessions))
+        logger.info("processing %s - %d accessions", datasource, len(accessions))
         worker_data: list[list[str]] = [[] for _ in range(num_workers)]
         for i, accession in enumerate(accessions):
             worker_data[i % num_workers].append(accession)
@@ -169,22 +211,24 @@ def _worker(
     db_file: Path,
     batch_size: int,
     pbar: tqdm,
-):
+) -> None:
     sra = SRAweb(api_key, verbose=False)
     is_sra_related = datasource in (Datasource.Sra, Datasource.Ena)
     col_name = "srp_accession" if is_sra_related else "gse_accession"
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    now = datetime.now(UTC).strftime("%Y-%m-%d")
 
     for batch in _chunked(data, batch_size):
         try:
-            df = sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
+            sra_df = (
+                sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
+            )
         except KeyError:
-            df = pd.DataFrame()
+            sra_df = pd.DataFrame()
 
         pmid_updates = []
 
-        for _, row in df.iterrows():
+        for _, row in sra_df.iterrows():
             acc = row.get(col_name)
             pmid = _parse_pmid(row.get("pmid"))
             if acc and pmid:
@@ -199,13 +243,14 @@ def _worker(
             accessions_in_batch = [a for a in batch if a]
             placeholders = ",".join("?" for _ in accessions_in_batch)
             conn.execute(
-                f"UPDATE {table} SET pubmed_last_checked = ? WHERE {column} IN ({placeholders})",
+                f"""UPDATE {table} SET pubmed_last_checked = ?
+                WHERE {column} IN ({placeholders})""",  # noqa: S608
                 (now, *accessions_in_batch),
             )
 
             if pmid_updates:
                 conn.executemany(
-                    f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE {column} = ?",
+                    f"UPDATE {table} SET pubmed_id_pysradb = ? WHERE {column} = ?",  # noqa: S608
                     pmid_updates,
                 )
 

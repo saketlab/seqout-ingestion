@@ -1,3 +1,4 @@
+import contextlib
 import csv
 import dataclasses
 import functools
@@ -11,19 +12,24 @@ import sys
 import tarfile
 import tempfile
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from enum import StrEnum
 from pathlib import Path
-from typing import Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import h5py
 import pyreadr
 import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
-from rpy2.robjects.vectors import Vector
 from tqdm import tqdm
 
-from helpers import simple_file_download
+from helpers import download_file
+
+if TYPE_CHECKING:
+    from rpy2.robjects.vectors import Vector
+
+logger = logging.getLogger(__name__)
 
 
 class FileType(StrEnum):
@@ -46,10 +52,10 @@ class DownloadLink:
     type: FileType
     url: str
 
-    def _parse_url(self) -> str:
+    def parse_url(self) -> str:  # noqa: D102
         return self.url.replace("ftp://", "https://")
 
-    def _extract_filename(self) -> str:
+    def extract_filename(self) -> str:  # noqa: D102
         return self.url.split("/")[-1]
 
 
@@ -73,7 +79,7 @@ FILE_TYPE_PRIORITY = [
 ]
 
 
-def sc_detector(
+def sc_counter(
     base_output_dir: Path,
     unified_metadata_db_file: Path,
     geo_db_file: Path,
@@ -84,14 +90,14 @@ def sc_detector(
     timeout: int,
     max_timeout: int,
     batch_size: int,
-):
+) -> None:
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
     if output_dir.exists():
         shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(exist_ok=True, parents=True)
 
     if not _check_disk_space(output_dir):
-        logging.error(
+        logger.error(
             "insufficient disk space at %s: cannot start sc_enrich detector",
             output_dir,
         )
@@ -99,13 +105,13 @@ def sc_detector(
 
     for db_path in (unified_metadata_db_file, geo_db_file, ae_db_file):
         if not _check_disk_space(db_path.parent):
-            logging.error(
+            logger.error(
                 "insufficient disk space at %s: database operations may fail",
                 db_path.parent,
             )
             return
 
-    def _cleanup(signum, frame):
+    def _cleanup(signum: int, _frame: object | None) -> None:
         shutil.rmtree(output_dir, ignore_errors=True)
         sys.exit(signum)
 
@@ -119,30 +125,33 @@ def sc_detector(
     columns = [row[1] for row in conn.execute("PRAGMA table_info(unified_metadata)")]
     if "single_cell_count" not in columns:
         conn.execute(
-            "ALTER TABLE unified_metadata ADD COLUMN single_cell_count INTEGER DEFAULT 0;"
+            "ALTER TABLE unified_metadata "
+            "ADD COLUMN single_cell_count INTEGER DEFAULT 0;",
         )
 
-    def _db_flush():
+    def _db_flush() -> None:
         ae_conn.close()
         geo_conn.close()
         conn.close()
 
     rows: list[tuple[str, str]] = conn.execute(
-        "SELECT canonical_accession, source FROM unified_metadata WHERE is_single_cell = '1';"
+        "SELECT canonical_accession, source "
+        "FROM unified_metadata WHERE is_single_cell = '1';",
     ).fetchall()
 
     accessions: list[str | tuple[str, str]] = []
     search_for_aliases: list[str] = []
 
     for accession, source in rows:
-        if source != "geo" and source != "ae":
+        if source not in {"geo", "ae"}:
             search_for_aliases.append(accession)
         else:
             accessions.append(accession)
 
     rows = _query_in(
         conn,
-        "SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession",
+        "SELECT canonical_accession, aliases "
+        "FROM unified_metadata WHERE canonical_accession",
         search_for_aliases,
         batch_size,
         "GROUP BY canonical_accession",
@@ -178,7 +187,7 @@ def sc_detector(
             "GROUP BY accession",
         )
     except sqlite3.OperationalError:
-        logging.error("database error querying geo_series (disk may be full)")
+        logger.exception("database error querying geo_series (disk may be full)")
         rows = []
 
     for accession, samples_ref_json in rows:
@@ -192,12 +201,16 @@ def sc_detector(
             elif isinstance(v, str):
                 gsm_to_gse[v] = accession
             else:
-                raise ValueError(
-                    "samples_ref of geo_series table is of either list[str] of list[dict] type"
+                msg = (
+                    "samples_ref of geo_series table is "
+                    "of either list[str] of list[dict] type"
+                )
+                raise TypeError(
+                    msg,
                 )
 
     download_links_mapping: dict[str, list[DownloadLink]] = defaultdict(
-        list[DownloadLink]
+        list[DownloadLink],
     )
 
     all_gsms = list(gsm_to_gse.keys())
@@ -228,7 +241,7 @@ def sc_detector(
                     continue
 
                 download_links_mapping[gse].append(
-                    DownloadLink(type=file_type, url=url)
+                    DownloadLink(type=file_type, url=url),
                 )
 
     for series_accession in accessions_to_process:
@@ -256,12 +269,13 @@ def sc_detector(
                 file_type = _classify_file(url)
                 if file_type == FileType.Tar:
                     download_links_mapping[series_accession].append(
-                        DownloadLink(type=file_type, url=url)
+                        DownloadLink(type=file_type, url=url),
                     )
                     break
         else:
             row = ae_conn.execute(
-                "SELECT processed_data_files FROM arrayexpress_experiments WHERE accession = ?",
+                "SELECT processed_data_files "
+                "FROM arrayexpress_experiments WHERE accession = ?",
                 (series_accession,),
             ).fetchone()
             if row is None:
@@ -282,7 +296,7 @@ def sc_detector(
                     continue
 
                 download_links_mapping[series_accession].append(
-                    DownloadLink(type=file_type, url=url)
+                    DownloadLink(type=file_type, url=url),
                 )
 
     for links in download_links_mapping.values():
@@ -296,7 +310,8 @@ def sc_detector(
     pbar_accessions: set[str] = set()
     accession_links: dict[str, list[DownloadLink]] = dict(download_links_mapping)
 
-    # 8 parallel download workers works very well with ncbi and ebi ftp server without hitting much rate limit errors
+    # 8 parallel download workers works very well with ncbi and ebi
+    # ftp server without hitting much rate limit errors
     download_workers = min(num_workers // 2, 8)
     process_workers = num_workers - download_workers
 
@@ -308,29 +323,31 @@ def sc_detector(
         process_futures: dict[Future, tuple[str, Path, Path, FileType, int]] = {}
         downloaded_paths: set[Path] = set()
         downloader = functools.partial(
-            simple_file_download,
+            download_file,
             chunk_size=chunk_size,
             num_retries=retries,
             timeout=timeout,
             max_wait=max_timeout,
             with_pbar=False,
-            # a lot of the rds files have hugely varying expected (`Content-Length`) and actual download size
-            # due to which the download fails, so this check is silenced particularly for this script
+            # a lot of the rds files have hugely varying expected
+            # (`Content-Length`) and actual download size
+            # due to which the download fails, so this check is silenced
+            # particularly for this script
             validate_content_length=False,
         )
         updates: list[tuple[str, int]] = []
         done_accessions: set[str] = set()
 
-        def _try_links(accession: str, start_idx: int):
+        def _try_links(accession: str, start_idx: int) -> None:
             links = accession_links.get(accession) or []
             for idx in range(start_idx, len(links)):
                 link = links[idx]
-                dest_path = output_dir / accession / link._extract_filename()
+                dest_path = output_dir / accession / link.extract_filename()
 
                 if dest_path.exists():
                     result = _resolve_file_type(dest_path, link.type, chunk_size)
                     if result is None:
-                        logging.debug("unable to find file type for %s", dest_path)
+                        logger.debug("unable to find file type for %s", dest_path)
                         decompressed = dest_path.with_suffix("")
                         if decompressed != dest_path:
                             decompressed.unlink(missing_ok=True)
@@ -343,12 +360,15 @@ def sc_detector(
                     return
 
                 if not _check_disk_space(output_dir):
-                    logging.warning("skipping %s: insufficient disk space", link.url)
+                    logger.warning("skipping %s: insufficient disk space", link.url)
                     _try_links(accession, idx + 1)
                     return
 
                 future = download_pool.submit(
-                    downloader, url=link._parse_url(), dest_path=dest_path
+                    downloader,
+                    url=link.parse_url(),
+                    dest_path=dest_path,
+                    num_workers=num_workers,
                 )
                 download_futures[future] = (accession, idx)
                 return
@@ -365,7 +385,8 @@ def sc_detector(
                 pbar.update(1)
 
         for accession, links in sorted(
-            accession_links.items(), key=lambda x: len(x[1])
+            accession_links.items(),
+            key=lambda x: len(x[1]),
         ):
             if not links:
                 done_accessions.add(accession)
@@ -388,7 +409,7 @@ def sc_detector(
                         dest_path = f.result()
                         result = _resolve_file_type(dest_path, link.type, chunk_size)
                         if result is None:
-                            logging.debug("unable to find file type for %s", dest_path)
+                            logger.debug("unable to find file type for %s", dest_path)
                             dest_path.unlink(missing_ok=True)
                             decompressed = dest_path.with_suffix("")
                             if decompressed != dest_path:
@@ -399,12 +420,15 @@ def sc_detector(
                         file_type, sniffed_path = result
                         process_futures[
                             process_pool.submit(
-                                _is_sc, sniffed_path, file_type, chunk_size
+                                _is_sc,
+                                sniffed_path,
+                                file_type,
+                                chunk_size,
                             )
                         ] = (accession, dest_path, sniffed_path, file_type, link_idx)
                         downloaded_paths.add(dest_path)
-                    except Exception as e:
-                        logging.error("failed to download %s: %s", link.url, e)
+                    except Exception:
+                        logger.exception("failed to download %s", link.url)
                         _try_links(accession, link_idx + 1)
 
                 if f in process_futures:
@@ -445,9 +469,10 @@ def sc_detector(
 def _check_disk_space(path: Path, min_bytes: int = MIN_DISK_SPACE_BYTES) -> bool:
     try:
         usage = shutil.disk_usage(path)
-        return usage.free >= min_bytes
     except OSError:
         return False
+    else:
+        return usage.free >= min_bytes
 
 
 def _query_in(
@@ -456,14 +481,14 @@ def _query_in(
     items: list[str],
     batch_size: int,
     query_suffix: str = "",
-):
+) -> list[tuple]:
     results = []
 
     for i in range(0, len(items), batch_size):
         chunk = items[i : i + batch_size]
         ph = ", ".join(["?"] * len(chunk))
         results.extend(
-            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall()
+            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
         )
 
     return results
@@ -476,12 +501,15 @@ def _flush_updates(conn: sqlite3.Connection, updates: list[tuple[str, int]]) -> 
     if non_sc:
         placeholders = ", ".join(repr(acc) for acc in non_sc)
         conn.execute(
-            f"UPDATE unified_metadata SET is_single_cell = 0, single_cell_modality = '', single_cell_count = 0 WHERE canonical_accession IN ({placeholders})"
+            f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
+            f"single_cell_modality = '', single_cell_count = 0 "
+            f"WHERE canonical_accession IN ({placeholders})",
         )
 
     for accession, single_cell_count in sc:
         conn.execute(
-            "UPDATE unified_metadata SET single_cell_count = ? WHERE canonical_accession = ?",
+            "UPDATE unified_metadata "
+            "SET single_cell_count = ? WHERE canonical_accession = ?",
             (single_cell_count, accession),
         )
 
@@ -492,7 +520,7 @@ def _contains_any(s: str, substrings: list[str]) -> bool:
     return any(sub in s for sub in substrings)
 
 
-def _classify_file(path: str) -> FileType:
+def _classify_file(path: str) -> FileType:  # noqa: PLR0911
     ignore_words = [
         "barcode",
         "feature",
@@ -528,16 +556,18 @@ def _classify_file(path: str) -> FileType:
 
 
 def _is_gzipped(path: Path) -> bool:
-    GZIP_MAGIC = b"\x1f\x8b"
+    gzip_magic = b"\x1f\x8b"
     try:
-        with open(path, "rb") as f:
-            return f.read(2) == GZIP_MAGIC
+        with path.open("rb") as f:
+            return f.read(2) == gzip_magic
     except OSError:
         return False
 
 
 def _resolve_file_type(
-    path: Path, file_type: FileType, chunk_size: int
+    path: Path,
+    file_type: FileType,
+    chunk_size: int,
 ) -> tuple[FileType, Path] | None:
     if path.suffix == ".gz":
         if not _is_gzipped(path):
@@ -548,7 +578,7 @@ def _resolve_file_type(
 
         tmp_path = path.with_suffix("")
         if not tmp_path.exists():
-            with gzip.open(path, "rb") as f_in, open(tmp_path, "wb") as f_out:
+            with gzip.open(path, "rb") as f_in, tmp_path.open("wb") as f_out:
                 shutil.copyfileobj(f_in, f_out)
         path = tmp_path
 
@@ -562,12 +592,12 @@ def _resolve_file_type(
     return resolved_type, resolved_path
 
 
-def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:
+def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:  # noqa: PLR0911
     try:
-        with open(path, "r") as f:
+        with path.open() as f:
             sample = f.read(chunk_size)
     except UnicodeDecodeError as e:
-        logging.debug("failed to read %s: %s", path, e)
+        logger.debug("failed to read %s: %s", path, e)
         return FileType.Unknown, path
 
     try:
@@ -586,38 +616,37 @@ def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:
         return FileType.Txt, path
     if dialect.delimiter == "\t":
         return FileType.Tsv, path
-    elif dialect.delimiter == ",":
+    if dialect.delimiter == ",":
         return FileType.Csv, path
-    elif dialect.delimiter == " ":
+    if dialect.delimiter == " ":
         return FileType.SpaceDelimited, path
-    elif dialect.delimiter == ";":
+    if dialect.delimiter == ";":
         return FileType.SemicolonDelimited, path
-    else:
-        return FileType.Txt, path
+    return FileType.Txt, path
 
 
-def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> int:
+def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> int:  # noqa: PLR0911
     if file_type == FileType.Barcodes:
         return _process_barcodes(dest_path, chunk_size)
-    elif file_type == FileType.H5:
+    if file_type == FileType.H5:
         return _process_h5(dest_path, chunk_size)
-    elif file_type == FileType.H5ad:
+    if file_type == FileType.H5ad:
         return _process_h5ad(dest_path, chunk_size)
-    elif file_type == FileType.Tar:
+    if file_type == FileType.Tar:
         return _process_tar(dest_path, chunk_size)
-    elif file_type == FileType.Txt:
+    if file_type == FileType.Txt:
         return _process_txt(dest_path, chunk_size)
-    elif file_type == FileType.Mtx:
+    if file_type == FileType.Mtx:
         return _process_mtx(dest_path, chunk_size)
-    elif file_type == FileType.Tsv:
+    if file_type == FileType.Tsv:
         return _process_delimiter_file_types("\t")(dest_path, chunk_size)
-    elif file_type == FileType.Csv:
+    if file_type == FileType.Csv:
         return _process_delimiter_file_types(",")(dest_path, chunk_size)
-    elif file_type == FileType.SpaceDelimited:
+    if file_type == FileType.SpaceDelimited:
         return _process_delimiter_file_types(" ")(dest_path, chunk_size)
-    elif file_type == FileType.SemicolonDelimited:
+    if file_type == FileType.SemicolonDelimited:
         return _process_delimiter_file_types(";")(dest_path, chunk_size)
-    elif file_type == FileType.Rds:
+    if file_type == FileType.Rds:
         return _process_rds(dest_path, chunk_size)
 
     return 0
@@ -627,11 +656,11 @@ def safe_process(
     func: Callable[[Path, int], int],
 ) -> Callable[[Path, int], int]:
     @functools.wraps(func)
-    def wrapper(path: Path, chunk_size: int, *args, **kwargs):
+    def wrapper(path: Path, chunk_size: int, *args: Any, **kwargs: Any) -> int:
         try:
             return func(path, chunk_size, *args, **kwargs)
-        except Exception as e:
-            logging.error("failed to process %s: %s", path, e)
+        except Exception:
+            logger.exception("failed to process %s", path)
             return -1
 
     return wrapper
@@ -671,18 +700,18 @@ def _process_tar(path: Path, chunk_size: int) -> int:
 
                 if sniffed_path != tmp_path:
                     sniffed_path.unlink(missing_ok=True)
-                if single_cell_count > max_count:
-                    max_count = single_cell_count
+                max_count = max(max_count, single_cell_count)
 
-        return max_count
-    except Exception as e:
-        logging.error("failed to process %s: %s", path, e)
+    except Exception:
+        logger.exception("failed to process %s", path)
         return -1
+    else:
+        return max_count
 
 
 @safe_process
 def _process_barcodes(path: Path, chunk_size: int) -> int:
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         chunk = f.read(chunk_size)
     idx = chunk.find(b"\n")
     if idx == -1 or len(chunk) <= idx + 1:
@@ -696,15 +725,13 @@ def _process_h5(path: Path, _: int) -> int:
 
     with h5py.File(path, "r") as f:
 
-        def find_barcodes(name, obj):
+        def find_barcodes(name: str, obj: Any) -> None:
             nonlocal n_cells
             if n_cells is not None:
                 return
             if obj is not None and name.endswith("/barcodes"):
-                try:
+                with contextlib.suppress(TypeError):
                     n_cells = len(obj)
-                except TypeError:
-                    pass
 
         f.visititems(find_barcodes)
 
@@ -730,27 +757,30 @@ def _process_h5ad(path: Path, _: int) -> int:
 
 @safe_process
 def _process_txt(path: Path, chunk_size: int) -> int:
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         chunk = f.read(chunk_size)
     lines = chunk.strip().splitlines()
-    return len(lines) if len(lines) > 2 else 0
+    _min_sc_lines = 2
+    return len(lines) if len(lines) > _min_sc_lines else 0
 
 
 @safe_process
 def _process_mtx(path: Path, chunk_size: int) -> int:
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         header = f.read(chunk_size)
 
+    _min_parts = 2
     for line in header.splitlines():
         if line.startswith(b"%"):
             continue
         parts = line.split()
-        if len(parts) >= 2:
+        if len(parts) >= _min_parts:
             try:
                 n_cells = int(parts[1])
-                return n_cells if n_cells > 1 else 0
             except (ValueError, IndexError):
                 return 0
+            else:
+                return n_cells if n_cells > 1 else 0
 
     return 0
 
@@ -758,7 +788,7 @@ def _process_mtx(path: Path, chunk_size: int) -> int:
 def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
     @safe_process
     def _wrapper(path: Path, chunk_size: int) -> int:
-        with open(path, "rb") as f:
+        with path.open("rb") as f:
             chunk = f.read(chunk_size)
 
         first_newline = chunk.find(b"\n")
@@ -767,8 +797,9 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
             if first_newline != -1
             else chunk.decode().split(delimiter)
         )
+        _min_sc_cols = 3
         n_cols = len(header)
-        return n_cols if n_cols > 3 else 0
+        return n_cols if n_cols > _min_sc_cols else 0
 
     return _wrapper
 
@@ -781,15 +812,16 @@ def _process_rds(path: Path, _: int) -> int:
         return _process_rds_rpy2(path)
 
     if not result:
-        logging.error("no objects found in rds %s", path)
+        logger.error("no objects found in rds %s", path)
         return 0
 
-    df = list(result.values())[0]
-    if not hasattr(df, "shape") or len(df.shape) != 2:
-        logging.error("unexpected object type in rds %s: %s", path, type(df))
+    rds_df = next(iter(result.values()))
+    _expected_ndim = 2
+    if not hasattr(rds_df, "shape") or len(rds_df.shape) != _expected_ndim:
+        logger.error("unexpected object type in rds %s: %s", path, type(rds_df))
         return 0
 
-    n_cells = df.shape[1]
+    n_cells = rds_df.shape[1]
     return n_cells if n_cells > 1 else 0
 
 
@@ -798,7 +830,7 @@ def _process_rds_rpy2(path: Path) -> int:
         ro.r(f'obj <- readRDS("{path}")')
 
         vec = cast(
-            Vector,
+            "Vector",
             ro.r("""
             n_cells <- 0
 
@@ -860,7 +892,8 @@ def _process_rds_rpy2(path: Path) -> int:
         )
         n_cells = int(vec[0])
 
-        return n_cells if n_cells > 1 else 0
-    except Exception as e:
-        logging.error("rpy2 fallback failed for %s: %s", path, e)
+    except Exception:
+        logger.exception("rpy2 fallback failed for %s", path)
         return 0
+    else:
+        return n_cells if n_cells > 1 else 0

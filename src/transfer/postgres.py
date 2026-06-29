@@ -1,11 +1,13 @@
+import contextlib
+import functools
 import json
 import sqlite3
-import threading
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, LiteralString, Optional, cast
+from typing import Any, LiteralString, cast
 
 import psycopg
 import pycountry
@@ -61,12 +63,15 @@ def postgres_transfer(
     download_links_db_file: Path,
     num_workers: int,
     batch_size: int,
-):
+) -> None:
     table_info = {
         "geo_series": _TableInfo(
             sqlite_db_file=geo_db_file,
             modifier=_geo_series_batch_modifier(
-                sra_db_file, geo_db_file, unified_metadata_db_file, batch_size
+                sra_db_file,
+                geo_db_file,
+                unified_metadata_db_file,
+                batch_size,
             ),
             select_cols=_GEO_SERIES_SELECT_COLS,
             insert_cols=_GEO_SERIES_INSERT_COLS,
@@ -86,7 +91,9 @@ def postgres_transfer(
         "sra_studies": _TableInfo(
             sqlite_db_file=sra_db_file,
             modifier=_sra_studies_batch_modifier(
-                sra_db_file, unified_metadata_db_file, batch_size
+                sra_db_file,
+                unified_metadata_db_file,
+                batch_size,
             ),
             select_cols=_SRA_STUDIES_SELECT_COLS,
             insert_cols=_SRA_STUDIES_INSERT_COLS,
@@ -104,7 +111,8 @@ def postgres_transfer(
             modifier=_sra_samples_batch_modifier,
         ),
         "sra_runs": _TableInfo(
-            sqlite_db_file=sra_db_file, modifier=_no_op_batch_modifier
+            sqlite_db_file=sra_db_file,
+            modifier=_no_op_batch_modifier,
         ),
         "sra_run_download_links": _TableInfo(
             sqlite_db_file=download_links_db_file,
@@ -133,7 +141,8 @@ def postgres_transfer(
         "arrayexpress_experiments": _TableInfo(
             sqlite_db_file=ae_db_file,
             modifier=_arrayexpress_experiments_batch_modifier(
-                unified_metadata_db_file, batch_size
+                unified_metadata_db_file,
+                batch_size,
             ),
             select_cols=_AE_EXPERIMENTS_SELECT_COLS,
             insert_cols=_AE_EXPERIMENTS_INSERT_COLS,
@@ -178,7 +187,7 @@ def postgres_transfer(
                         info.insert_cols,
                         info.select_table_name,
                     ),
-                )
+                ),
             )
 
     all_tasks.append(
@@ -186,48 +195,50 @@ def postgres_transfer(
             "geo_geocode",
             _transfer_geo_geocode,
             (pg_url, geo_db_file, unified_metadata_db_file, batch_size),
-        )
+        ),
     )
     all_tasks.append(
         (
             "sra_geocode",
             _transfer_sra_geocode,
             (pg_url, sra_db_file, unified_metadata_db_file, batch_size),
-        )
+        ),
     )
     all_tasks.append(
         (
             "ena_geocode",
             _transfer_ena_geocode,
             (pg_url, ena_db_file, unified_metadata_db_file, batch_size),
-        )
+        ),
     )
     all_tasks.append(
         (
             "ae_geocode",
             _transfer_ae_geocode,
             (pg_url, ae_db_file, unified_metadata_db_file, batch_size),
-        )
+        ),
     )
     all_tasks.append(
         (
             "study_publications",
             _transfer_study_publications,
             (pg_url, unified_metadata_db_file, pubmed_metadata_db_file, batch_size),
-        )
+        ),
     )
     all_tasks.append(
         (
             "cross_refs",
             _transfer_cross_refs,
             (pg_url, unified_metadata_db_file, batch_size),
-        )
+        ),
     )
 
     with (
         ThreadPoolExecutor(max_workers=num_workers) as pool,
         tqdm(
-            total=len(all_tasks), desc="transferring tables", unit="table"
+            total=len(all_tasks),
+            desc="transferring tables",
+            unit="table",
         ) as outer_pbar,
         logging_redirect_tqdm(),
     ):
@@ -244,14 +255,10 @@ def postgres_transfer(
             outer_pbar.update(1)
 
 
-def _get_table_info(conn: sqlite3.Connection, table_name: str) -> tuple[list[str], str]:
+def _get_table_info(conn: sqlite3.Connection, table_name: str) -> list[tuple]:
     cursor = conn.execute(f"PRAGMA table_info({table_name})")
     rows = cursor.fetchall()
-
-    col_list = [row[1] for row in rows]
-    pk = next(row[1] for row in rows if row[5] == 1)
-
-    return col_list, pk
+    return [row[1] for row in rows]
 
 
 def _query_in(
@@ -260,14 +267,14 @@ def _query_in(
     items: list[str],
     batch_size: int,
     query_suffix: str = "",
-):
+) -> list[tuple]:
     results = []
 
     for i in range(0, len(items), batch_size):
         chunk = items[i : i + batch_size]
         ph = ", ".join(["?"] * len(chunk))
         results.extend(
-            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall()
+            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
         )
     return results
 
@@ -275,12 +282,12 @@ def _query_in(
 def _execute_batch_inserts(
     pg_conn: psycopg.Connection,
     insert_query: str,
-    rows,
+    rows: Iterable[tuple[Any, ...]],
     batch_size: int,
     desc: str,
     total: int | None = None,
-    **tqdm_kwargs,
-):
+    **tqdm_kwargs: Any,
+) -> None:
     batch: list[tuple] = []
 
     with tqdm(desc=desc, total=total, unit="rows", leave=False, **tqdm_kwargs) as pbar:
@@ -289,14 +296,14 @@ def _execute_batch_inserts(
 
             if len(batch) >= batch_size:
                 with pg_conn.cursor() as cur:
-                    cur.executemany(cast(LiteralString, insert_query), batch)
+                    cur.executemany(cast("LiteralString", insert_query), batch)
                 pg_conn.commit()
                 pbar.update(len(batch))
                 batch = []
 
         if batch:
             with pg_conn.cursor() as cur:
-                cur.executemany(cast(LiteralString, insert_query), batch)
+                cur.executemany(cast("LiteralString", insert_query), batch)
             pg_conn.commit()
             pbar.update(len(batch))
 
@@ -307,10 +314,10 @@ def _transfer_helper(
     modifier: _Modifier,
     table_name: str,
     batch_size: int,
-    select_cols: Optional[list[str]] = None,
-    insert_cols: Optional[list[str]] = None,
+    select_cols: list[str] | None = None,
+    insert_cols: list[str] | None = None,
     select_table_name: str | None = None,
-):
+) -> None:
     select_pg_table_name = select_table_name or table_name
 
     with (
@@ -322,30 +329,32 @@ def _transfer_helper(
         if select_cols:
             col_list = select_cols
         else:
-            col_list, pk = _get_table_info(sqlite_conn, select_pg_table_name)
+            (col_list,) = _get_table_info(sqlite_conn, select_pg_table_name)
 
         columns = ", ".join(col_list)
         placeholders = ", ".join(["%s"] * len(col_list))
-        select_query = f"SELECT {columns} FROM {select_pg_table_name} LIMIT {batch_size} OFFSET {{offset}}"
+        select_query = f"""SELECT {columns}
+            FROM {select_pg_table_name} LIMIT {batch_size} OFFSET {{offset}}"""  # noqa: S608
 
         if insert_cols:
             col_list = insert_cols
             columns = ", ".join(col_list)
             placeholders = ", ".join(["%s"] * len(col_list))
 
-        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        insert_query = f"""INSERT INTO {table_name} ({columns})
+            VALUES ({placeholders}) ON CONFLICT DO UPDATE"""  # noqa: S608
         total = int(
             sqlite_conn.execute(
-                f"SELECT COUNT(*) FROM {select_pg_table_name}"
-            ).fetchone()[0]
+                f"SELECT COUNT(*) FROM {select_pg_table_name}",  # noqa: S608
+            ).fetchone()[0],
         )
 
-        def _gen_rows():
+        def _gen_rows() -> Iterator[tuple[Any, ...]]:
             offset = 0
 
             while True:
                 batch = sqlite_conn.execute(
-                    select_query.format(offset=offset)
+                    select_query.format(offset=offset),
                 ).fetchall()
 
                 if not batch:
@@ -416,7 +425,7 @@ def _geo_series_batch_modifier(
                     "samples": samples,
                     "relations": relations,
                     "supp": supp,
-                }
+                },
             )
 
             all_samples.extend(samples)
@@ -433,7 +442,12 @@ def _geo_series_batch_modifier(
 
             for sample_acc, org_json, channels_json, platform in _query_in(
                 conn,
-                "SELECT gs.accession, gp.organism, gs.channels, gs.platform_ref FROM geo_samples AS gs LEFT JOIN geo_platforms gp ON gs.platform_ref = gp.accession WHERE gs.accession",
+                """SELECT
+                    gs.accession, gp.organism, gs.channels,
+                    gs.platform_ref
+                FROM geo_samples
+                    AS gs LEFT JOIN geo_platforms gp ON gs.platform_ref = gp.accession
+                WHERE gs.accession""",
                 unique_samples,
                 batch_size=batch_size,
             ):
@@ -464,7 +478,8 @@ def _geo_series_batch_modifier(
 
             for study, strategy, model in _query_in(
                 conn,
-                "SELECT study, library_strategy, instrument_model FROM sra_experiments WHERE study",
+                """SELECT study, library_strategy, instrument_model
+                FROM sra_experiments WHERE study""",
                 unique_aliases,
                 batch_size,
             ):
@@ -481,7 +496,8 @@ def _geo_series_batch_modifier(
 
             for acc, aliases_json in _query_in(
                 conn,
-                "SELECT canonical_accession, aliases FROM unified_metadata WHERE canonical_accession",
+                "SELECT canonical_accession, aliases "
+                "FROM unified_metadata WHERE canonical_accession",
                 unique_accessions,
                 batch_size,
             ):
@@ -497,7 +513,10 @@ def _geo_series_batch_modifier(
 
             for acc, person, department, organization, country in _query_in(
                 conn,
-                "SELECT accession, person, department, organization, address_country FROM geo_contributors WHERE accession",
+                """SELECT
+                    accession, person, department,
+                    organization, address_country
+                FROM geo_contributors WHERE accession""",
                 unique_accessions,
                 batch_size,
             ):
@@ -525,25 +544,27 @@ def _geo_series_batch_modifier(
 
         results: list[dict] = []
 
-        for value, meta in zip(batch, row_meta):
+        for value, meta in zip(batch, row_meta, strict=False):
             organisms = sorted(
                 set[str]().union(
-                    *(sample_organisms.get(s, set[str]()) for s in meta["samples"])
-                )
+                    *(sample_organisms.get(s, set[str]()) for s in meta["samples"]),
+                ),
             )
             platforms = sorted(
                 {
                     p
                     for s in meta["samples"]
                     for p in sample_platforms.get(s, set[str]())
-                }
+                },
             )
 
             library_strategies = sorted(
-                alias_strategies.get(meta["alias"], set[str]()) if meta["alias"] else []
+                alias_strategies.get(meta["alias"], set[str]())
+                if meta["alias"]
+                else [],
             )
             instrument_models = sorted(
-                alias_models.get(meta["alias"], set[str]()) if meta["alias"] else []
+                alias_models.get(meta["alias"], set[str]()) if meta["alias"] else [],
             )
 
             alias_all = accession_alias_all.get(meta["accession"], [])
@@ -634,7 +655,7 @@ def _sra_studies_batch_modifier(
                     "accession": accession,
                     "submission": submission,
                     "external_id": external_id,
-                }
+                },
             )
 
             if submission:
@@ -665,7 +686,10 @@ def _sra_studies_batch_modifier(
 
             for sub, strategy, model, platform in _query_in(
                 conn,
-                "SELECT submission, library_strategy, instrument_model, platform FROM sra_experiments WHERE submission",
+                """SELECT
+                    submission, library_strategy, instrument_model,
+                    platform
+                FROM sra_experiments WHERE submission""",
                 unique_submissions,
                 batch_size,
             ):
@@ -684,7 +708,8 @@ def _sra_studies_batch_modifier(
 
             for acc, country in _query_in(
                 conn,
-                "SELECT canonical_accession, country FROM unified_centers WHERE canonical_accession",
+                """SELECT canonical_accession, country
+                FROM unified_centers WHERE canonical_accession""",
                 unique_accessions,
                 query_suffix="AND country IS NOT NULL",
                 batch_size=batch_size,
@@ -693,13 +718,13 @@ def _sra_studies_batch_modifier(
 
         results: list[dict] = []
 
-        for value, meta in zip(batch, row_meta):
+        for value, meta in zip(batch, row_meta, strict=False):
             organisms = sorted(submission_organisms.get(meta["submission"], set[str]()))
             library_strategies = sorted(
-                submission_strategies.get(meta["submission"], set[str]())
+                submission_strategies.get(meta["submission"], set[str]()),
             )
             instrument_models = sorted(
-                submission_models.get(meta["submission"], set[str]())
+                submission_models.get(meta["submission"], set[str]()),
             )
             platforms = sorted(submission_platforms.get(meta["submission"], set[str]()))
             countries = sorted(accession_countries.get(meta["accession"], set[str]()))
@@ -711,7 +736,7 @@ def _sra_studies_batch_modifier(
             modified = dict(value)
             modified["external_id"] = Jsonb(meta["external_id"])
             modified["attributes_json"] = Jsonb(
-                _convert_to_json(value["attributes_json"])
+                _convert_to_json(value["attributes_json"]),
             )
             modified["links"] = Jsonb(_convert_to_json(value["links"]))
             modified["bioproject_id"] = bioproject_id
@@ -735,7 +760,8 @@ def _ena_studies_search_batch_modifier(batch: list[dict]) -> list[dict]:
 
 
 def _arrayexpress_experiments_batch_modifier(
-    unified_metadata_db_file: Path, batch_size: int
+    unified_metadata_db_file: Path,
+    batch_size: int,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
         _get_conn = _make_conn_cache()
@@ -748,7 +774,8 @@ def _arrayexpress_experiments_batch_modifier(
             conn = _get_conn(unified_metadata_db_file)
             for acc, country in _query_in(
                 conn,
-                "SELECT canonical_accession, country FROM unified_centers WHERE canonical_accession",
+                """SELECT canonical_accession, country
+                FROM unified_centers WHERE canonical_accession""",
                 unique_accessions,
                 query_suffix="AND country IS NOT NULL",
                 batch_size=batch_size,
@@ -778,7 +805,7 @@ def _arrayexpress_experiments_batch_modifier(
                 modified["authors_text"] = None
 
             modified["countries"] = sorted(
-                accession_countries.get(value["accession"], set[str]())
+                accession_countries.get(value["accession"], set[str]()),
             )
 
             attrs = _convert_to_json(value["attributes_json"])
@@ -789,28 +816,28 @@ def _arrayexpress_experiments_batch_modifier(
             )
 
             modified["experimental_factors"] = _ensure_list(
-                _convert_to_json(value["experimental_factors"])
+                _convert_to_json(value["experimental_factors"]),
             )
             modified["experimental_factor_types"] = _ensure_list(
-                _convert_to_json(value["experimental_factor_types"])
+                _convert_to_json(value["experimental_factor_types"]),
             )
             modified["protocol_names"] = _ensure_list(
-                _convert_to_json(value["protocol_names"])
+                _convert_to_json(value["protocol_names"]),
             )
             modified["protocol_types"] = _ensure_list(
-                _convert_to_json(value["protocol_types"])
+                _convert_to_json(value["protocol_types"]),
             )
             modified["attributes_json"] = Jsonb(
-                _convert_to_json(value["attributes_json"])
+                _convert_to_json(value["attributes_json"]),
             )
             modified["external_links"] = Jsonb(
-                _convert_to_json(value["external_links"])
+                _convert_to_json(value["external_links"]),
             )
             modified["processed_data_files"] = Jsonb(
-                _convert_to_json(value["processed_data_files"])
+                _convert_to_json(value["processed_data_files"]),
             )
             modified["experimental_factors_detail"] = Jsonb(
-                _convert_to_json(value["experimental_factors_detail"])
+                _convert_to_json(value["experimental_factors_detail"]),
             )
             modified["minseqe_score"] = Jsonb(_convert_to_json(value["minseqe_score"]))
             modified["authors"] = _ensure_list(_convert_to_json(value["authors"]))
@@ -849,93 +876,91 @@ def _unified_metadata_batch_modifier(batch: list[dict]) -> list[dict]:
     return batch
 
 
-_unified_centers_cache: tuple | None = None
-_unified_centers_lock = threading.Lock()
-
-
+@functools.cache
 def _load_unified_centers(
     unified_metadata_db_file: Path,
 ) -> tuple[dict[tuple[str, str], dict], dict[str, dict]]:
-    global _unified_centers_cache
-    if _unified_centers_cache is not None:
-        return _unified_centers_cache
+    lookup: dict[tuple[str, str], dict] = {}
+    name_lookup: dict[str, dict] = {}
+    with sqlite3.connect(unified_metadata_db_file) as uc_conn:
+        for row in uc_conn.execute(
+            """SELECT
+                canonical_accession, center_name, place_name,
+                place_type, short_label, address_type,
+                osm_id, osm_type, place_id,
+                longitude, latitude, city,
+                district, subdistrict, county,
+                suburb, neighbourhood, state,
+                state_district, territory, metro_area,
+                postcode, country_code, country,
+                country_mismatch
+            FROM unified_centers""",
+        ):
+            (
+                acc,
+                name,
+                place_name,
+                place_type,
+                short_label,
+                address_type,
+                osm_id,
+                osm_type,
+                place_id,
+                lon,
+                lat,
+                city,
+                district,
+                subdistrict,
+                county,
+                suburb,
+                neighbourhood,
+                state,
+                state_district,
+                territory,
+                metro_area,
+                postcode,
+                country_code,
+                country,
+                country_mismatch,
+            ) = row
 
-    with _unified_centers_lock:
-        if _unified_centers_cache is not None:
-            return _unified_centers_cache
+            cname = name.strip().lower()
+            key = (acc, cname)
 
-        lookup: dict[tuple[str, str], dict] = {}
-        name_lookup: dict[str, dict] = {}
-        with sqlite3.connect(unified_metadata_db_file) as uc_conn:
-            for row in uc_conn.execute(
-                "SELECT canonical_accession, center_name, place_name, place_type, short_label, address_type, osm_id, osm_type, place_id, longitude, latitude, city, district, subdistrict, county, suburb, neighbourhood, state, state_district, territory, metro_area, postcode, country_code, country, country_mismatch FROM unified_centers"
-            ):
-                (
-                    acc,
-                    name,
-                    place_name,
-                    place_type,
-                    short_label,
-                    address_type,
-                    osm_id,
-                    osm_type,
-                    place_id,
-                    lon,
-                    lat,
-                    city,
-                    district,
-                    subdistrict,
-                    county,
-                    suburb,
-                    neighbourhood,
-                    state,
-                    state_district,
-                    territory,
-                    metro_area,
-                    postcode,
-                    country_code,
-                    country,
-                    country_mismatch,
-                ) = row
+            geo = {
+                "place_name": place_name,
+                "place_type": place_type,
+                "short_label": short_label,
+                "address_type": address_type,
+                "osm_id": osm_id,
+                "osm_type": osm_type,
+                "place_id": place_id,
+                "longitude": float(lon) if lon is not None else None,
+                "latitude": float(lat) if lat is not None else None,
+                "city": city,
+                "district": district,
+                "subdistrict": subdistrict,
+                "county": county,
+                "suburb": suburb,
+                "neighbourhood": neighbourhood,
+                "state": state,
+                "state_district": state_district,
+                "territory": territory,
+                "metro_area": metro_area,
+                "postcode": postcode,
+                "country_code": country_code,
+                "country": country,
+                "country_mismatch": country_mismatch.strip().lower()
+                in ("true", "1", "yes")
+                if country_mismatch
+                else None,
+            }
 
-                cname = name.strip().lower()
-                key = (acc, cname)
+            lookup[key] = geo
+            if cname not in name_lookup:
+                name_lookup[cname] = geo
 
-                geo = {
-                    "place_name": place_name,
-                    "place_type": place_type,
-                    "short_label": short_label,
-                    "address_type": address_type,
-                    "osm_id": osm_id,
-                    "osm_type": osm_type,
-                    "place_id": place_id,
-                    "longitude": float(lon) if lon is not None else None,
-                    "latitude": float(lat) if lat is not None else None,
-                    "city": city,
-                    "district": district,
-                    "subdistrict": subdistrict,
-                    "county": county,
-                    "suburb": suburb,
-                    "neighbourhood": neighbourhood,
-                    "state": state,
-                    "state_district": state_district,
-                    "territory": territory,
-                    "metro_area": metro_area,
-                    "postcode": postcode,
-                    "country_code": country_code,
-                    "country": country,
-                    "country_mismatch": country_mismatch.strip().lower()
-                    in ("true", "1", "yes")
-                    if country_mismatch
-                    else None,
-                }
-
-                lookup[key] = geo
-                if cname not in name_lookup:
-                    name_lookup[cname] = geo
-
-        _unified_centers_cache = (lookup, name_lookup)
-        return _unified_centers_cache
+    return lookup, name_lookup
 
 
 def _transfer_geo_geocode(
@@ -943,21 +968,27 @@ def _transfer_geo_geocode(
     geo_db_file: Path,
     unified_metadata_db_file: Path,
     batch_size: int,
-):
+) -> None:
     with (
         sqlite3.connect(geo_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_geo_geocode_address_key ON geo_geocode (address_key)"
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_geo_geocode_address_key
+                ON geo_geocode (address_key)""",
             )
 
         center_lookup, _ = _load_unified_centers(unified_metadata_db_file)
 
         groups: dict[str, dict] = {}
         for org, dept, addr, city, state, zipcode, country, acc in src_conn.execute(
-            "SELECT DISTINCT organization, department, address_line, address_city, address_state, address_zipcode, address_country, accession FROM geo_contributors WHERE organization IS NOT NULL AND organization != ''"
+            """SELECT
+                DISTINCT organization, department, address_line,
+                address_city, address_state, address_zipcode,
+                address_country, accession
+            FROM geo_contributors
+            WHERE organization IS NOT NULL AND organization != ''""",
         ):
             org_s = org or ""
             dept_s = dept or ""
@@ -972,7 +1003,7 @@ def _transfer_geo_geocode(
                 parts = [
                     p for p in [org_s, dept_s, addr_s, city_s, state_s, country_s] if p
                 ]
-                groups[key] = {f: None for f in _GEO_GEOCODE_NONE_FIELDS}
+                groups[key] = dict.fromkeys(_GEO_GEOCODE_NONE_FIELDS)
                 groups[key].update(
                     {
                         "organization": org_s,
@@ -986,7 +1017,7 @@ def _transfer_geo_geocode(
                         "address_key": key,
                         "geo_query": ", ".join(parts),
                         "accessions": set(),
-                    }
+                    },
                 )
             groups[key]["accessions"].add(acc)
 
@@ -1009,29 +1040,30 @@ def _transfer_sra_geocode(
     sra_db_file: Path,
     unified_metadata_db_file: Path,
     batch_size: int,
-):
+) -> None:
     with (
         sqlite3.connect(sra_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sra_geocode_center_name ON sra_geocode (center_name)"
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_sra_geocode_center_name
+                ON sra_geocode (center_name)""",
             )
 
         center_lookup, center_name_lookup = _load_unified_centers(
-            unified_metadata_db_file
+            unified_metadata_db_file,
         )
 
-        sub_to_study: dict[str, str] = {}
-        for submission, accession in src_conn.execute(
-            "SELECT DISTINCT submission, accession FROM sra_studies"
-        ):
-            sub_to_study[submission] = accession
+        sub_to_study = dict(
+            src_conn.execute("SELECT DISTINCT submission, accession FROM sra_studies"),
+        )
 
         groups: dict[str, dict] = {}
         for center_name, submission_acc in src_conn.execute(
-            "SELECT DISTINCT center_name, accession FROM sra_submissions WHERE center_name IS NOT NULL AND center_name != ''"
+            """SELECT DISTINCT center_name, accession
+            FROM sra_submissions
+            WHERE center_name IS NOT NULL AND center_name != ''""",
         ):
             cn = center_name.strip()
             if not cn:
@@ -1073,7 +1105,7 @@ def _transfer_sra_geocode(
                         "error": None,
                         "multiple_institutes": False,
                         "accessions": set(),
-                    }
+                    },
                 )
 
             groups[key]["accessions"].add(submission_acc)
@@ -1082,7 +1114,11 @@ def _transfer_sra_geocode(
             data["multiple_institutes"] = len(data["accessions"]) > 1
 
         _insert_geocode_batches(
-            pg_conn, "sra_geocode", _SRA_GEOCODE_COLS, groups, batch_size
+            pg_conn,
+            "sra_geocode",
+            _SRA_GEOCODE_COLS,
+            groups,
+            batch_size,
         )
 
 
@@ -1091,23 +1127,26 @@ def _transfer_ena_geocode(
     ena_db_file: Path,
     unified_metadata_db_file: Path,
     batch_size: int,
-):
+) -> None:
     with (
         sqlite3.connect(ena_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ena_geocode_center_name ON ena_geocode (center_name)"
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_ena_geocode_center_name
+                ON ena_geocode (center_name)""",
             )
 
         center_lookup, center_name_lookup = _load_unified_centers(
-            unified_metadata_db_file
+            unified_metadata_db_file,
         )
 
         groups: dict[str, dict] = {}
         for center_name, study_accession in src_conn.execute(
-            "SELECT DISTINCT center_name, study_accession FROM ena_studies WHERE center_name IS NOT NULL AND center_name != ''"
+            """SELECT DISTINCT center_name, study_accession
+            FROM ena_studies
+            WHERE center_name IS NOT NULL AND center_name != ''""",
         ):
             cn = center_name.strip()
             if not cn:
@@ -1129,13 +1168,14 @@ def _transfer_ena_geocode(
                         "source": "unified" if geo else None,
                         "error": None,
                         "accessions": set(),
-                    }
+                    },
                 )
             groups[key]["accessions"].add(study_accession)
 
         exp_counts: dict[str, int] = {}
         for center_name, cnt in src_conn.execute(
-            "SELECT center_name, COUNT(*) FROM ena_experiments WHERE center_name IS NOT NULL AND center_name != '' GROUP BY center_name"
+            """SELECT center_name, COUNT(*) FROM ena_experiments
+            WHERE center_name IS NOT NULL AND center_name != '' GROUP BY center_name""",
         ):
             exp_counts[center_name.strip().lower()] = cnt
 
@@ -1157,21 +1197,23 @@ def _transfer_ae_geocode(
     ae_db_file: Path,
     unified_metadata_db_file: Path,
     batch_size: int,
-):
+) -> None:
     with (
         sqlite3.connect(ae_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_ae_geocode_address_key ON arrayexpress_geocode (address_key)"
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_ae_geocode_address_key
+                ON arrayexpress_geocode (address_key)""",
             )
 
         center_lookup, _ = _load_unified_centers(unified_metadata_db_file)
 
         groups: dict[str, dict] = {}
         for accession, org_json in src_conn.execute(
-            "SELECT accession, organizations FROM arrayexpress_experiments WHERE organizations IS NOT NULL"
+            """SELECT accession, organizations FROM arrayexpress_experiments
+            WHERE organizations IS NOT NULL""",
         ):
             orgs = json.loads(org_json)
             if not isinstance(orgs, list):
@@ -1188,7 +1230,7 @@ def _transfer_ae_geocode(
 
                 if key not in groups:
                     parts = [p for p in [org_name, address] if p]
-                    groups[key] = {f: None for f in _AE_GEOCODE_NONE_FIELDS}
+                    groups[key] = dict.fromkeys(_AE_GEOCODE_NONE_FIELDS)
                     groups[key].update(
                         {
                             "organization": org_name,
@@ -1200,7 +1242,7 @@ def _transfer_ae_geocode(
                             "address_key": key,
                             "geo_query": ", ".join(parts),
                             "accessions": set(),
-                        }
+                        },
                     )
                 groups[key]["accessions"].add(accession)
 
@@ -1223,7 +1265,7 @@ def _transfer_study_publications(
     unified_metadata_db_file: Path,
     pubmed_metadata_db_file: Path,
     batch_size: int,
-):
+) -> None:
     with (
         sqlite3.connect(unified_metadata_db_file) as um_conn,
         sqlite3.connect(pubmed_metadata_db_file) as pm_conn,
@@ -1231,12 +1273,15 @@ def _transfer_study_publications(
     ):
         with pg_conn.cursor() as cur:
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_study_publications_accession_source ON study_publications (accession, source)"
+                """CREATE UNIQUE INDEX
+                IF NOT EXISTS idx_study_publications_accession_source
+                ON study_publications (accession, source)""",
             )
 
         um_conn.row_factory = sqlite3.Row
         rows = um_conn.execute(
-            "SELECT canonical_accession, source, pmid FROM unified_metadata WHERE pmid IS NOT NULL"
+            """SELECT canonical_accession, source, pmid FROM unified_metadata
+            WHERE pmid IS NOT NULL""",
         ).fetchall()
 
         all_pmids: set[str] = set()
@@ -1244,16 +1289,13 @@ def _transfer_study_publications(
 
         for row in rows:
             pmid_str = str(row["pmid"]).strip()
-            if pmid_str.startswith("["):
-                pmid_data = json.loads(pmid_str)
-            else:
-                pmid_data = [pmid_str]
-            for p in pmid_data:
-                p = p.strip() if isinstance(p, str) else str(p)
+            pmid_data = json.loads(pmid_str) if pmid_str.startswith("[") else [pmid_str]
+            for p_val in pmid_data:
+                p = p_val.strip() if isinstance(p_val, str) else str(p_val)
                 if p:
                     all_pmids.add(p)
                     accession_pmids.append(
-                        (row["canonical_accession"], row["source"], p)
+                        (row["canonical_accession"], row["source"], p),
                     )
 
         pmid_to_pub: dict[str, dict] = {}
@@ -1281,9 +1323,11 @@ def _transfer_study_publications(
         cols = ["accession", "source", "publications"]
         cols_str = ", ".join(cols)
         placeholders = ", ".join(["%s"] * len(cols))
-        insert_query = f"INSERT INTO study_publications ({cols_str}) VALUES ({placeholders}) ON CONFLICT (accession, source) DO NOTHING"
+        insert_query = f"""INSERT INTO study_publications ({cols_str})
+        VALUES ({placeholders})
+        ON CONFLICT (accession, source) DO UPDATE"""  # noqa: S608
 
-        def _gen_rows():
+        def _gen_rows() -> Iterator[tuple]:
             for (acc, source), pubs in groups.items():
                 yield (acc, source, Jsonb(pubs))
 
@@ -1301,7 +1345,7 @@ def _transfer_cross_refs(
     pg_url: str,
     unified_metadata_db_file: Path,
     batch_size: int,
-):
+) -> None:
     with (
         sqlite3.connect(unified_metadata_db_file) as um_conn,
         psycopg.connect(pg_url) as pg_conn,
@@ -1315,47 +1359,41 @@ def _transfer_cross_refs(
             ]:
                 cur.execute(
                     cast(
-                        LiteralString,
-                        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_pk ON {table} ({cols})",
-                    )
+                        "LiteralString",
+                        f"""CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_pk
+                        ON {table} ({cols})""",
+                    ),
                 )
 
-        source_table_map = {
-            "ae": ("cross_ref_ae", "ae_accession"),
-            "ena": ("cross_ref_ena", "ena_accession"),
-            "geo": ("cross_ref_geo", "geo_accession"),
-        }
-
+        sources = ["ae", "ena", "geo", "sra"]
         rows = um_conn.execute(
-            "SELECT canonical_accession, source, aliases, pmid FROM unified_metadata"
+            "SELECT canonical_accession, source, aliases, pmid FROM unified_metadata",
         ).fetchall()
 
         ref_groups: dict[str, list[tuple]] = {}
         pmid_groups: list[tuple[str, str, str]] = []
 
-        for acc, source, aliases_json, pmid_str in rows:
-            if aliases_json:
-                try:
-                    aliases = json.loads(aliases_json)
-                except json.JSONDecodeError:
-                    aliases = None
-                if isinstance(aliases, dict):
-                    entry = source_table_map.get(source)
-                    if entry:
-                        table_name, pk_col = entry
-                        for target_source, target_acc in aliases.items():
-                            ref_groups.setdefault(table_name, []).append(
-                                (str(acc), str(target_acc), str(target_source))
-                            )
+        for acc, source, aliases_json, pmid_str_val in rows:
+            if not aliases_json:
+                continue
+            with contextlib.suppress(json.JSONDecodeError):
+                aliases = json.loads(aliases_json)
+                if source not in sources:
+                    continue
+                for target_source, target_acc in aliases.items():
+                    ref_groups[source].append(
+                        (str(acc), str(target_acc), str(target_source)),
+                    )
 
-            if pmid_str:
-                pmid_str = str(pmid_str).strip()
+            if pmid_str_val:
+                pmid_str = str(pmid_str_val).strip()
                 if pmid_str.startswith("["):
                     pmid_data = json.loads(pmid_str)
                 else:
                     pmid_data = [pmid_str]
-                for p in pmid_data:
-                    p = str(p).strip()
+
+                for p_val in pmid_data:
+                    p = str(p_val).strip()
                     if p:
                         pmid_groups.append((str(acc), p, str(source)))
 
@@ -1363,7 +1401,8 @@ def _transfer_cross_refs(
             cols = ["accession", "pubmed_id", "source"]
             cols_str = ", ".join(cols)
             ph = ", ".join(["%s"] * len(cols))
-            insert_q = f"INSERT INTO cross_ref_pubmed ({cols_str}) VALUES ({ph}) ON CONFLICT (accession, pubmed_id, source) DO NOTHING"
+            insert_q = f"""INSERT INTO cross_ref_pubmed ({cols_str})
+                VALUES ({ph}) ON CONFLICT (accession, pubmed_id, source) DO UPDATE"""  # noqa: S608
             _execute_batch_inserts(
                 pg_conn,
                 insert_q,
@@ -1382,7 +1421,8 @@ def _transfer_cross_refs(
                 cols = ["geo_accession", "target_accession", "link_type"]
             cols_str = ", ".join(cols)
             ph = ", ".join(["%s"] * len(cols))
-            insert_q = f"INSERT INTO {table_name} ({cols_str}) VALUES ({ph}) ON CONFLICT ({', '.join(cols)}) DO NOTHING"
+            insert_q = f"""INSERT INTO {table_name} ({cols_str})
+                VALUES ({ph}) ON CONFLICT ({", ".join(cols)}) DO UPDATE"""  # noqa: S608
             _execute_batch_inserts(
                 pg_conn,
                 insert_q,
@@ -1400,15 +1440,18 @@ def _insert_geocode_batches(
     groups: dict,
     batch_size: int,
     count_col: str | None = None,
-):
+) -> None:
     cols = ", ".join(cols_list)
     placeholders = ", ".join(["%s"] * len(cols_list))
     conflict_col = (
         "center_name" if table_name in ("sra_geocode", "ena_geocode") else "address_key"
     )
-    insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders}) ON CONFLICT ({conflict_col}) DO NOTHING"
+    insert_query = (
+        f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders}) "  # noqa: S608
+        f"ON CONFLICT ({conflict_col}) DO NOTHING"
+    )
 
-    def _gen_rows():
+    def _gen_rows() -> Iterator[tuple]:
         for d in groups.values():
             yield tuple(
                 d[c] if c != count_col else len(d["accessions"]) for c in cols_list
@@ -1429,7 +1472,7 @@ def _apply_center_geo(
     g: dict,
     center: dict,
     fields: list[str],
-):
+) -> None:
     for field in fields:
         val = center.get(field)
         if val is not None and g.get("geo_" + field) is None:
@@ -1475,11 +1518,11 @@ def _normalize_country(name: str) -> str | None:
     return s
 
 
-def _ensure_list(value):
+def _ensure_list(value: Any) -> list:
     if isinstance(value, dict):
         return [value]
     return value or []
 
 
-def _convert_to_json(value: str | None):
+def _convert_to_json(value: str | None) -> Any:
     return json.loads(value) if value else None

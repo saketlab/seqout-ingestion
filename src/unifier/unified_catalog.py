@@ -1,13 +1,13 @@
+import contextlib
 import json
-import logging
 import re
 import sqlite3
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
 from helpers import exec_query_from_file
+from main import logger
 
 UNIFIED_CATALOG_DIR = "unified_catalog"
 
@@ -18,9 +18,9 @@ def build_unified_catalog(
     sra_db_file: Path,
     ena_db_file: Path,
     ae_db_file: Path,
-    db_file: Optional[Path],
+    db_file: Path | None,
     dump_parquet: bool,
-):
+) -> None:
     output_dir = base_output_dir / UNIFIED_CATALOG_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -35,24 +35,25 @@ def build_unified_catalog(
     with sqlite3.Connection(db_file) as conn:
         exec_query_from_file("tables/unified_studies.sql", conn=conn)
         conn.executemany(
-            "INSERT OR REPLACE INTO unified_studies VALUES (?, ?, ?, ?, ?)", catalog
+            "INSERT OR REPLACE INTO unified_studies VALUES (?, ?, ?, ?, ?)",
+            catalog,
         )
         conn.commit()
 
         if dump_parquet:
-            df = pd.read_sql_query("SELECT * FROM unified_studies", conn)
+            table_df = pd.read_sql_query("SELECT * FROM unified_studies", conn)
             pq_path = output_dir / "unified_studies.parquet"
-            df.to_parquet(pq_path)
-            logging.info("saved data as parquet at %s", str(pq_path))
+            table_df.to_parquet(pq_path)
+            logger.info("saved data as parquet at %s", str(pq_path))
 
     size_mb = db_file.stat().st_size / 1024**2
-    logging.info(f"inserted {len(catalog)} rows ({size_mb:.2f} MB)")
+    logger.info(f"inserted {len(catalog)} rows ({size_mb:.2f} MB)")
 
 
 def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
     with sqlite3.Connection(geo_db_file) as conn:
         rows = conn.execute(
-            "SELECT accession, title, summary FROM geo_series"
+            "SELECT accession, title, summary FROM geo_series",
         ).fetchall()
 
     result = {}
@@ -65,7 +66,7 @@ def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
 def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str]]:
     with sqlite3.Connection(sra_db_file) as conn:
         rows = conn.execute(
-            "SELECT accession, alias, title, abstract FROM sra_studies"
+            "SELECT accession, alias, title, abstract FROM sra_studies",
         ).fetchall()
 
     result = {}
@@ -82,7 +83,10 @@ def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str]]:
 def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
     with sqlite3.Connection(ena_db_file) as conn:
         rows = conn.execute(
-            "SELECT study_accession, secondary_study_accession, geo_accession, study_title, study_description FROM ena_studies"
+            """SELECT
+                study_accession, secondary_study_accession, geo_accession,
+                study_title, study_description
+            FROM ena_studies""",
         ).fetchall()
 
     result = {}
@@ -100,17 +104,16 @@ def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
 def _load_ae(ae_db_file: Path) -> dict[str, tuple[str, str, list[dict]]]:
     with sqlite3.Connection(ae_db_file) as conn:
         rows = conn.execute(
-            "SELECT accession, title, description, external_links FROM arrayexpress_experiments"
+            """SELECT accession, title, description, external_links
+            FROM arrayexpress_experiments""",
         ).fetchall()
 
     result = {}
     for acc, title, desc, links_json in rows:
         links = []
         if links_json:
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 links = json.loads(links_json)
-            except (json.JSONDecodeError, TypeError):
-                pass
 
         result[acc] = (_clean_string(title), _clean_string(desc), links)
     return result
@@ -118,7 +121,10 @@ def _load_ae(ae_db_file: Path) -> dict[str, tuple[str, str, list[dict]]]:
 
 # future reference: https://github.com/saketlab/pysradb-ingestion/blob/d117090430a6e2b095d5fda71c65e3275db10e6a/embed/build_unified_catalog.py#L142-L394
 def _build_catalog_tuples(
-    geo_dict: dict, sra_dict: dict, ena_dict: dict, ae_dict: dict
+    geo_dict: dict,
+    sra_dict: dict,
+    ena_dict: dict,
+    ae_dict: dict,
 ) -> list[tuple[str, str, str, str, str]]:
     # sra alias -> sra accession(s) (reverse: given a gse or prjna, find srps)
     # multiple srps can map to the same alias (e.g. two srps for one gse)
@@ -197,10 +203,10 @@ def _build_catalog_tuples(
 
     claimed.update(ae_preclaim)
     if ae_preclaim:
-        logging.info(f"  pre-claimed {len(ae_preclaim):,} sra entries for arrayexpress")
+        logger.info(f"\tpre-claimed {len(ae_preclaim):,} sra entries for arrayexpress")
 
     # 1. processing geo (highest priority)
-    logging.info("processing geo ...")
+    logger.info("processing geo...")
     for gse, (title, desc) in geo_dict.items():
         aliases: dict[str, str] = {}
 
@@ -209,9 +215,10 @@ def _build_catalog_tuples(
         for srp in srps:
             aliases.setdefault("sra", srp)  # store first srp
             claimed.add(srp)
+
             # sra entry alias may be a bioproject (prjna), geo (gse), or garbage
             bp_alias = srp_to_alias.get(srp, "")
-            if bp_alias and bp_alias != gse and bp_alias != srp:
+            if bp_alias not in (srp, gse):
                 if re.match(r"^PRJN[AEBDC]\d+$", bp_alias):
                     aliases.setdefault("bioproject", bp_alias)
                 elif re.match(r"^GSE\d+$", bp_alias):
@@ -238,16 +245,16 @@ def _build_catalog_tuples(
         combined_text = f"{title}. {desc}".strip(". ")
         if combined_text:
             catalog.append(
-                (gse, "geo", title, desc, json.dumps(aliases, separators=(",", ":")))
+                (gse, "geo", title, desc, json.dumps(aliases, separators=(",", ":"))),
             )
 
         claimed.add(gse)
 
-    logging.info(f"  geo: {len([r for r in catalog if r[1] == 'geo']):,} canonical")
+    logger.info(f"\tgeo: {len([r for r in catalog if r[1] == 'geo']):,} canonical")
 
     # 2. processing sra
     # skip gse-aliased, those are already claimed by geo
-    logging.info("processing sra ...")
+    logger.info("processing sra...")
     sra_count = 0
     for srp, (alias, title, abstract) in sra_dict.items():
         if srp in claimed:
@@ -289,21 +296,21 @@ def _build_catalog_tuples(
                     title,
                     abstract,
                     json.dumps(aliases, separators=(",", ":")),
-                )
+                ),
             )
             sra_count += 1
 
         claimed.add(srp)
 
-    logging.info(f"  sra: {sra_count:,} canonical")
+    logger.info(f"\tsra: {sra_count:,} canonical")
 
     # 3. processing arrayexpress
     # note: ae external_links contain ena accessions (erp*). these erp*
     # accessions may also exist as study_accession in ena db (as prjeb*)
     # and as accessions in the sra db. we must claim all of them.
-    logging.info("processing arrayexpress...")
+    logger.info("processing arrayexpress...")
     ae_count = 0
-    for ae_acc, (title, desc, links) in ae_dict.items():
+    for ae_acc, (title, desc, _) in ae_dict.items():
         if ae_acc in claimed:
             continue
 
@@ -336,16 +343,16 @@ def _build_catalog_tuples(
         combined_text = f"{title}. {desc}".strip(". ")
         if combined_text:
             catalog.append(
-                (ae_acc, "ae", title, desc, json.dumps(aliases, separators=(",", ":")))
+                (ae_acc, "ae", title, desc, json.dumps(aliases, separators=(",", ":"))),
             )
             ae_count += 1
 
         claimed.add(ae_acc)
 
-    logging.info(f"  arrayexpress: {ae_count:,} canonical")
+    logger.info(f"  arrayexpress: {ae_count:,} canonical")
 
     # 4. processing ena
-    logging.info("processing ena...")
+    logger.info("processing ena...")
     ena_count = 0
     for prj, (secondary, geo_acc, title, desc) in ena_dict.items():
         if prj in claimed:
@@ -367,20 +374,20 @@ def _build_catalog_tuples(
         combined_text = f"{title}. {desc}".strip(". ")
         if combined_text:
             catalog.append(
-                (prj, "ena", title, desc, json.dumps(aliases, separators=(",", ":")))
+                (prj, "ena", title, desc, json.dumps(aliases, separators=(",", ":"))),
             )
             ena_count += 1
 
         claimed.add(prj)
 
-    logging.info(f"  ena: {ena_count:,} canonical")
+    logger.info(f"  ena: {ena_count:,} canonical")
     return catalog
-
-
-def _clean_string(s) -> str:
-    return (s or "").strip()
 
 
 def _strip_html(text: str) -> str:
     regexp = re.compile(r"<[^>]+>")
     return regexp.sub("", _clean_string(text)).strip()
+
+
+def _clean_string(s: str) -> str:
+    return (s or "").strip()

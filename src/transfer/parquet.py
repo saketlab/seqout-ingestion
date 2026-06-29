@@ -1,4 +1,3 @@
-import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -20,7 +19,7 @@ def parquet_transfer(
     download_links_db_file: Path,
     num_workers: int,
     batch_size: int,
-):
+) -> None:
     output_dir.mkdir(exist_ok=True, parents=True)
     table_infos: list[tuple[str, Path]] = []
 
@@ -47,7 +46,7 @@ def parquet_transfer(
                 continue
 
             futures.append(
-                pool.submit(_export_to_pq, output_dir, table_name, db_file, batch_size)
+                pool.submit(_export_to_pq, output_dir, table_name, db_file, batch_size),
             )
 
         with tqdm(
@@ -62,13 +61,22 @@ def parquet_transfer(
                 pbar.update(1)
 
 
-def _export_to_pq(output_dir: Path, table_name: str, db_file: Path, batch_size: int):
+def _export_to_pq(
+    output_dir: Path,
+    table_name: str,
+    db_file: Path,
+    batch_size: int,
+) -> None:
     with sqlite3.Connection(db_file) as conn:
-        total = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM {table_name}",  # noqa: S608
+        ).fetchone()[0]
         chunks = []
         with tqdm(total=total, desc=f"{table_name}", unit="row", leave=False) as pbar:
             for chunk in pd.read_sql_query(
-                f"SELECT * FROM {table_name}", conn, chunksize=batch_size
+                f"SELECT * FROM {table_name}",  # noqa: S608
+                conn,
+                chunksize=batch_size,
             ):
                 chunks.append(pa.Table.from_pandas(chunk))
                 pbar.update(len(chunk))
@@ -90,12 +98,12 @@ def _export_to_pq(output_dir: Path, table_name: str, db_file: Path, batch_size: 
                 writer.write_table(table_chunk)
 
 
-def _fetch_all_tables(db_file: Path, tables: list[tuple[str, Path]]):
+def _fetch_all_tables(db_file: Path, tables: list[tuple[str, Path]]) -> None:
     with sqlite3.Connection(db_file) as conn:
         result = [
             (r[0], db_file)
             for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
+                "SELECT name FROM sqlite_master WHERE type='table'",
             ).fetchall()
         ]
 

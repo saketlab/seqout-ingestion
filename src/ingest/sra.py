@@ -5,9 +5,6 @@ import enum
 import functools
 import io
 import json
-import logging
-import logging.config
-import os
 import pickle
 import queue
 import re
@@ -17,18 +14,20 @@ import subprocess
 import tarfile
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import isqrt
 from pathlib import Path
+from typing import IO
 
 import humanfriendly
-import lxml.etree as ET
+import lxml.etree as ET  # noqa: N812
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-from typing_extensions import IO, Optional
 
-from helpers import better_downloader, exec_query_from_file
+from helpers import download_file, exec_query_from_file
+from main import logger
 
 
 class FileType(enum.StrEnum):
@@ -47,26 +46,41 @@ SRA_TARBALL_GLOB_PAT = "NCBI_SRA_Metadata_Full_*.tar.gz"
 
 SRA_SQL_STATEMENTS = {
     FileType.Submission: (
-        "INSERT OR IGNORE INTO sra_submissions (accession, alias, center_name, lab_name, broker_name, updated_at, published_at) VALUES (?,?,?,?,?,?,?)"
+        "INSERT OR REPLACE INTO sra_submissions "
+        "(accession, alias, center_name, lab_name, broker_name, "
+        "updated_at, published_at) "
+        "VALUES (?,?,?,?,?,?,?)"
     ),
     FileType.Sample: (
-        "INSERT OR IGNORE INTO sra_samples (accession, alias, description, title, scientific_name, taxon_id, external_id, attributes_json, submission, links) VALUES (?,?,?,?,?,?,?,?,?,?)"
+        "INSERT OR REPLACE INTO sra_samples "
+        "(accession, alias, description, title, scientific_name, taxon_id, "
+        "external_id, attributes_json, submission, links) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)"
     ),
     FileType.Study: (
-        "INSERT OR IGNORE INTO sra_studies (accession, alias, center_name, abstract, title, external_id, study_type, attributes_json, links, center_project_name, submission, published_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT OR REPLACE INTO sra_studies "
+        "(accession, alias, center_name, abstract, title, external_id, "
+        "study_type, attributes_json, links, center_project_name, "
+        "submission, published_at, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ),
     FileType.Experiment: (
-        "INSERT OR IGNORE INTO sra_experiments (accession, design_description, library_layout, library_name, library_selection, library_source, library_strategy, samples, platform, instrument_model, study, title, submission) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        "INSERT OR REPLACE INTO sra_experiments "
+        "(accession, design_description, library_layout, library_name, "
+        "library_selection, library_source, library_strategy, samples, "
+        "platform, instrument_model, study, title, submission) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
     ),
     FileType.Run: (
-        "INSERT OR IGNORE INTO sra_runs (accession, experiment, submission) VALUES (?,?,?)"
+        "INSERT OR REPLACE INTO sra_runs "
+        "(accession, experiment, submission) VALUES (?,?,?)"
     ),
 }
 
 
 def ingest_sra(
     base_output_dir: Path,
-    db_file: Optional[Path],
+    db_file: Path | None,
     start_date: datetime.date,
     end_date: datetime.date,
     num_workers: int,
@@ -76,25 +90,25 @@ def ingest_sra(
     retries: int,
     timeout: int,
     max_timeout: int,
-):
+) -> None:
     output_dir = Path(base_output_dir) / SRA_OUTPUT_DIR
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     (output_dir / "db").mkdir(exist_ok=True, parents=True)
     db_dir = output_dir / "db" / date_str
     db_dir.mkdir(exist_ok=True, parents=True)
     db_file = db_file or (db_dir / f"sra_metadata_{date_str}.db")
 
-    logging.info(
-        """starting sra ingest with following config:
-- num workers: %d
-- chunk size: %s
-- write batch size: %d
-- accessions file ttl: %s
-- retries: %d
-- timeout: %s
-- max timeout: %s""",
+    logger.info(
+        "starting sra ingest with following config:\n"
+        "- num workers: %d\n"
+        "- chunk size: %s\n"
+        "- write batch size: %d\n"
+        "- accessions file ttl: %s\n"
+        "- retries: %d\n"
+        "- timeout: %s\n"
+        "- max timeout: %s",
         num_workers,
         humanfriendly.format_size(chunk_size),
         write_batch_size,
@@ -104,21 +118,23 @@ def ingest_sra(
         humanfriendly.format_timespan(max_timeout),
     )
 
-    logging.debug(
+    logger.debug(
         "extracting sra file dumps in range: start_date=%s, end_date=%s",
         start_date,
         end_date,
     )
     file_dumps = _extract_sra_file_dumps_in_range(start_date, end_date)
-    assert len(file_dumps) > 0, (
-        f"no sra file dumps found in {start_date} to {end_date} range"
-    )
+    if len(file_dumps) == 0:
+        raise ValueError(f"no sra file dumps found in {start_date} to {end_date} range")
 
     downloader = functools.partial(
-        better_downloader, retries=retries, timeout=timeout, max_timeout=max_timeout
+        download_file,
+        num_retries=retries,
+        timeout=timeout,
+        max_wait=max_timeout,
     )
 
-    logging.info("downloading accessions tab file")
+    logger.info("downloading accessions tab file")
     tab_path, is_freshly_downloaded = _download_accessions_tab_file(
         downloader,
         output_dir,
@@ -133,17 +149,23 @@ def ingest_sra(
     )
 
     if to_reprocess_csv:
-        logging.info("converting accessions tab file into csv")
+        logger.info("converting accessions tab file into csv")
         _convert_tab_to_csv(accessions_csv_path, tab_path, chunk_size)
 
-    logging.info("downloading sra file dumps")
+    logger.info("downloading sra file dumps")
     data_dir = _download_sra_file_dumps(
-        downloader, file_dumps, output_dir, num_workers, chunk_size
+        downloader,
+        file_dumps,
+        output_dir,
+        num_workers,
+        chunk_size,
     )
 
-    logging.info("building accession lookup dict")
+    logger.info("building accession lookup dict")
     accessions_dict = _build_accessions_dict(
-        accessions_csv_path, to_reprocess_csv, output_dir
+        accessions_csv_path,
+        to_reprocess_csv,
+        output_dir,
     )
     tarballs = sorted(data_dir.glob(SRA_TARBALL_GLOB_PAT), reverse=True)
 
@@ -159,7 +181,8 @@ def ingest_sra(
 
 
 def _extract_sra_file_dumps_in_range(
-    start_date: datetime.date, end_date: datetime.date
+    start_date: datetime.date,
+    end_date: datetime.date,
 ) -> list[str]:
     file_dumps: list[str] = []
 
@@ -173,7 +196,7 @@ def _extract_sra_file_dumps_in_range(
         if match is None:
             continue
 
-        file_date = datetime.datetime.strptime(match.group(1), "%Y%m%d").date()
+        file_date = datetime.datetime.strptime(match.group(1), "%Y%m%d").date()  # noqa: DTZ007
         if start_date <= file_date <= end_date:
             file_dumps.append(href)
 
@@ -191,38 +214,42 @@ def _download_accessions_tab_file(
     to_download = False
 
     try:
-        info = os.stat(tab_file)
+        info = tab_file.stat()
         diff = time.time() - info.st_mtime
         if diff > accessions_ttl:
             to_download = True
     except FileNotFoundError:
-        logging.info("sra accession tab file is not found. downloading it fresh")
+        logger.info("sra accession tab file is not found. downloading it fresh")
         to_download = True
 
     if not to_download:
-        logging.info(
-            "skipped download step for sra accessions tab file as it already exists and it is within the ttl range"
+        logger.info(
+            "skipped download step for sra accessions tab file as it already exists "
+            "and it is within the ttl range",
         )
         return tab_file, False
 
     downloader(
         f"{SRA_FTP_BASE_URL}/{SRA_ACCESSIONS_TAB_FILE_NAME}",
         tab_file,
-        num_workers,
-        chunk_size,
+        num_workers=num_workers,
+        chunk_size=chunk_size,
     )
 
     return Path(tab_file), True
 
 
 def _convert_tab_to_csv(
-    csv_file_path: Path, tab_file_path: Path, chunk_size: int
+    csv_file_path: Path,
+    tab_file_path: Path,
+    chunk_size: int,
 ) -> None:
     libc = ctypes.CDLL("libc.so.6")
 
+    file_type_col = 6
     with (
-        open(tab_file_path, "rb", buffering=0) as inf,
-        open(csv_file_path, "wb") as outf,
+        tab_file_path.open("rb", buffering=0) as inf,
+        csv_file_path.open("wb") as outf,
         tqdm(
             total=tab_file_path.stat().st_size,
             unit="B",
@@ -242,14 +269,17 @@ def _convert_tab_to_csv(
 
             for line in (leftover + chunk).split(b"\n")[:-1]:
                 f = line.split(b"\t", 7)
-                if len(f) > 6 and f[6] in (b"SUBMISSION", b"STUDY"):
+                if len(f) > file_type_col and f[file_type_col] in (
+                    b"SUBMISSION",
+                    b"STUDY",
+                ):
                     outf.write(f[0] + b"," + f[3] + b"," + f[4] + b"\n")
 
             leftover = chunk[chunk.rfind(b"\n") + 1 :]
 
         if leftover:
             f = leftover.split(b"\t", 7)
-            if len(f) > 6 and f[6] in (b"SUBMISSION", b"STUDY"):
+            if len(f) > file_type_col and f[file_type_col] in (b"SUBMISSION", b"STUDY"):
                 outf.write(f[0] + b"," + f[3] + b"," + f[4] + b"\n")
 
 
@@ -267,25 +297,25 @@ def _download_sra_file_dumps(
     missing_files = [f for f in file_dumps if not (data_dir / f).exists()]
 
     if not missing_files:
-        logging.info(
-            "skipped download for sra file dumps as all of them are already present"
+        logger.info(
+            "skipped download for sra file dumps as all of them are already present",
         )
         return data_dir
 
-    logging.info(
-        """starting downloading phase for sra file dumps with following config:
-- num of file(s) to download: %d
-- num of concurrent file downloads: %d
-- num workers per file: %d""",
+    logger.info(
+        "starting downloading phase for sra file dumps with following config:\n"
+        "- num of file(s) to download: %d\n"
+        "- num of concurrent file downloads: %d\n"
+        "- num workers per file: %d",
         len(missing_files),
         concurrent_files,
         workers_per_file,
     )
 
-    def _process_per_file(file: str):
+    def _process_per_file(file: str) -> None:
         dest_path = data_dir / file
         url = f"{SRA_FTP_BASE_URL}/{file}"
-        downloader(url, dest_path, workers_per_file, chunk_size)
+        downloader(url, dest_path, num_workers=workers_per_file, chunk_size=chunk_size)
 
     if concurrent_files == 1:
         [_process_per_file(file) for file in missing_files]
@@ -299,18 +329,20 @@ def _download_sra_file_dumps(
 
 
 def _build_accessions_dict(
-    accessions_csv_path: Path, to_rebuild: bool, output_dir: Path
+    accessions_csv_path: Path,
+    to_rebuild: bool,
+    output_dir: Path,
 ) -> dict[str, str]:
     pickle_path = output_dir / "sra_accessions.pkl"
 
     if not to_rebuild and pickle_path.exists():
-        logging.debug("loading accessions dict from pickle")
-        with open(pickle_path, "rb") as f:
-            return pickle.load(f)
+        logger.debug("loading accessions dict from pickle")
+        with pickle_path.open("rb") as f:
+            return pickle.load(f)  # noqa: S301
 
-    logging.info("building accessions dict from csv")
+    logger.info("building accessions dict from csv")
     accessions: dict[str, str] = {}
-    with open(accessions_csv_path, newline="") as f:
+    with accessions_csv_path.open(newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
         col = {name: i for i, name in enumerate(header)}
@@ -321,8 +353,8 @@ def _build_accessions_dict(
             val = updated_at + "|" + published_at
             accessions[key] = val
 
-    logging.info("saving accessions dict to pickle")
-    with open(pickle_path, "wb") as f:
+    logger.info("saving accessions dict to pickle")
+    with pickle_path.open("wb") as f:
         pickle.dump(accessions, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     return accessions
@@ -332,7 +364,7 @@ def _process_submission(
     submission_accession: str,
     content: IO[bytes],
     accessions: dict[str, str],
-):
+) -> Iterator[tuple]:
     ctx = ET.iterparse(content, events=("end",))
     attrs: dict[str, str] = {}
 
@@ -368,8 +400,10 @@ def _process_submission(
 
 
 def _process_studies(
-    submission_accession: str, content: IO[bytes], accessions: dict[str, str]
-):
+    submission_accession: str,
+    content: IO[bytes],
+    accessions: dict[str, str],
+) -> Iterator[tuple]:
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -433,7 +467,7 @@ def _process_studies(
         return
 
 
-def _process_samples(submission_accession: str, content: IO[bytes]):
+def _process_samples(submission_accession: str, content: IO[bytes]) -> Iterator[tuple]:
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -468,7 +502,10 @@ def _process_samples(submission_accession: str, content: IO[bytes]):
         return
 
 
-def _process_experiments(submission_accession: str, content: IO[bytes]):
+def _process_experiments(
+    submission_accession: str,
+    content: IO[bytes],
+) -> Iterator[tuple]:
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -553,7 +590,7 @@ def _process_experiments(submission_accession: str, content: IO[bytes]):
         return
 
 
-def _process_runs(submission_accession: str, content: IO[bytes]):
+def _process_runs(submission_accession: str, content: IO[bytes]) -> Iterator[tuple]:
     ctx = ET.iterparse(content, events=("end",))
 
     try:
@@ -584,7 +621,7 @@ def _extract_worker(
     tarball: Path,
     file_queue: queue.Queue,
     pbar: tqdm,
-):
+) -> None:
     try:
         with tarfile.open(tarball, mode="r|gz") as tar:
             for member in tar:
@@ -609,9 +646,14 @@ def _extract_worker(
                     file_queue.put((submission_accession, file_type, content))
                     pbar.update(1)
                 except Exception as e:
-                    logging.error(f"[extract] failed to read {name} in {tarball}: {e}")
-    except Exception as e:
-        logging.error(f"[extract] failed to open tarball {tarball}: {e}")
+                    logger.exception(
+                        "[extract] failed to read %s in %s: %s",
+                        name,
+                        tarball,
+                        e,
+                    )
+    except Exception:
+        logger.exception("[extract] failed to open tarball %s", tarball)
         raise
 
 
@@ -621,16 +663,16 @@ def _parse_worker(
     accessions: dict[str, str],
     write_batch_size: int,
     extract_done: threading.Event,
-):
+) -> None:
     buffer: dict[FileType, list] = {}
 
-    def _flush(file_type: FileType):
+    def _flush(file_type: FileType) -> None:
         rows = buffer.get(file_type)
         if rows:
             write_queue.put((file_type, rows))
             buffer[file_type] = []
 
-    def _append(file_type: FileType, row):
+    def _append(file_type: FileType, row: tuple) -> None:
         lst = buffer.setdefault(file_type, [])
         lst.append(row)
 
@@ -669,8 +711,8 @@ def _parse_worker(
 
             for row in processor:
                 _append(file_type, row)
-        except Exception as e:
-            logging.error(f"[parse] failed to process {submission_accession}: {e}")
+        except Exception:
+            logger.exception("[parse] failed to process %s", submission_accession)
 
 
 def _coerce(val: object) -> object:
@@ -684,7 +726,7 @@ def _writer_worker(
     db_file: Path,
     write_batch_size: int,
     parse_done: threading.Event,
-):
+) -> None:
     conn = sqlite3.connect(str(db_file))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=OFF")
@@ -695,7 +737,7 @@ def _writer_worker(
     rows_written = 0
     buffer: dict[FileType, list] = {}
 
-    def _flush(file_type: FileType):
+    def _flush(file_type: FileType) -> None:
         nonlocal rows_written
         batch = buffer.get(file_type)
         if batch:
@@ -730,12 +772,12 @@ def _process_tarballs(
     accessions: dict[str, str],
     num_workers: int,
     write_batch_size: int,
-):
+) -> None:
     num_extract = max(1, min(len(tarballs), num_workers - 2))
     num_parse = max(1, num_workers - num_extract - 1)
     num_writer = 1
 
-    logging.debug(
+    logger.debug(
         "worker distribution: %d extract, %d parse, %d writer",
         num_extract,
         num_parse,
@@ -748,11 +790,12 @@ def _process_tarballs(
     total_files = 0
     for tb in tarballs:
         # takes around ~5-6 mins for performing file counting over 15 GB SRA file dump
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S602
             f"tar -I pigz -tf {shlex.quote(str(tb))} | grep -v '/$' | wc -l",
             capture_output=True,
             text=True,
             shell=True,
+            check=False,
         )
         result.check_returncode()
         total_files += int(result.stdout.strip())
@@ -772,7 +815,11 @@ def _process_tarballs(
         ) as pbar,
     ):
         write_future = writer_pool.submit(
-            _writer_worker, write_queue, db_file, write_batch_size, parse_done
+            _writer_worker,
+            write_queue,
+            db_file,
+            write_batch_size,
+            parse_done,
         )
         parse_futures = [
             parse_pool.submit(
@@ -811,7 +858,7 @@ def _parse_attributes(sample_attrs: list) -> str | None:
     if not sample_attrs:
         return None
     return json.dumps(
-        {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs}
+        {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs},
     )
 
 
@@ -835,13 +882,12 @@ def _parse_links(sample_links: list) -> str | None:
 def _convert_file_name_to_type(file_name: str) -> FileType | None:
     if file_name.endswith(".submission.xml"):
         return FileType.Submission
-    elif file_name.endswith(".sample.xml"):
+    if file_name.endswith(".sample.xml"):
         return FileType.Sample
-    elif file_name.endswith(".study.xml"):
+    if file_name.endswith(".study.xml"):
         return FileType.Study
-    elif file_name.endswith(".experiment.xml"):
+    if file_name.endswith(".experiment.xml"):
         return FileType.Experiment
-    elif file_name.endswith(".run.xml"):
+    if file_name.endswith(".run.xml"):
         return FileType.Run
-    else:
-        return None
+    return None

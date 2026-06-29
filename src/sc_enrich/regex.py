@@ -46,7 +46,7 @@ MODALITY_RULES: list[tuple[str, re.Pattern]] = [
     (
         "scATAC-seq",
         re.compile(
-            r"scATAC[\-\s]?seq|sc[\-\s]ATAC[\-\s]?seq" r"|single[\-\s]cell[\-\s]+ATAC",
+            r"scATAC[\-\s]?seq|sc[\-\s]ATAC[\-\s]?seq|single[\-\s]cell[\-\s]+ATAC",
             re.IGNORECASE,
         ),
     ),
@@ -87,11 +87,14 @@ MODALITY_RULES: list[tuple[str, re.Pattern]] = [
 
 
 def sc_regex_enricher(
-    unified_metadata_db_file: Path, batch_size: int, is_dry_run: bool
-):
+    unified_metadata_db_file: Path,
+    batch_size: int,
+    is_dry_run: bool,
+) -> None:
     conn = sqlite3.connect(unified_metadata_db_file)
     rows = conn.execute(
-        "SELECT canonical_accession, title, description, dominant_assay_l2 FROM unified_metadata"
+        "SELECT canonical_accession, title, description, "
+        "dominant_assay_l2 FROM unified_metadata",
     ).fetchall()
 
     sc_count = 0
@@ -99,12 +102,14 @@ def sc_regex_enricher(
     updates: list[tuple[bool, str | None, str]] = []
 
     for accession, title, description, dominant_assay_l2 in tqdm(
-        rows, unit="acc", desc="classifying studies"
+        rows,
+        unit="acc",
+        desc="classifying studies",
     ):
         is_sc = bool(
             dominant_assay_l2 == "scRNA-seq"
             or SC_PATTERNS.search(title)
-            or SC_PATTERNS.search(description)
+            or SC_PATTERNS.search(description),
         )
         modality = _classify_modality(title) if is_sc else None
 
@@ -115,23 +120,22 @@ def sc_regex_enricher(
         if modality:
             modality_counter[modality] += 1
 
-    print(
-        f"classified {sc_count:,} single-cell studies ({sc_count / len(rows) * 100:.1f}% of total):"
-    )
-    for mod, cnt in sorted(modality_counter.items(), key=lambda x: -x[1]):
-        print(f"\t{mod:30s} {cnt:>6,}")
-    print(f"\t{'(non-single-cell)':30s} {len(rows) - sc_count:>6,}")
+    for _mod, _cnt in sorted(modality_counter.items(), key=lambda x: -x[1]):
+        pass
 
     if is_dry_run:
         conn.close()
         return
 
     for i in tqdm(
-        range(0, len(updates), batch_size), unit="batch", desc="writing updates"
+        range(0, len(updates), batch_size),
+        unit="batch",
+        desc="writing updates",
     ):
         batch = updates[i : i + batch_size]
         conn.executemany(
-            "UPDATE unified_metadata SET is_single_cell = ?, single_cell_modality = ? WHERE canonical_accession = ?",
+            "UPDATE unified_metadata SET is_single_cell = ?, "
+            "single_cell_modality = ? WHERE canonical_accession = ?",
             batch,
         )
         conn.commit()
