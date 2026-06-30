@@ -22,10 +22,12 @@ UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified
 DOWNLOAD_LINKS_DB_FILE := env("DOWNLOAD_LINKS_DB_FILE", DATA_DIR + "/download_links/download_links.db")
 PUBMED_METADATA_DB_FILE := env("PUBMED_METADATA_DB_FILE", DATA_DIR + "/pubmed_metadata/pubmed_metadata.db")
 
-NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/_keys/ncbi.txt")
-OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/_keys/openalex.txt")
-ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", DATA_DIR + "/_csv/assay_mapping.csv")
-TAXONOMY_MAPPING_FILE := env("TAXONOMY_MAPPING_FILE", DATA_DIR + "/_csv/ncbi_taxonomy_common_names.csv")
+NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/keys/ncbi.txt")
+OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/keys/openalex.txt")
+ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", DATA_DIR + "/data/assay_mapping.csv")
+TAXONOMY_MAPPING_FILE := env("TAXONOMY_MAPPING_FILE", DATA_DIR + "/data/ncbi_taxonomy_common_names.csv")
+ROR_DATA := env("ROR_DATA", "/data/ror_data.json")
+GEOCODING_CACHE_FILE := env("GEOCODING_CACHE_FILE", DATA_DIR + "/geocoding/geocoding_cache.json")
 
 PYTHON := ".venv/bin/python"
 ENTRYPOINT := "./src/main.py --log-level " + LOG_LEVEL
@@ -112,10 +114,12 @@ unify_build_metadata *flags:
         {{ flags }}
 
 [group("geocode")]
-geocode_missing *flags:
+geocode *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} geocode \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         --geo-db-file {{ GEO_DB_FILE }} \
+        --ror-data-file {{ ROR_DATA }} \
+        --cache-file {{ GEOCODING_CACHE_FILE }} \
         --save-every {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
         {{ flags }}
@@ -127,8 +131,8 @@ sc_enrich_regex *flags:
         {{ flags }}
 
 [group("sc_enrich")]
-sc_enrich_detector *flags:
-    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich detector \
+sc_enrich_counter *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich counter \
         --output-dir {{ DATA_DIR }} \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         --geo-db-file {{ GEO_DB_FILE }} \

@@ -1,4 +1,5 @@
 import functools
+import logging
 import multiprocessing as mp
 import sqlite3
 from collections.abc import Callable
@@ -13,8 +14,9 @@ from pysradb.sraweb import SRAweb
 
 from backfill.backfill_utils import _chunked, _parse_pmid
 from helpers import exec_query_from_file
-from main import logger
 from pipeline_types import Datasource
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass

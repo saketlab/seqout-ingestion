@@ -5,6 +5,7 @@ import enum
 import functools
 import io
 import json
+import logging
 import pickle
 import queue
 import re
@@ -20,14 +21,15 @@ from math import isqrt
 from pathlib import Path
 from typing import IO
 
+import httpx
 import humanfriendly
 import lxml.etree as ET  # noqa: N812
-import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 from helpers import download_file, exec_query_from_file
-from main import logger
+
+logger = logging.getLogger(__name__)
 
 
 class FileType(enum.StrEnum):
@@ -186,9 +188,9 @@ def _extract_sra_file_dumps_in_range(
 ) -> list[str]:
     file_dumps: list[str] = []
 
-    with requests.get(SRA_FTP_BASE_URL, timeout=30) as r:
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+    r = httpx.get(SRA_FTP_BASE_URL, timeout=30)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
 
     for a in soup.find_all("a", href=True):
         href = str(a["href"])
@@ -645,12 +647,11 @@ def _extract_worker(
                     content = f.read()
                     file_queue.put((submission_accession, file_type, content))
                     pbar.update(1)
-                except Exception as e:
+                except Exception:
                     logger.exception(
-                        "[extract] failed to read %s in %s: %s",
+                        "[extract] failed to read %s in %s",
                         name,
                         tarball,
-                        e,
                     )
     except Exception:
         logger.exception("[extract] failed to open tarball %s", tarball)

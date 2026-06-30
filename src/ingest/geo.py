@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import functools
 import json
+import logging
 import queue
 import re
 import sqlite3
@@ -13,14 +14,15 @@ from enum import StrEnum
 from pathlib import Path
 from typing import IO
 
-import aiohttp
+import httpx
 import humanfriendly
 import lxml.etree as ET  # noqa: N812
 from bs4 import BeautifulSoup, Tag
 from tqdm.asyncio import tqdm
 
 from helpers import download_file, exec_query_from_file
-from main import logger
+
+logger = logging.getLogger(__name__)
 
 
 class TableType(StrEnum):
@@ -157,15 +159,11 @@ async def _build_geo_dict(
     max_timeout: int,
 ) -> dict[str, list[str]]:
     sem = asyncio.Semaphore(num_workers)
-    connector = aiohttp.TCPConnector(
-        limit=num_workers,
-        limit_per_host=num_workers,
-        ttl_dns_cache=300,  # 300 seconds
-    )
-    timeout_config = aiohttp.ClientTimeout(total=max_timeout, connect=timeout_)
+    limits = httpx.Limits(max_connections=num_workers)
+    timeout_config = httpx.Timeout(max_timeout, connect=timeout_)
 
-    async with aiohttp.ClientSession(
-        connector=connector,
+    async with httpx.AsyncClient(
+        limits=limits,
         timeout=timeout_config,
     ) as session:
         resp_text = await _get(
@@ -242,16 +240,17 @@ async def _build_geo_dict(
 
 
 async def _get(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     sem: asyncio.Semaphore,
     url: str,
     retries: int,
 ) -> str | None:
     for attempt in range(retries + 1):
         try:
-            async with sem, session.get(url) as resp:
+            async with sem:
+                resp = await session.get(url)
                 resp.raise_for_status()
-                return await resp.text()
+                return resp.text
         except Exception:
             if attempt == retries:
                 logger.exception(
@@ -265,7 +264,7 @@ async def _get(
 
 
 async def _fetch_all_accessions_worker(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     sem: asyncio.Semaphore,
     start_date: datetime.date | None,
     end_date: datetime.date | None,
@@ -309,7 +308,7 @@ async def _fetch_all_accessions_worker(
 
 
 async def _filter_accessions_worker(
-    session: aiohttp.ClientSession,
+    session: httpx.AsyncClient,
     sem: asyncio.Semaphore,
     accession: str,
     series: str,

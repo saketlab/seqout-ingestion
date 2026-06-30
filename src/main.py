@@ -11,7 +11,6 @@ from cli.transfer import transfer_app
 from cli.unify import unify_app
 
 cli = typer.Typer()
-logger = logging.getLogger(__name__)
 
 
 @cli.callback()

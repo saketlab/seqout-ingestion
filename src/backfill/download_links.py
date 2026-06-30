@@ -2,19 +2,21 @@ import csv
 import http
 import io
 import json
+import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
 
-import requests
+import httpx
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from helpers import exec_query_from_file
-from main import logger
 from pipeline_types import Datasource
+
+logger = logging.getLogger(__name__)
 
 ENA_FILEREPORT_URL = "https://www.ebi.ac.uk/ena/portal/api/filereport"
 FILEREPORT_FIELDS = (
@@ -206,7 +208,7 @@ def _ena_worker(
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=120000")
 
-    session = requests.Session()
+    session = httpx.Client()
     now = datetime.now(UTC).isoformat(timespec="seconds")
 
     for study in studies:
@@ -334,7 +336,7 @@ def _ncbi_worker(
 
 
 def _fetch_study_runs(
-    session: requests.Session,
+    session: httpx.Client,
     study_accession: str,
     retries: int = 3,
 ) -> list[dict] | None:
@@ -353,7 +355,7 @@ def _fetch_study_runs(
             resp.raise_for_status()
             reader = csv.DictReader(io.StringIO(resp.text), delimiter="\t")
             return list(reader)
-        except requests.RequestException:
+        except httpx.HTTPError:
             if attempt < retries - 1:
                 sleep(2 * (attempt + 1))
             else:

@@ -1,5 +1,6 @@
 import contextlib
 import json
+import logging
 import re
 import sqlite3
 from pathlib import Path
@@ -7,7 +8,8 @@ from pathlib import Path
 import pandas as pd
 
 from helpers import exec_query_from_file
-from main import logger
+
+logger = logging.getLogger(__name__)
 
 UNIFIED_CATALOG_DIR = "unified_catalog"
 
@@ -47,7 +49,7 @@ def build_unified_catalog(
             logger.info("saved data as parquet at %s", str(pq_path))
 
     size_mb = db_file.stat().st_size / 1024**2
-    logger.info(f"inserted {len(catalog)} rows ({size_mb:.2f} MB)")
+    logger.info("inserted %d rows (%.2f MB)", len(catalog), size_mb)
 
 
 def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
@@ -203,7 +205,7 @@ def _build_catalog_tuples(
 
     claimed.update(ae_preclaim)
     if ae_preclaim:
-        logger.info(f"\tpre-claimed {len(ae_preclaim):,} sra entries for arrayexpress")
+        logger.info("pre-claimed %d sra entries for ae", len(ae_preclaim))
 
     # 1. processing geo (highest priority)
     logger.info("processing geo...")
@@ -250,7 +252,7 @@ def _build_catalog_tuples(
 
         claimed.add(gse)
 
-    logger.info(f"\tgeo: {len([r for r in catalog if r[1] == 'geo']):,} canonical")
+    logger.info("\tgeo: %d canonical", len([r for r in catalog if r[1] == "geo"]))
 
     # 2. processing sra
     # skip gse-aliased, those are already claimed by geo
@@ -302,7 +304,7 @@ def _build_catalog_tuples(
 
         claimed.add(srp)
 
-    logger.info(f"\tsra: {sra_count:,} canonical")
+    logger.info("\tsra: %d canonical", sra_count)
 
     # 3. processing arrayexpress
     # note: ae external_links contain ena accessions (erp*). these erp*
@@ -349,7 +351,7 @@ def _build_catalog_tuples(
 
         claimed.add(ae_acc)
 
-    logger.info(f"  arrayexpress: {ae_count:,} canonical")
+    logger.info("\tae: %d canonical", ae_count)
 
     # 4. processing ena
     logger.info("processing ena...")
@@ -380,7 +382,7 @@ def _build_catalog_tuples(
 
         claimed.add(prj)
 
-    logger.info(f"  ena: {ena_count:,} canonical")
+    logger.info("\tena: %d canonical", ena_count)
     return catalog
 
 

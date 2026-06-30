@@ -9,7 +9,8 @@ import humanfriendly
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
-from main import logger
+
+logger = logging.getLogger(__name__)
 
 # to redirect urllib3 logs to warning instead of info level
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)

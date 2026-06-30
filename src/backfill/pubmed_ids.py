@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -8,8 +9,9 @@ from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from backfill.backfill_utils import _chunked, _parse_pmid
-from main import logger
 from pipeline_types import Datasource
+
+logger = logging.getLogger(__name__)
 
 DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
     Datasource.Sra: "sra_studies",

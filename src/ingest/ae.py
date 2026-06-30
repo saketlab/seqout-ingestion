@@ -1,6 +1,7 @@
 import csv
 import datetime
 import json
+import logging
 import math
 import re
 import sqlite3
@@ -12,7 +13,8 @@ import humanfriendly
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req
-from main import logger
+
+logger = logging.getLogger(__name__)
 
 AE_OUTPUT_DIR = "ae"
 BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"

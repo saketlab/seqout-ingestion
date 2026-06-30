@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS ena_experiments (
     dev_stage                   TEXT,
     base_count                  INTEGER,
     read_count                  INTEGER
-    run_alias                   TEXT,
+    run_alias                   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS ena_samples (

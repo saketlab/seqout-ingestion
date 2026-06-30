@@ -1,21 +1,26 @@
 import csv
 import json
+import logging
 import re
 import sqlite3
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tqdm import tqdm
+
 from helpers import exec_query_from_file
-from main import logger
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class SourceMap:
     organism: dict[str, dict[str, int]] = field(default_factory=dict)
     library: dict[str, dict[str, int]] = field(default_factory=dict)
-    n_exp: dict[str, int] = field(default_factory=dict)
-    n_samp: dict[str, int] = field(default_factory=dict)
+    num_experiments: dict[str, int] = field(default_factory=dict)
+    num_samples: dict[str, int] = field(default_factory=dict)
     center: dict[str, list[str]] = field(default_factory=dict)
     pmids: dict[str, set[str]] = field(default_factory=dict)
     published: dict[str, str] = field(default_factory=dict)
@@ -49,16 +54,29 @@ def build_unified_metadata(
     assay_map = _load_assay_mapping(assay_mapping_csv_file)
     taxonomy = _load_taxonomy_mapping(taxonomy_mapping_csv_file)
 
-    geo = _scan_geo(geo_db_file)
-    sra = _scan_sra(sra_db_file)
-    ae = _scan_ae(ae_db_file)
-    ena = _scan_ena(ena_db_file)
+    source_data: dict[str, SourceMap] = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {
+            pool.submit(_scan_geo, geo_db_file): "geo",
+            pool.submit(_scan_sra, sra_db_file): "sra",
+            pool.submit(_scan_ae, ae_db_file): "ae",
+            pool.submit(_scan_ena, ena_db_file): "ena",
+        }
 
+        for f in tqdm(
+            as_completed(futures),
+            total=len(futures),
+            desc="scanning sources",
+            unit="src",
+        ):
+            label = futures[f]
+            source_data[label] = f.result()
+
+    geo, sra, ae, ena = (source_data[k] for k in ("geo", "sra", "ae", "ena"))
     sources = (geo, sra, ae, ena)
     pmid_map = _merge_pmid_map(sources)
     published_map = _merge_published_map(sources)
 
-    source_data = {"geo": geo, "sra": sra, "ae": ae, "ena": ena}
     rows: list[dict] = []
     centers_rows: list[tuple[str, str, int]] = []
     stats: dict[str, int] = {
@@ -88,8 +106,8 @@ def build_unified_metadata(
         if mapped:
             stats["assay_mapped"] += 1
 
-        n_experiments = sm.n_exp.get(acc)
-        n_samples = sm.n_samp.get(acc)
+        num_experiments = sm.num_experiments.get(acc)
+        num_samples = sm.num_samples.get(acc)
 
         center_list = sm.center.get(acc)
         if center_list:
@@ -136,8 +154,8 @@ def build_unified_metadata(
             "assay_l2_counts": _json_or_none(l2_counts),
             "dominant_assay_l1": dominant_l1,
             "dominant_assay_l2": dominant_l2,
-            "n_experiments": n_experiments,
-            "n_samples": n_samples,
+            "n_experiments": num_experiments,
+            "n_samples": num_samples,
             "center_name": center_list[0] if center_list else None,
             "center_names": _json_or_none(center_list),
             "pmid": pmid,
@@ -147,17 +165,16 @@ def build_unified_metadata(
         }
         rows.append(row)
 
-    logger.info(f"enriched {len(rows)} rows")
+    logger.info("enriched %d rows", len(rows))
     for k, v in stats.items():
         logger.info(f"  {k}: {v} ({100 * v // len(rows)}%)" if rows else f"  {k}: {v}")
-    logger.info(f"center rows: {len(centers_rows)}")
+    logger.info("center rows: %d", len(centers_rows))
 
     with sqlite3.Connection(db_file) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
 
-        exec_query_from_file("tables/unified_metadata.sql", conn=conn)
-        exec_query_from_file("tables/unified_centers.sql", conn=conn)
+        exec_query_from_file("unified_metadata.sql", conn=conn)
 
         cols = list(rows[0].keys())
         placeholders = ", ".join(["?"] * len(cols))
@@ -179,7 +196,6 @@ def build_unified_metadata(
             )
 
         exec_query_from_file("indexes/unified_metadata.sql", conn=conn)
-        exec_query_from_file("indexes/unified_centers.sql", conn=conn)
         conn.commit()
 
     return rows, centers_rows
@@ -194,7 +210,7 @@ def _load_unified_catalog(db_file: Path) -> list[tuple[str, str, str, str, dict]
             FROM unified_studies""",
         ).fetchall()
 
-    logger.info(f"\t{len(catalog)} entries loaded from unified catalog")
+    logger.info("\t%d entries loaded from unified catalog", len(catalog))
     return catalog
 
 
@@ -211,7 +227,7 @@ def _load_pubmed_metadata(db_file: Path) -> dict[str, tuple[str | None, int | No
             cc_val = int(citation_count) if citation_count is not None else None
             pubmed_mapping[pmid_str] = (journal_val, cc_val)
 
-    logger.info(f"\t{len(pubmed_mapping)} entries loaded from pubmed mapping")
+    logger.info("\t%d entries loaded from pubmed mapping", len(pubmed_mapping))
     return pubmed_mapping
 
 
@@ -223,7 +239,7 @@ def _load_assay_mapping(csv_file: Path) -> dict[str, tuple[str, str]]:
             for row in csv.DictReader(f)
         }
 
-    logger.info(f"\t{len(assay_mapping)} entries loaded from assay mapping")
+    logger.info("\t%d entries loaded from assay mapping", len(assay_mapping))
     return assay_mapping
 
 
@@ -238,7 +254,8 @@ def _load_taxonomy_mapping(csv_file: Path) -> dict[str, str]:
                 taxonomy_mapping[name] = common
 
     logger.info(
-        f"\t{len(taxonomy_mapping)} entries loaded from taxonomy common names mapping",
+        "\t%d entries loaded from taxonomy common names mapping",
+        len(taxonomy_mapping),
     )
     return taxonomy_mapping
 
@@ -270,7 +287,7 @@ def _scan_geo(db_file: Path) -> SourceMap:
             elif isinstance(organism, str) and organism.strip():
                 sample_organisms[acc].add(organism.strip())
 
-    logger.info(f"\t{len(sample_organisms)} samples with organism")
+    logger.info("%d samples with organism", len(sample_organisms))
 
     # scanning geo_series
     rows = conn.execute(
@@ -358,8 +375,8 @@ def _scan_geo(db_file: Path) -> SourceMap:
 
     m.organism = {k: dict(v) for k, v in series_organism_count.items()}
     m.library = {k: dict(v) for k, v in series_library_count.items()}
-    m.n_exp = dict(series_sample_count)
-    m.n_samp = dict(series_sample_count)
+    m.num_experiments = dict(series_sample_count)
+    m.num_samples = dict(series_sample_count)
     m.center = dict(center_orgs)
     m.pmids = dict(pmids)
 
@@ -395,7 +412,9 @@ def _scan_sra(db_file: Path) -> SourceMap:
         submission_organism_count[submission][scientific_name] += 1
 
     logger.info(
-        f"\t{len(submission_organism_count)} submissions with organisms, {len(submission_sample_count)} submissions with samples",  # noqa: E501
+        "%d submissions with organisms, %d submissions with samples",
+        len(submission_organism_count),
+        len(submission_sample_count),
     )
 
     # scanning sra_experiments
@@ -412,7 +431,9 @@ def _scan_sra(db_file: Path) -> SourceMap:
         study_library_count[study][strategy] += 1
 
     logger.info(
-        f"\t{len(study_library_count)} studies with library strategy, {len(study_experiment_count)} studies with experiments",  # noqa: E501
+        "%d studies with library strategy, %d studies with experiments",
+        len(study_library_count),
+        len(study_experiment_count),
     )
 
     # scanning sra_studies
@@ -437,7 +458,7 @@ def _scan_sra(db_file: Path) -> SourceMap:
                 m.organism[accession] = dict(org_counts)
             samp_count = submission_sample_count.get(submission)
             if samp_count:
-                m.n_samp[accession] = samp_count
+                m.num_samples[accession] = samp_count
 
         if center_name:
             cn = center_name.strip()
@@ -450,7 +471,7 @@ def _scan_sra(db_file: Path) -> SourceMap:
 
         exp_count = study_experiment_count.get(accession)
         if exp_count:
-            m.n_exp[accession] = exp_count
+            m.num_experiments[accession] = exp_count
 
         if published_at:
             m.published[accession] = published_at
@@ -606,8 +627,8 @@ def _scan_ae(db_file: Path) -> SourceMap:
 
     m.organism = {k: dict(v) for k, v in experiment_organism_count.items()}
     m.library = {k: dict(v) for k, v in experiment_library_count.items()}
-    m.n_exp = dict(experiment_sample_count)
-    m.n_samp = dict(experiment_sample_count)
+    m.num_experiments = dict(experiment_sample_count)
+    m.num_samples = dict(experiment_sample_count)
     m.pmids = dict(pmids)
 
     conn.close()
@@ -698,8 +719,8 @@ def _scan_ena(db_file: Path) -> SourceMap:
 
     m.organism = {k: dict(v) for k, v in study_organism_count.items()}
     m.library = {k: dict(v) for k, v in study_library_count.items()}
-    m.n_samp = dict(study_sample_count)
-    m.n_exp = dict(study_experiment_count)
+    m.num_experiments = dict(study_experiment_count)
+    m.num_samples = dict(study_sample_count)
     m.center = dict(ena_center_orgs)
     m.pmids = dict(pmids)
 

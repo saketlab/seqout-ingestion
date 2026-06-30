@@ -1,4 +1,5 @@
 import http
+import logging
 import sqlite3
 import time
 from collections.abc import Callable
@@ -10,7 +11,7 @@ import httpx
 import psycopg
 from tqdm import tqdm
 
-from main import logger
+logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 

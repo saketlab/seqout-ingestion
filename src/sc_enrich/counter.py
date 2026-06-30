@@ -26,10 +26,10 @@ from tqdm import tqdm
 
 from helpers import download_file
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from rpy2.robjects.vectors import Vector
-
-logger = logging.getLogger(__name__)
 
 
 class FileType(StrEnum):
