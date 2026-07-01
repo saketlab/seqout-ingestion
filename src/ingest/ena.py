@@ -433,12 +433,6 @@ def _ingest_data(db_file: Path, output_dir: Path) -> None:
         for folder, key_col, fields, desc in ingest_data:
             _ingest_table_to_sqlite(conn, output_dir / folder, key_col, fields, desc)
 
-        # rebuild fts
-        conn.execute("INSERT INTO ena_studies_fts(ena_studies_fts) VALUES('rebuild')")
-        conn.execute(
-            "INSERT INTO ena_experiments_fts(ena_experiments_fts) VALUES('rebuild')",
-        )
-        conn.execute("INSERT INTO ena_samples_fts(ena_samples_fts) VALUES('rebuild')")
         conn.commit()
 
 

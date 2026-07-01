@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
+from typing import Literal
 
 import httpx
 from pysradb.sraweb import SRAweb
@@ -17,6 +18,8 @@ from helpers import exec_query_from_file
 from pipeline_types import Datasource
 
 logger = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 ENA_FILEREPORT_URL = "https://www.ebi.ac.uk/ena/portal/api/filereport"
 FILEREPORT_FIELDS = (
@@ -102,7 +105,7 @@ def backfill_download_links(
     ncbi_keys_file: Path | None,
     num_workers: int,
     is_dry_run: bool,
-    source: str,
+    source: Literal["ncbi", "ena"],
     limit: int | None = None,
 ) -> None:
     if not sra_db_file and not ena_db_file:
@@ -140,6 +143,20 @@ def backfill_download_links(
     if limit is not None:
         target = target[:limit]
 
+    with sqlite3.connect(output_db_file) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT study_accession FROM run_download_links"
+        ).fetchall()
+        existing = {r[0] for r in rows}
+
+    if existing:
+        before = len(target)
+        target = [a for a in target if a not in existing]
+        logger.info(
+            "skipping %d studies already present in run_download_links",
+            before - len(target),
+        )
+
     logger.info("total studies to process: %d", len(target))
 
     if is_dry_run or not target:
@@ -176,7 +193,7 @@ def backfill_download_links(
                 f.result()
 
         pbar.close()
-    else:
+    elif source == "ena":
         worker_data = [[] for _ in range(num_workers)]
         for i, acc in enumerate(target):
             worker_data[i % num_workers].append(acc)

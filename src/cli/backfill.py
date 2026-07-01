@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import typer
 
@@ -79,7 +80,7 @@ def pm_meta(
 @backfill_app.command()
 def download_links(
     base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
-    source: str = typer.Option(...),
+    source: Literal["ncbi", "ena"] = typer.Option(...),
     sra_db_file: Path | None = typer.Option(None),  # noqa: B008
     ena_db_file: Path | None = typer.Option(None),  # noqa: B008
     ncbi_keys_file: Path | None = typer.Option(None),  # noqa: B008

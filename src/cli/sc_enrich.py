@@ -3,19 +3,19 @@ from pathlib import Path
 import typer
 
 from cli.utils import _parse_chunk_size, _parse_timespan
+from sc_enrich.classify import sc_classify
 from sc_enrich.counter import sc_counter
-from sc_enrich.regex import sc_regex_enricher
 
 sc_enrich_app = typer.Typer()
 
 
 @sc_enrich_app.command()
-def regex(
+def classify(
     unified_metadata_db_file: Path = typer.Option(...),  # noqa: B008
     batch_size: int = typer.Option(5000),
     is_dry_run: bool = typer.Option(default=False),
 ) -> None:
-    sc_regex_enricher(unified_metadata_db_file, batch_size, is_dry_run)
+    sc_classify(unified_metadata_db_file, batch_size, is_dry_run)
 
 
 @sc_enrich_app.command()

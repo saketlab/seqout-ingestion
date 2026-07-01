@@ -125,8 +125,8 @@ geocode *flags:
         {{ flags }}
 
 [group("sc_enrich")]
-sc_enrich_regex *flags:
-    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich regex \
+sc_enrich_classify *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich classify \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         {{ flags }}
 
