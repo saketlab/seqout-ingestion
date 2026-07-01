@@ -22,10 +22,11 @@ dependencies = [
     "rpy2>=3.6.7",
     "httpx>=0.28.1",
     "rapidfuzz>=3.14.5",
+    "numpy>=2.3.0rc1"
 ]
 
 [tool.uv.sources]
-pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
+pysradb = { git = "https://github.com/0xmukesh/pysradb.git", rev = "develop" }
 
 [tool.ruff]
 target-version = "py313"

@@ -99,6 +99,9 @@ def sc_counter(
         shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(exist_ok=True, parents=True)
 
+    tmp_dir = output_dir / ".tmp"
+    tmp_dir.mkdir(exist_ok=True)
+
     if not _check_disk_space(output_dir):
         logger.error(
             "insufficient disk space at %s: cannot start sc_enrich detector",
@@ -393,7 +396,12 @@ def sc_counter(
 
                     file_type, sniffed_path = result
                     process_futures[
-                        process_pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
+                        process_pool.submit(
+                            functools.partial(_is_sc, tmp_dir=tmp_dir),
+                            sniffed_path,
+                            file_type,
+                            chunk_size,
+                        )
                     ] = (accession, dest_path, sniffed_path, file_type, idx)
                     continue
 
@@ -446,7 +454,7 @@ def sc_counter(
                         file_type, sniffed_path = result
                         process_futures[
                             process_pool.submit(
-                                _is_sc,
+                                functools.partial(_is_sc, tmp_dir=tmp_dir),
                                 sniffed_path,
                                 file_type,
                                 chunk_size,
@@ -698,7 +706,12 @@ def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:  #
     return FileType.Txt, path
 
 
-def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> int:  # noqa: PLR0911
+def _is_sc(  # noqa: PLR0911
+    dest_path: Path,
+    file_type: FileType,
+    chunk_size: int,
+    tmp_dir: Path | None = None,
+) -> int:
     if file_type == FileType.Barcodes:
         return _process_barcodes(dest_path, chunk_size)
     if file_type == FileType.H5:
@@ -706,7 +719,7 @@ def _is_sc(dest_path: Path, file_type: FileType, chunk_size: int) -> int:  # noq
     if file_type == FileType.H5ad:
         return _process_h5ad(dest_path, chunk_size)
     if file_type == FileType.Tar:
-        return _process_tar(dest_path, chunk_size)
+        return _process_tar(dest_path, chunk_size, tmp_dir=tmp_dir)
     if file_type == FileType.Txt:
         return _process_txt(dest_path, chunk_size)
     if file_type == FileType.Mtx:
@@ -739,10 +752,13 @@ def safe_process(
     return wrapper
 
 
-def _process_tar(path: Path, chunk_size: int) -> int:
+def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> int:
     try:
         with tarfile.open(path, "r:*") as tar:
             max_count = 0
+            extract_dir = tmp_dir or (path.parent / ".tmp_extract")
+            extract_dir.mkdir(exist_ok=True)
+
             for member in tar.getmembers():
                 name = member.name.lower()
                 file_type = _classify_file(name)
@@ -755,7 +771,11 @@ def _process_tar(path: Path, chunk_size: int) -> int:
 
                 member_path = Path(member.name)
                 suffix = "".join(member_path.suffixes) or ".tmp"
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                with tempfile.NamedTemporaryFile(
+                    delete=False,
+                    suffix=suffix,
+                    dir=extract_dir,
+                ) as tmp:
                     shutil.copyfileobj(f, tmp)
                     tmp_path = Path(tmp.name)
 
@@ -768,12 +788,19 @@ def _process_tar(path: Path, chunk_size: int) -> int:
                     continue
 
                 file_type, sniffed_path = result
-                single_cell_count = _is_sc(sniffed_path, file_type, chunk_size)
+                single_cell_count = _is_sc(
+                    sniffed_path,
+                    file_type,
+                    chunk_size,
+                    tmp_dir=tmp_dir,
+                )
                 Path(tmp_path).unlink(missing_ok=True)
 
                 if sniffed_path != tmp_path:
                     sniffed_path.unlink(missing_ok=True)
                 max_count = max(max_count, single_cell_count)
+
+            shutil.rmtree(extract_dir, ignore_errors=True)
 
     except Exception:
         logger.exception("failed to process %s", path)

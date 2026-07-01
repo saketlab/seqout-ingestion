@@ -105,6 +105,8 @@ def backfill_download_links(
     num_workers: int,
     is_dry_run: bool,
     source: Literal["ncbi", "ena"],
+    retries: int,
+    timeout: int,
     limit: int | None = None,
 ) -> None:
     if not sra_db_file and not ena_db_file:
@@ -185,6 +187,8 @@ def backfill_download_links(
                     worker_data[i],
                     output_db_file,
                     pbar,
+                    retries,
+                    timeout,
                 )
                 for i in range(num_workers)
             ]
@@ -268,8 +272,10 @@ def _ncbi_worker(
     studies: list[str],
     output_db_file: Path,
     pbar: tqdm,
+    retries: int,
+    timeout: int,
 ) -> None:
-    sra = SRAweb(api_key, verbose=False)
+    sra = SRAweb(api_key, retries=retries, timeout=timeout, verbose=False)
     conn = sqlite_connect(output_db_file, busy_timeout=120000)
     conn.execute("PRAGMA journal_mode=WAL")
 

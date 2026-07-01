@@ -219,18 +219,18 @@ def geocode_missing(
                         api_centers.append(center_name)
 
                 if api_centers:
-                    logger.info("geocoding %d centers via OSM API", len(api_centers))
+                    logger.info("geocoding %d centers via ArcGIS API", len(api_centers))
+                    arcgis_geocoder = RateLimiter(
+                        ArcGIS(timeout=timeout).geocode,
+                        min_delay_seconds=max(rate_limit // 10, 1),
+                        max_retries=retries,
+                    )
                     osm_geocoder = RateLimiter(
                         Nominatim(
                             user_agent="seqout-ingestion-v2",
                             timeout=timeout,
                         ).geocode,
-                        min_delay_seconds=rate_limit,
-                        max_retries=retries,
-                    )
-                    arcgis_geocoder = RateLimiter(
-                        ArcGIS(timeout=timeout).geocode,
-                        min_delay_seconds=rate_limit,
+                        min_delay_seconds=max(rate_limit, 1),
                         max_retries=retries,
                     )
 
@@ -360,10 +360,12 @@ def _geocode_item(
     if not cleaned:
         return None
 
-    result = _geocode(cleaned, osm_geocoder, _parse_osm, GeocodingProviders.Nominatim)
+    result = _geocode(
+        cleaned, arcgis_geocoder, _parse_arcgis, GeocodingProviders.Arcgis
+    )
     if result is None or result.get("error"):
         result = _geocode(
-            cleaned, arcgis_geocoder, _parse_arcgis, GeocodingProviders.Arcgis
+            cleaned, osm_geocoder, _parse_osm, GeocodingProviders.Nominatim
         )
     if result is None:
         result = _empty_result(cleaned, "no result found")

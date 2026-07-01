@@ -97,6 +97,8 @@ def backfill_pubmed_ids(
     num_workers: int,
     batch_size: int,
     is_dry_run: bool,
+    retries: int,
+    timeout: int,
     process_all: bool = False,  # noqa:  FBT002
 ) -> None:
     if (
@@ -196,6 +198,8 @@ def backfill_pubmed_ids(
                     db_file,
                     batch_size,
                     pbar,
+                    retries,
+                    timeout,
                 )
                 for i in range(num_workers)
             ]
@@ -213,8 +217,10 @@ def _worker(
     db_file: Path,
     batch_size: int,
     pbar: tqdm,
+    retries: int,
+    timeout: int,
 ) -> None:
-    sra = SRAweb(api_key, verbose=False)
+    sra = SRAweb(api_key, retries=retries, timeout=timeout, verbose=False)
     is_sra_related = datasource in (Datasource.Sra, Datasource.Ena)
     col_name = "srp_accession" if is_sra_related else "gse_accession"
 

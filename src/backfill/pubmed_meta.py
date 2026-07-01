@@ -134,6 +134,8 @@ def backfill_pubmed_metadata(
     skip_journal_metrics: bool,
     update_journal_metrics: bool,
     refresh_all_journals_metrics: bool,
+    retries: int,
+    timeout: int,
     is_dry_run: bool,
 ) -> None:
     if (
@@ -173,6 +175,8 @@ def backfill_pubmed_metadata(
             batch_size,
             refresh_all_journals_metrics,
             is_dry_run,
+            retries,
+            timeout,
         )
     else:
         for datasource, ds_db_file in mapping.items():
@@ -188,6 +192,8 @@ def backfill_pubmed_metadata(
                 update_metrics,
                 skip_journal_metrics,
                 is_dry_run,
+                retries,
+                timeout,
             )
 
 
@@ -199,6 +205,8 @@ def _process_via_per_journal_lookup(
     batch_size: int,
     refresh_all_journals_metrics: bool,
     is_dry_run: bool,
+    retries: int,
+    timeout: int,
 ) -> None:
     with sqlite_connect(db_file, busy_timeout=5000) as conn:
         if refresh_all_journals_metrics:
@@ -247,6 +255,8 @@ def _process_via_per_journal_lookup(
         to_tuple=_journal_row_to_tuple,
         batch_size=batch_size,
         counters=counters,
+        retries=retries,
+        timeout=timeout,
     )
 
     pbar = tqdm.tqdm(
@@ -285,6 +295,8 @@ def _process_via_per_pmid_lookup(
     update_metrics: bool,
     skip_journal_metrics: bool,
     is_dry_run: bool,
+    retries: int,
+    timeout: int,
 ) -> None:
     logger.info("processing %s datasource...", datasource)
 
@@ -351,6 +363,8 @@ def _process_via_per_pmid_lookup(
         batch_size=batch_size,
         skip_journal_metrics=skip_journal_metrics,
         counters=counters,
+        retries=retries,
+        timeout=timeout,
     )
 
     pbar = tqdm.tqdm(
@@ -420,8 +434,16 @@ def _journal_lookup_worker(
     batch_size: int,
     counters: Counters,
     pbar: tqdm.tqdm,
+    retries: int,
+    timeout: int,
 ) -> None:
-    sra = SRAweb(api_key=ncbi_key, openalex_api_key=openalex_key)
+    sra = SRAweb(
+        api_key=ncbi_key,
+        openalex_api_key=openalex_key,
+        retries=retries,
+        timeout=timeout,
+        verbose=False,
+    )
     local_updated = 0
     local_errors = 0
 
@@ -501,8 +523,16 @@ def _pmid_lookup_worker(
     skip_journal_metrics: bool,
     counters: Counters,
     pbar: tqdm.tqdm,
+    retries: int,
+    timeout: int,
 ) -> None:
-    sra = SRAweb(api_key=ncbi_key, openalex_api_key=openalex_key)
+    sra = SRAweb(
+        api_key=ncbi_key,
+        openalex_api_key=openalex_key,
+        retries=retries,
+        timeout=timeout,
+        verbose=False,
+    )
     local_updated = 0
     local_errors = 0
 

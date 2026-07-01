@@ -75,6 +75,8 @@ backfill_download_links *flags:
         --ena-db-file {{ ENA_DB_FILE }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --workers {{ WORKERS }} \
+        --retries {{ RETRIES }} \
+        --timeout {{ TIMEOUT }} \
         {{ flags }}
 
 [group("backfill")]
@@ -83,6 +85,8 @@ backfill_pm_ids *flags:
         {{ _all_db_args }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --batch-size {{ BATCH_SIZE }} \
+        --retries {{ RETRIES }} \
+        --timeout {{ TIMEOUT }} \
         {{ flags }}
 
 [group("backfill")]
@@ -93,6 +97,8 @@ backfill_pm_meta *flags:
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --openalex-keys-file {{ OPENALEX_KEYS_FILE }} \
         --batch-size {{ BATCH_SIZE }} \
+        --retries {{ RETRIES }} \
+        --timeout {{ TIMEOUT }} \
         {{ flags }}
 
 [group("unify")]
@@ -138,6 +144,7 @@ sc_enrich_counter *flags:
         --geo-db-file {{ GEO_DB_FILE }} \
         --ae-db-file {{ AE_DB_FILE }} \
         --workers {{ WORKERS }} \
+        --batch-size {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
         --timeout {{ TIMEOUT }} \
         --max-timeout {{ MAX_TIMEOUT }} \
