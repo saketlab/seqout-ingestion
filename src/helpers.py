@@ -372,6 +372,16 @@ def _download_multipart(
         pbar.close()
 
 
+def sqlite_connect(
+    db_file: str | Path,
+    busy_timeout: int = 60000,
+    **kwargs: Any,
+) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(db_file), **kwargs)
+    conn.execute(f"PRAGMA busy_timeout={busy_timeout}")
+    return conn
+
+
 def exec_query_from_file(
     query_file: str | Path,
     db_file: str | Path | None = None,
@@ -383,7 +393,7 @@ def exec_query_from_file(
         if pg_dsn:
             conn = psycopg.connect(pg_dsn)
         elif db_file:
-            conn = sqlite3.connect(db_file)
+            conn = sqlite_connect(db_file)
         else:
             msg = "provide either db_file (sqlite) or pg_dsn (postgres)"
             raise ValueError(msg)

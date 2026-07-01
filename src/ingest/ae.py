@@ -12,7 +12,7 @@ import httpx
 import humanfriendly
 from tqdm import tqdm
 
-from helpers import exec_query_from_file, send_req
+from helpers import exec_query_from_file, send_req, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -751,7 +751,7 @@ def _process_accessions(
             unit="acc",
             desc="ingesting data to sqlite",
         ) as pbar,
-        sqlite3.Connection(db_file) as conn,
+        sqlite_connect(db_file) as conn,
     ):
         cursor = conn.cursor()
 

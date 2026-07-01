@@ -24,7 +24,7 @@ import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 from tqdm import tqdm
 
-from helpers import download_file
+from helpers import download_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +90,9 @@ def sc_counter(
     timeout: int,
     max_timeout: int,
     batch_size: int,
+    *,
+    check: bool = False,
+    save_data: bool = False,
 ) -> None:
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
     if output_dir.exists():
@@ -103,30 +106,29 @@ def sc_counter(
         )
         return
 
-    for db_path in (unified_metadata_db_file, geo_db_file, ae_db_file):
-        if not _check_disk_space(db_path.parent):
-            logger.error(
-                "insufficient disk space at %s: database operations may fail",
-                db_path.parent,
-            )
-            return
-
     def _cleanup(signum: int, _frame: object | None) -> None:
-        shutil.rmtree(output_dir, ignore_errors=True)
+        if not save_data:
+            shutil.rmtree(output_dir, ignore_errors=True)
         sys.exit(signum)
 
     signal.signal(signal.SIGINT, _cleanup)
     signal.signal(signal.SIGTERM, _cleanup)
 
-    conn = sqlite3.connect(unified_metadata_db_file)
-    geo_conn = sqlite3.connect(geo_db_file)
-    ae_conn = sqlite3.connect(ae_db_file)
+    conn = sqlite_connect(unified_metadata_db_file)
+    geo_conn = sqlite_connect(geo_db_file)
+    ae_conn = sqlite_connect(ae_db_file)
 
     columns = [row[1] for row in conn.execute("PRAGMA table_info(unified_metadata)")]
     if "single_cell_count" not in columns:
         conn.execute(
             "ALTER TABLE unified_metadata "
             "ADD COLUMN single_cell_count INTEGER DEFAULT 0;",
+        )
+
+    if "single_cell_file_format" not in columns:
+        conn.execute(
+            "ALTER TABLE unified_metadata "
+            "ADD COLUMN single_cell_file_format TEXT DEFAULT '';",
         )
 
     def _db_flush() -> None:
@@ -136,7 +138,8 @@ def sc_counter(
 
     rows: list[tuple[str, str]] = conn.execute(
         "SELECT canonical_accession, source "
-        "FROM unified_metadata WHERE is_single_cell = '1';",
+        "FROM unified_metadata WHERE is_single_cell = '1' "
+        "AND (single_cell_count IS NULL OR single_cell_count = 0);",
     ).fetchall()
 
     accessions: list[str | tuple[str, str]] = []
@@ -310,9 +313,7 @@ def sc_counter(
     pbar_accessions: set[str] = set()
     accession_links: dict[str, list[DownloadLink]] = dict(download_links_mapping)
 
-    # 8 parallel download workers works very well with ncbi and ebi
-    # ftp server without hitting much rate limit errors
-    download_workers = min(num_workers // 2, 8)
+    download_workers = num_workers // 3
     process_workers = num_workers - download_workers
 
     with (
@@ -337,11 +338,47 @@ def sc_counter(
         )
         updates: list[tuple[str, int]] = []
         done_accessions: set[str] = set()
+        accession_max_count: dict[str, int] = {}
+        accession_best_type: dict[str, str] = {}
+        accession_remaining: dict[str, int] = {}
+        sc_found: int = 0
 
-        def _try_links(accession: str, start_idx: int) -> None:
+        def _on_link_done(accession: str) -> None:
+            accession_remaining[accession] -= 1
+            if accession_remaining[accession] > 0:
+                return
+            if accession in done_accessions:
+                return
+            done_accessions.add(accession)
+
+            if check:
+                if accession_max_count.get(accession, 0) == 0:
+                    updates.append((accession, 0))
+                    if len(updates) >= batch_size:
+                        _flush_updates(conn, updates, accession_best_type, check=True)
+                        updates.clear()
+                pbar.set_description(f"sc: {sc_found}/{pbar.total}")
+            else:
+                updates.append((accession, accession_max_count.get(accession, 0)))
+                if len(updates) >= batch_size:
+                    _flush_updates(conn, updates, accession_best_type)
+                    updates.clear()
+
+            if accession not in pbar_accessions:
+                pbar_accessions.add(accession)
+                pbar.update(1)
+
+            if not save_data:
+                shutil.rmtree(output_dir / accession, ignore_errors=True)
+
+        def _submit_accession(accession: str) -> None:
             links = accession_links.get(accession) or []
-            for idx in range(start_idx, len(links)):
-                link = links[idx]
+            if not links:
+                done_accessions.add(accession)
+                return
+
+            accession_remaining[accession] = len(links)
+            for idx, link in enumerate(links):
                 dest_path = output_dir / accession / link.extract_filename()
 
                 if dest_path.exists():
@@ -351,38 +388,27 @@ def sc_counter(
                         decompressed = dest_path.with_suffix("")
                         if decompressed != dest_path:
                             decompressed.unlink(missing_ok=True)
+                        _on_link_done(accession)
                         continue
 
                     file_type, sniffed_path = result
                     process_futures[
                         process_pool.submit(_is_sc, sniffed_path, file_type, chunk_size)
                     ] = (accession, dest_path, sniffed_path, file_type, idx)
-                    return
+                    continue
 
                 if not _check_disk_space(output_dir):
                     logger.warning("skipping %s: insufficient disk space", link.url)
-                    _try_links(accession, idx + 1)
-                    return
+                    _on_link_done(accession)
+                    continue
 
                 future = download_pool.submit(
                     downloader,
                     url=link.parse_url(),
                     dest_path=dest_path,
-                    num_workers=num_workers,
+                    num_workers=1,
                 )
                 download_futures[future] = (accession, idx)
-                return
-
-            done_accessions.add(accession)
-            updates.append((accession, 0))
-
-            if len(updates) >= batch_size:
-                _flush_updates(conn, updates)
-                updates.clear()
-
-            if accession not in pbar_accessions:
-                pbar_accessions.add(accession)
-                pbar.update(1)
 
         for accession, links in sorted(
             accession_links.items(),
@@ -392,7 +418,7 @@ def sc_counter(
                 done_accessions.add(accession)
                 continue
             if accession not in done_accessions:
-                _try_links(accession, 0)
+                _submit_accession(accession)
 
         while download_futures or process_futures:
             pending: dict[Future, object] = {}
@@ -414,7 +440,7 @@ def sc_counter(
                             decompressed = dest_path.with_suffix("")
                             if decompressed != dest_path:
                                 decompressed.unlink(missing_ok=True)
-                            _try_links(accession, link_idx + 1)
+                            _on_link_done(accession)
                             continue
 
                         file_type, sniffed_path = result
@@ -429,7 +455,7 @@ def sc_counter(
                         downloaded_paths.add(dest_path)
                     except Exception:
                         logger.exception("failed to download %s", link.url)
-                        _try_links(accession, link_idx + 1)
+                        _on_link_done(accession)
 
                 if f in process_futures:
                     single_cell_count = f.result()
@@ -444,26 +470,46 @@ def sc_counter(
                         sniffed_path.unlink(missing_ok=True)
 
                     if accession in done_accessions:
+                        _on_link_done(accession)
                         continue
 
-                    if single_cell_count > 0:
+                    if check and single_cell_count > 0:
                         done_accessions.add(accession)
+                        accession_max_count[accession] = single_cell_count
+                        accession_best_type[accession] = file_type.value
+                        sc_found += 1
+                        pbar.set_description(f"SC: {sc_found}/{pbar.total}")
                         updates.append((accession, single_cell_count))
                         if len(updates) >= batch_size:
-                            _flush_updates(conn, updates)
+                            _flush_updates(
+                                conn, updates, accession_best_type, check=True
+                            )
                             updates.clear()
                         if accession not in pbar_accessions:
                             pbar_accessions.add(accession)
                             pbar.update(1)
-                    else:
-                        _try_links(accession, link_idx + 1)
+                        _on_link_done(accession)
+                        continue
+
+                    prev = accession_max_count.get(accession, 0)
+                    if single_cell_count > prev:
+                        accession_max_count[accession] = single_cell_count
+                        accession_best_type[accession] = file_type.value
+                    _on_link_done(accession)
 
         if updates:
-            _flush_updates(conn, updates)
+            _flush_updates(conn, updates, accession_best_type, check=check)
 
     pbar.close()
+    if check:
+        logger.info(
+            "check complete: %d / %d accessions have single-cell data",
+            sc_found,
+            len(download_links_mapping),
+        )
     _db_flush()
-    shutil.rmtree(output_dir, ignore_errors=True)
+    if not save_data:
+        shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def _check_disk_space(path: Path, min_bytes: int = MIN_DISK_SPACE_BYTES) -> bool:
@@ -494,24 +540,51 @@ def _query_in(
     return results
 
 
-def _flush_updates(conn: sqlite3.Connection, updates: list[tuple[str, int]]) -> None:
+def _flush_updates(
+    conn: sqlite3.Connection,
+    updates: list[tuple[str, int]],
+    accession_best_type: dict[str, str] | None = None,
+    *,
+    check: bool = False,
+) -> None:
+    if accession_best_type is None:
+        accession_best_type = {}
+
     non_sc = [acc for acc, cnt in updates if cnt == 0]
     sc = [(acc, cnt) for acc, cnt in updates if cnt > 0]
 
     if non_sc:
         placeholders = ", ".join(repr(acc) for acc in non_sc)
-        conn.execute(
-            f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
-            f"single_cell_modality = '', single_cell_count = 0 "
-            f"WHERE canonical_accession IN ({placeholders})",
-        )
+        if check:
+            conn.execute(
+                f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
+                f"single_cell_modality = '', single_cell_file_format = '' "
+                f"WHERE canonical_accession IN ({placeholders})",
+            )
+        else:
+            conn.execute(
+                f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
+                f"single_cell_modality = '', single_cell_count = 0, "
+                f"single_cell_file_format = '' "
+                f"WHERE canonical_accession IN ({placeholders})",
+            )
 
     for accession, single_cell_count in sc:
-        conn.execute(
-            "UPDATE unified_metadata "
-            "SET single_cell_count = ? WHERE canonical_accession = ?",
-            (single_cell_count, accession),
-        )
+        fmt = accession_best_type.get(accession, "")
+        if check:
+            conn.execute(
+                "UPDATE unified_metadata "
+                "SET is_single_cell = 1, single_cell_file_format = ? "
+                "WHERE canonical_accession = ?",
+                (fmt, accession),
+            )
+        else:
+            conn.execute(
+                "UPDATE unified_metadata "
+                "SET single_cell_count = ?, single_cell_file_format = ? "
+                "WHERE canonical_accession = ?",
+                (single_cell_count, fmt, accession),
+            )
 
     conn.commit()
 

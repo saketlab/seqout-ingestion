@@ -15,6 +15,7 @@ from psycopg.types.json import Jsonb
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
+from helpers import sqlite_connect
 from transfer.pg_fields import (
     _AE_CENTER_GEO_FIELDS,
     _AE_EXPERIMENTS_INSERT_COLS,
@@ -321,7 +322,7 @@ def _transfer_helper(
     select_pg_table_name = select_table_name or table_name
 
     with (
-        sqlite3.connect(sqlite_db_file) as sqlite_conn,
+        sqlite_connect(sqlite_db_file) as sqlite_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         sqlite_conn.row_factory = sqlite3.Row
@@ -882,7 +883,7 @@ def _load_unified_centers(
 ) -> tuple[dict[tuple[str, str], dict], dict[str, dict]]:
     lookup: dict[tuple[str, str], dict] = {}
     name_lookup: dict[str, dict] = {}
-    with sqlite3.connect(unified_metadata_db_file) as uc_conn:
+    with sqlite_connect(unified_metadata_db_file) as uc_conn:
         for row in uc_conn.execute(
             """SELECT
                 canonical_accession, center_name, place_name,
@@ -970,7 +971,7 @@ def _transfer_geo_geocode(
     batch_size: int,
 ) -> None:
     with (
-        sqlite3.connect(geo_db_file) as src_conn,
+        sqlite_connect(geo_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
@@ -1042,7 +1043,7 @@ def _transfer_sra_geocode(
     batch_size: int,
 ) -> None:
     with (
-        sqlite3.connect(sra_db_file) as src_conn,
+        sqlite_connect(sra_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
@@ -1129,7 +1130,7 @@ def _transfer_ena_geocode(
     batch_size: int,
 ) -> None:
     with (
-        sqlite3.connect(ena_db_file) as src_conn,
+        sqlite_connect(ena_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
@@ -1199,7 +1200,7 @@ def _transfer_ae_geocode(
     batch_size: int,
 ) -> None:
     with (
-        sqlite3.connect(ae_db_file) as src_conn,
+        sqlite_connect(ae_db_file) as src_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
@@ -1267,8 +1268,8 @@ def _transfer_study_publications(
     batch_size: int,
 ) -> None:
     with (
-        sqlite3.connect(unified_metadata_db_file) as um_conn,
-        sqlite3.connect(pubmed_metadata_db_file) as pm_conn,
+        sqlite_connect(unified_metadata_db_file) as um_conn,
+        sqlite_connect(pubmed_metadata_db_file) as pm_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
@@ -1347,7 +1348,7 @@ def _transfer_cross_refs(
     batch_size: int,
 ) -> None:
     with (
-        sqlite3.connect(unified_metadata_db_file) as um_conn,
+        sqlite_connect(unified_metadata_db_file) as um_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
@@ -1490,7 +1491,7 @@ def _make_conn_cache() -> Callable[[Path], sqlite3.Connection]:
     def _get_conn(path: Path) -> sqlite3.Connection:
         key = str(path)
         if key not in _conn_cache:
-            _conn_cache[key] = sqlite3.connect(path)
+            _conn_cache[key] = sqlite_connect(path)
         return _conn_cache[key]
 
     return _get_conn

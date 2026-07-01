@@ -1,4 +1,3 @@
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -6,6 +5,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
+
+from helpers import sqlite_connect
 
 
 def parquet_transfer(
@@ -67,7 +68,7 @@ def _export_to_pq(
     db_file: Path,
     batch_size: int,
 ) -> None:
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         total = conn.execute(
             f"SELECT COUNT(*) FROM {table_name}",  # noqa: S608
         ).fetchone()[0]
@@ -99,7 +100,7 @@ def _export_to_pq(
 
 
 def _fetch_all_tables(db_file: Path, tables: list[tuple[str, Path]]) -> None:
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         result = [
             (r[0], db_file)
             for r in conn.execute(

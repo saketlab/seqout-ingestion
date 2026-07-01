@@ -2,12 +2,11 @@ import contextlib
 import json
 import logging
 import re
-import sqlite3
 from pathlib import Path
 
 import pandas as pd
 
-from helpers import exec_query_from_file
+from helpers import exec_query_from_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ def build_unified_catalog(
     ae_dict = _load_ae(ae_db_file)
     catalog = _build_catalog_tuples(geo_dict, sra_dict, ena_dict, ae_dict)
 
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         exec_query_from_file("tables/unified_studies.sql", conn=conn)
         conn.executemany(
             "INSERT OR REPLACE INTO unified_studies VALUES (?, ?, ?, ?, ?)",
@@ -53,7 +52,7 @@ def build_unified_catalog(
 
 
 def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
-    with sqlite3.Connection(geo_db_file) as conn:
+    with sqlite_connect(geo_db_file) as conn:
         rows = conn.execute(
             "SELECT accession, title, summary FROM geo_series",
         ).fetchall()
@@ -66,7 +65,7 @@ def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
 
 
 def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str]]:
-    with sqlite3.Connection(sra_db_file) as conn:
+    with sqlite_connect(sra_db_file) as conn:
         rows = conn.execute(
             "SELECT accession, alias, title, abstract FROM sra_studies",
         ).fetchall()
@@ -83,7 +82,7 @@ def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str]]:
 
 
 def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
-    with sqlite3.Connection(ena_db_file) as conn:
+    with sqlite_connect(ena_db_file) as conn:
         rows = conn.execute(
             """SELECT
                 study_accession, secondary_study_accession, geo_accession,
@@ -104,7 +103,7 @@ def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
 
 
 def _load_ae(ae_db_file: Path) -> dict[str, tuple[str, str, list[dict]]]:
-    with sqlite3.Connection(ae_db_file) as conn:
+    with sqlite_connect(ae_db_file) as conn:
         rows = conn.execute(
             """SELECT accession, title, description, external_links
             FROM arrayexpress_experiments""",

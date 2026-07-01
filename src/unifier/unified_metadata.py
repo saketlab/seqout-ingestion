@@ -2,7 +2,6 @@ import csv
 import json
 import logging
 import re
-import sqlite3
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -10,7 +9,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from helpers import exec_query_from_file
+from helpers import exec_query_from_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +169,7 @@ def build_unified_metadata(
         logger.info(f"  {k}: {v} ({100 * v // len(rows)}%)" if rows else f"  {k}: {v}")
     logger.info("center rows: %d", len(centers_rows))
 
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
 
@@ -203,7 +202,7 @@ def build_unified_metadata(
 
 def _load_unified_catalog(db_file: Path) -> list[tuple[str, str, str, str, dict]]:
     logger.info("loading unified catalog...")
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         catalog = conn.execute(
             """SELECT
                 canonical_accession, source, title, description, aliases
@@ -216,7 +215,7 @@ def _load_unified_catalog(db_file: Path) -> list[tuple[str, str, str, str, dict]
 
 def _load_pubmed_metadata(db_file: Path) -> dict[str, tuple[str | None, int | None]]:
     logger.info("loading pubmed mapping...")
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         rows = conn.execute(
             "SELECT pmid, journal, citation_count FROM pubmed_metadata",
         ).fetchall()
@@ -262,7 +261,7 @@ def _load_taxonomy_mapping(csv_file: Path) -> dict[str, str]:
 
 def _scan_geo(db_file: Path) -> SourceMap:
     m = SourceMap()
-    conn = sqlite3.connect(db_file)
+    conn = sqlite_connect(db_file)
 
     sample_organisms: dict[str, set[str]] = defaultdict(set[str])
     series_sample_count: Counter[str] = Counter()
@@ -386,7 +385,7 @@ def _scan_geo(db_file: Path) -> SourceMap:
 
 def _scan_sra(db_file: Path) -> SourceMap:
     m = SourceMap()
-    conn = sqlite3.connect(db_file)
+    conn = sqlite_connect(db_file)
 
     submission_organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     submission_sample_count: Counter[str] = Counter()
@@ -532,7 +531,7 @@ def _scan_sra(db_file: Path) -> SourceMap:
 
 def _scan_ae(db_file: Path) -> SourceMap:
     m = SourceMap()
-    conn = sqlite3.connect(db_file)
+    conn = sqlite_connect(db_file)
 
     experiment_organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     experiment_library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
@@ -637,7 +636,7 @@ def _scan_ae(db_file: Path) -> SourceMap:
 
 def _scan_ena(db_file: Path) -> SourceMap:
     m = SourceMap()
-    conn = sqlite3.connect(db_file)
+    conn = sqlite_connect(db_file)
 
     study_organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     study_library_count: dict[str, Counter[str]] = defaultdict(Counter[str])

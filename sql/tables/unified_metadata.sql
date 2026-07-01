@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS unified_metadata (
     geocode_score            TEXT,
     is_single_cell           INTEGER DEFAULT 0,
     single_cell_modality     TEXT,
-    single_cell_count        INTEGER DEFAULT 0
+    single_cell_count        INTEGER DEFAULT 0,
+    single_cell_file_format  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS unified_centers (

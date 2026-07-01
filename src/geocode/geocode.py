@@ -17,6 +17,7 @@ from rapidfuzz import fuzz
 from tqdm import tqdm
 
 from geocode.geocode_constants import HARDCODED_GEOCODE_DATA
+from helpers import sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +137,7 @@ def geocode_missing(
 
     geo_country_mapping: dict[str, str] = {}
     if geo_accessions:
-        with sqlite3.Connection(geo_db_file) as geo_conn:
+        with sqlite_connect(str(geo_db_file)) as geo_conn:
             rows = _query_in(
                 geo_conn,
                 (
@@ -314,7 +315,7 @@ def _writer_worker(
     cache_file: Path | None,
     cache_lock: threading.Lock,
 ) -> None:
-    conn = sqlite3.connect(str(db_file), timeout=30)
+    conn = sqlite_connect(str(db_file))
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA cache_size = -8000")
@@ -328,8 +329,6 @@ def _writer_worker(
         _update_many(conn, "unified_centers", batch)
         _update_many(conn, "unified_metadata", batch)
         conn.commit()
-        with cache_lock:
-            _save_cache(cache_file, cache)
         batch.clear()
 
     while True:
@@ -345,6 +344,8 @@ def _writer_worker(
                 break
 
     flush()
+    with cache_lock:
+        _save_cache(cache_file, cache)
     conn.close()
 
 
@@ -652,7 +653,7 @@ def _find_missing(
     db_file: Path,
     mode: str = "missing",
 ) -> list[tuple[str, str]]:
-    conn = sqlite3.connect(str(db_file), timeout=30)
+    conn = sqlite_connect(str(db_file))
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_um_center ON unified_metadata(center_name)",
     )

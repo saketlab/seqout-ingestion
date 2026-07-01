@@ -13,7 +13,7 @@ import tqdm
 from pysradb.sraweb import SRAweb
 
 from backfill.backfill_utils import _chunked, _parse_pmid
-from helpers import exec_query_from_file
+from helpers import exec_query_from_file, sqlite_connect
 from pipeline_types import Datasource
 
 logger = logging.getLogger(__name__)
@@ -200,7 +200,7 @@ def _process_via_per_journal_lookup(
     refresh_all_journals_metrics: bool,
     is_dry_run: bool,
 ) -> None:
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file, busy_timeout=5000) as conn:
         if refresh_all_journals_metrics:
             target = _collect_all_journals(conn)
         else:
@@ -288,10 +288,10 @@ def _process_via_per_pmid_lookup(
 ) -> None:
     logger.info("processing %s datasource...", datasource)
 
-    with sqlite3.Connection(datasource_db_file) as conn:
+    with sqlite_connect(datasource_db_file) as conn:
         all_pmids = _collect_all_pmids(conn, datasource)
 
-    with sqlite3.Connection(meta_db_file) as meta_conn:
+    with sqlite_connect(meta_db_file) as meta_conn:
         existing_pmids = _collect_existing_pmids(meta_conn)
         total_pmids = len(all_pmids)
         existing = len(existing_pmids)
@@ -425,7 +425,7 @@ def _journal_lookup_worker(
     local_updated = 0
     local_errors = 0
 
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file, busy_timeout=5000) as conn:
         _setup_wal(conn)
 
         rows = []
@@ -514,7 +514,7 @@ def _pmid_lookup_worker(
         )
         pbar.update(1)
 
-    with sqlite3.Connection(db_file) as conn:
+    with sqlite_connect(db_file, busy_timeout=5000) as conn:
         _setup_wal(conn)
 
         for batch in _chunked(data, batch_size):
@@ -627,7 +627,6 @@ def _collect_journals_with_missing_metrics(
 def _setup_wal(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
 
 
 def _calc_num_workers_and_batches(

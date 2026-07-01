@@ -3,7 +3,6 @@ import http
 import io
 import json
 import logging
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +13,7 @@ import httpx
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
-from helpers import exec_query_from_file
+from helpers import exec_query_from_file, sqlite_connect
 from pipeline_types import Datasource
 
 logger = logging.getLogger(__name__)
@@ -116,7 +115,7 @@ def backfill_download_links(
     output_dir.mkdir(exist_ok=True, parents=True)
 
     output_db_file = output_dir / "download_links.db"
-    with sqlite3.connect(output_db_file) as conn:
+    with sqlite_connect(output_db_file, busy_timeout=120000) as conn:
         exec_query_from_file("tables/download_links.sql", conn=conn)
         exec_query_from_file("tables/study_fetch_log.sql", conn=conn)
         exec_query_from_file("indexes/download_links.sql", conn=conn)
@@ -133,7 +132,7 @@ def backfill_download_links(
     study_accessions: set[str] = set()
     for datasource, db_file in mapping.items():
         query = STUDY_QUERIES[datasource]
-        with sqlite3.connect(db_file) as conn:
+        with sqlite_connect(db_file) as conn:
             rows = conn.execute(query).fetchall()
         accessions = [r[0] for r in rows]
         study_accessions.update(accessions)
@@ -143,7 +142,7 @@ def backfill_download_links(
     if limit is not None:
         target = target[:limit]
 
-    with sqlite3.connect(output_db_file) as conn:
+    with sqlite_connect(output_db_file, busy_timeout=120000) as conn:
         rows = conn.execute(
             "SELECT DISTINCT study_accession FROM run_download_links"
         ).fetchall()
@@ -221,9 +220,8 @@ def _ena_worker(
     output_db_file: Path,
     pbar: tqdm,
 ) -> None:
-    conn = sqlite3.connect(str(output_db_file))
+    conn = sqlite_connect(str(output_db_file), busy_timeout=120000)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=120000")
 
     session = httpx.Client()
     now = datetime.now(UTC).isoformat(timespec="seconds")
@@ -272,9 +270,8 @@ def _ncbi_worker(
     pbar: tqdm,
 ) -> None:
     sra = SRAweb(api_key, verbose=False)
-    conn = sqlite3.connect(output_db_file)
+    conn = sqlite_connect(output_db_file, busy_timeout=120000)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=120000")
 
     now = datetime.now(UTC).isoformat(timespec="seconds")
 

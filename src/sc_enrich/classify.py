@@ -1,3 +1,4 @@
+import logging
 import re
 import sqlite3
 from collections import Counter
@@ -5,7 +6,9 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from helpers import exec_query_from_file
+from helpers import exec_query_from_file, sqlite_connect
+
+logger = logging.getLogger(__name__)
 
 SC_PATTERNS = re.compile(
     r"scRNA[\-\s]?seq|sc[\-\s]RNA[\-\s]?seq"
@@ -111,7 +114,7 @@ def sc_classify(
     batch_size: int,
     is_dry_run: bool,
 ) -> None:
-    conn = sqlite3.connect(str(unified_metadata_db_file))
+    conn = sqlite_connect(str(unified_metadata_db_file))
     _build_fts_index(conn)
 
     candidates: set[str] = set()
@@ -174,10 +177,12 @@ def sc_classify(
         if modality:
             modality_counter[modality] += 1
 
-    for _mod, _cnt in sorted(modality_counter.items(), key=lambda x: -x[1]):
-        pass
+    logger.info("single-cell studies: %d", sc_count)
+    for mod, cnt in sorted(modality_counter.items(), key=lambda x: -x[1]):
+        logger.info("  %s: %d", mod, cnt)
 
     if is_dry_run:
+        conn.execute("DROP TABLE IF EXISTS unified_metadata_fts")
         conn.close()
         return
 

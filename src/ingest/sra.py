@@ -10,7 +10,6 @@ import pickle
 import queue
 import re
 import shlex
-import sqlite3
 import subprocess
 import tarfile
 import threading
@@ -27,7 +26,7 @@ import lxml.etree as ET  # noqa: N812
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
-from helpers import download_file, exec_query_from_file
+from helpers import download_file, exec_query_from_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -728,7 +727,7 @@ def _writer_worker(
     write_batch_size: int,
     parse_done: threading.Event,
 ) -> None:
-    conn = sqlite3.connect(str(db_file))
+    conn = sqlite_connect(str(db_file))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=OFF")
     conn.execute("PRAGMA journal_mode=OFF")

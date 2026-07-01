@@ -30,6 +30,12 @@ def counter(
     retries: int = typer.Option(10),
     timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
     max_timeout: int = typer.Option("2 mins", parser=_parse_timespan),
+    check: bool = typer.Option(
+        default=False, help="stop at first file with count > 0 per accession"
+    ),
+    save_data: bool = typer.Option(
+        default=False, help="keep downloaded files after processing"
+    ),
 ) -> None:
     sc_counter(
         base_output_dir,
@@ -42,4 +48,6 @@ def counter(
         timeout,
         max_timeout,
         batch_size,
+        check=check,
+        save_data=save_data,
     )

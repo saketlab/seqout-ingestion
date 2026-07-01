@@ -1,5 +1,4 @@
 import logging
-import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +8,7 @@ from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
 from backfill.backfill_utils import _chunked, _parse_pmid
+from helpers import sqlite_connect
 from pipeline_types import Datasource
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ def backfill_pubmed_ids(
     for datasource, db_file in mapping.items():
         table = DATASOURCE_TABLE_MAPPING[datasource]
 
-        with sqlite3.Connection(db_file) as conn:
+        with sqlite_connect(db_file) as conn:
             missing_query = MISSING_QUERIES[datasource]
             if not process_all:
                 missing_query += " AND pubmed_last_checked IS NULL"
@@ -236,9 +236,7 @@ def _worker(
             if acc and pmid:
                 pmid_updates.append((pmid, acc))
 
-        with sqlite3.Connection(db_file) as conn:
-            conn.execute("PRAGMA busy_timeout=60000")
-
+        with sqlite_connect(db_file) as conn:
             table = DATASOURCE_TABLE_MAPPING[datasource]
             column = DATASOURCE_COLUMN_MAPPING[datasource]
 

@@ -8,7 +8,7 @@ from pathlib import Path
 import humanfriendly
 from tqdm import tqdm
 
-from helpers import exec_query_from_file, send_req
+from helpers import exec_query_from_file, send_req, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -408,7 +408,7 @@ def _run_per_study_download(
 
 
 def _ingest_data(db_file: Path, output_dir: Path) -> None:
-    with sqlite3.connect(db_file) as conn:
+    with sqlite_connect(db_file) as conn:
         ingest_data = [
             (
                 "studies",
