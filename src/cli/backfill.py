@@ -95,6 +95,7 @@ def download_links(
     ncbi_keys_file: Path | None = typer.Option(None),  # noqa: B008
     num_workers: int = _NUM_WORKERS_FLAG,
     is_dry_run: bool = typer.Option(default=False),
+    batch_size: int = typer.Option(2000),
     retries: int = typer.Option(20),
     timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
     limit: int | None = typer.Option(None),
@@ -106,6 +107,7 @@ def download_links(
         ncbi_keys_file,
         num_workers,
         is_dry_run,
+        batch_size,
         source,
         retries,
         timeout,

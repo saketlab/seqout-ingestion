@@ -75,6 +75,7 @@ backfill_download_links *flags:
         --ena-db-file {{ ENA_DB_FILE }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --workers {{ WORKERS }} \
+        --batch-size {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
         --timeout {{ TIMEOUT }} \
         {{ flags }}

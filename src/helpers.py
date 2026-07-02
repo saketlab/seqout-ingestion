@@ -374,7 +374,7 @@ def _download_multipart(
 
 def sqlite_connect(
     db_file: str | Path,
-    busy_timeout: int = 60000,
+    busy_timeout: int = 120000,
     **kwargs: Any,
 ) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_file), **kwargs)

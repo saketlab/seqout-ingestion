@@ -33,9 +33,6 @@ def counter(
     check: bool = typer.Option(
         default=False, help="stop at first file with count > 0 per accession"
     ),
-    save_data: bool = typer.Option(
-        default=False, help="keep downloaded files after processing"
-    ),
 ) -> None:
     sc_counter(
         base_output_dir,
@@ -49,5 +46,4 @@ def counter(
         max_timeout,
         batch_size,
         check=check,
-        save_data=save_data,
     )

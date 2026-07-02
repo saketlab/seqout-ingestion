@@ -92,7 +92,6 @@ def sc_counter(
     batch_size: int,
     *,
     check: bool = False,
-    save_data: bool = False,
 ) -> None:
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
     if output_dir.exists():
@@ -100,7 +99,7 @@ def sc_counter(
     output_dir.mkdir(exist_ok=True, parents=True)
 
     tmp_dir = output_dir / ".tmp"
-    tmp_dir.mkdir(exist_ok=True)
+    tmp_dir.mkdir(exist_ok=True, parents=True)
 
     if not _check_disk_space(output_dir):
         logger.error(
@@ -110,8 +109,7 @@ def sc_counter(
         return
 
     def _cleanup(signum: int, _frame: object | None) -> None:
-        if not save_data:
-            shutil.rmtree(output_dir, ignore_errors=True)
+        shutil.rmtree(output_dir, ignore_errors=True)
         sys.exit(signum)
 
     signal.signal(signal.SIGINT, _cleanup)
@@ -371,8 +369,7 @@ def sc_counter(
                 pbar_accessions.add(accession)
                 pbar.update(1)
 
-            if not save_data:
-                shutil.rmtree(output_dir / accession, ignore_errors=True)
+            shutil.rmtree(output_dir / accession, ignore_errors=True)
 
         def _submit_accession(accession: str) -> None:
             links = accession_links.get(accession) or []
@@ -515,9 +512,9 @@ def sc_counter(
             sc_found,
             len(download_links_mapping),
         )
+
     _db_flush()
-    if not save_data:
-        shutil.rmtree(output_dir, ignore_errors=True)
+    shutil.rmtree(output_dir, ignore_errors=True)
 
 
 def _check_disk_space(path: Path, min_bytes: int = MIN_DISK_SPACE_BYTES) -> bool:
@@ -756,8 +753,7 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
     try:
         with tarfile.open(path, "r:*") as tar:
             max_count = 0
-            extract_dir = tmp_dir or (path.parent / ".tmp_extract")
-            extract_dir.mkdir(exist_ok=True)
+            extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
 
             for member in tar.getmembers():
                 name = member.name.lower()
@@ -792,7 +788,7 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
                     sniffed_path,
                     file_type,
                     chunk_size,
-                    tmp_dir=tmp_dir,
+                    tmp_dir=extract_dir,
                 )
                 Path(tmp_path).unlink(missing_ok=True)
 

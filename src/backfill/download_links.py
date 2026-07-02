@@ -3,6 +3,7 @@ import http
 import io
 import json
 import logging
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
@@ -104,6 +105,7 @@ def backfill_download_links(
     ncbi_keys_file: Path | None,
     num_workers: int,
     is_dry_run: bool,
+    batch_size: int,
     source: Literal["ncbi", "ena"],
     retries: int,
     timeout: int,
@@ -187,6 +189,7 @@ def backfill_download_links(
                     worker_data[i],
                     output_db_file,
                     pbar,
+                    batch_size,
                     retries,
                     timeout,
                 )
@@ -206,10 +209,7 @@ def backfill_download_links(
         with ThreadPoolExecutor(num_workers) as pool:
             futures = [
                 pool.submit(
-                    _ena_worker,
-                    worker_data[i],
-                    output_db_file,
-                    pbar,
+                    _ena_worker, worker_data[i], output_db_file, pbar, batch_size
                 )
                 for i in range(num_workers)
             ]
@@ -223,6 +223,7 @@ def _ena_worker(
     studies: list[str],
     output_db_file: Path,
     pbar: tqdm,
+    batch_size: int,
 ) -> None:
     conn = sqlite_connect(str(output_db_file), busy_timeout=120000)
     conn.execute("PRAGMA journal_mode=WAL")
@@ -230,15 +231,16 @@ def _ena_worker(
     session = httpx.Client()
     now = datetime.now(UTC).isoformat(timespec="seconds")
 
-    for study in studies:
+    batch_log: list[tuple] = []
+    batch_run: list[tuple] = []
+
+    for i, study in enumerate(studies, 1):
         runs = _fetch_study_runs(session, study)
         if runs is None:
-            conn.execute(UPSERT_LOG_SQL, (study, "error", 0, now))
-            conn.commit()
+            batch_log.append((study, "error", 0, now))
             logger.warning("ena fetch failed for %s", study)
         elif not runs:
-            conn.execute(UPSERT_LOG_SQL, (study, "empty", 0, now))
-            conn.commit()
+            batch_log.append((study, "empty", 0, now))
         else:
             rows = [
                 (
@@ -256,12 +258,18 @@ def _ena_worker(
                 )
                 for run in runs
             ]
-
-            conn.executemany(UPSERT_RUN_SQL, rows)
-            conn.execute(UPSERT_LOG_SQL, (study, "ok", len(rows), now))
-            conn.commit()
+            batch_run.extend(rows)
+            batch_log.append((study, "ok", len(rows), now))
 
         pbar.update(1)
+
+        if i % batch_size == 0 or i == len(studies):
+            if batch_run:
+                conn.executemany(UPSERT_RUN_SQL, batch_run)
+                batch_run.clear()
+            conn.executemany(UPSERT_LOG_SQL, batch_log)
+            batch_log.clear()
+            conn.commit()
 
     conn.close()
     session.close()
@@ -272,6 +280,7 @@ def _ncbi_worker(
     studies: list[str],
     output_db_file: Path,
     pbar: tqdm,
+    batch_size: int,
     retries: int,
     timeout: int,
 ) -> None:
@@ -281,20 +290,25 @@ def _ncbi_worker(
 
     now = datetime.now(UTC).isoformat(timespec="seconds")
 
-    for study in studies:
+    batch_log: list[tuple] = []
+    batch_run: list[tuple] = []
+
+    for i, study in enumerate(studies, 1):
         try:
             response = sra.get_efetch_response("sra", study)
         except Exception as e:
-            conn.execute(UPSERT_NCBI_LOG_SQL, (study, now, "error", 0, now))
-            conn.commit()
+            batch_log.append((study, now, "error", 0, now))
             pbar.update(1)
             logger.warning("ncbi efetch failed for %s: %s", study, e)
+            if i % batch_size == 0 or i == len(studies):
+                _flush_ncbi_batch(conn, batch_run, batch_log)
             continue
 
         if response is None:
-            conn.execute(UPSERT_NCBI_LOG_SQL, (study, now, "empty", 0, now))
-            conn.commit()
+            batch_log.append((study, now, "empty", 0, now))
             pbar.update(1)
+            if i % batch_size == 0 or i == len(studies):
+                _flush_ncbi_batch(conn, batch_run, batch_log)
             continue
 
         if not isinstance(response, list):
@@ -343,16 +357,32 @@ def _ncbi_worker(
                 )
 
         if run_rows:
-            conn.executemany(UPSERT_NCBI_RUN_SQL, run_rows)
-            conn.execute(UPSERT_NCBI_LOG_SQL, (study, now, "ok", len(run_rows), now))
-            conn.commit()
+            batch_run.extend(run_rows)
+            batch_log.append((study, now, "ok", len(run_rows), now))
         else:
-            conn.execute(UPSERT_NCBI_LOG_SQL, (study, now, "empty", 0, now))
-            conn.commit()
+            batch_log.append((study, now, "empty", 0, now))
 
         pbar.update(1)
 
+        if i % batch_size == 0 or i == len(studies):
+            _flush_ncbi_batch(conn, batch_run, batch_log)
+
     conn.close()
+
+
+def _flush_ncbi_batch(
+    conn: sqlite3.Connection,
+    batch_run: list[tuple],
+    batch_log: list[tuple],
+) -> None:
+    if not batch_log:
+        return
+    if batch_run:
+        conn.executemany(UPSERT_NCBI_RUN_SQL, batch_run)
+        batch_run.clear()
+    conn.executemany(UPSERT_NCBI_LOG_SQL, batch_log)
+    batch_log.clear()
+    conn.commit()
 
 
 def _fetch_study_runs(
