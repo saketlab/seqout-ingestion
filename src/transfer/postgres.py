@@ -51,6 +51,7 @@ class _TableInfo:
     select_cols: list[str] | None = None
     insert_cols: list[str] | None = None
     select_table_name: str | None = None
+    conflict_cols: list[str] | None = None
 
 
 def postgres_transfer(
@@ -119,6 +120,7 @@ def postgres_transfer(
             sqlite_db_file=download_links_db_file,
             modifier=_sra_run_download_links_modifier,
             select_table_name="run_download_links",
+            conflict_cols=["run_accession"],
         ),
         "ena_experiments": _TableInfo(
             sqlite_db_file=ena_db_file,
@@ -187,6 +189,7 @@ def postgres_transfer(
                         info.select_cols,
                         info.insert_cols,
                         info.select_table_name,
+                        info.conflict_cols,
                     ),
                 ),
             )
@@ -256,7 +259,7 @@ def postgres_transfer(
             outer_pbar.update(1)
 
 
-def _get_table_info(conn: sqlite3.Connection, table_name: str) -> list[tuple]:
+def _get_table_info(conn: sqlite3.Connection, table_name: str) -> list[str]:
     cursor = conn.execute(f"PRAGMA table_info({table_name})")
     rows = cursor.fetchall()
     return [row[1] for row in rows]
@@ -318,6 +321,7 @@ def _transfer_helper(
     select_cols: list[str] | None = None,
     insert_cols: list[str] | None = None,
     select_table_name: str | None = None,
+    conflict_cols: list[str] | None = None,
 ) -> None:
     select_pg_table_name = select_table_name or table_name
 
@@ -325,25 +329,20 @@ def _transfer_helper(
         sqlite_connect(sqlite_db_file) as sqlite_conn,
         psycopg.connect(pg_url) as pg_conn,
     ):
+        sqlite_conn.execute("PRAGMA cache_size = -200000")
+        sqlite_conn.execute("PRAGMA mmap_size = 30000000000")
+        sqlite_conn.execute("PRAGMA temp_store = MEMORY")
+
         sqlite_conn.row_factory = sqlite3.Row
-
-        if select_cols:
-            col_list = select_cols
-        else:
-            (col_list,) = _get_table_info(sqlite_conn, select_pg_table_name)
-
-        columns = ", ".join(col_list)
-        placeholders = ", ".join(["%s"] * len(col_list))
-        select_query = f"""SELECT {columns}
-            FROM {select_pg_table_name} LIMIT {batch_size} OFFSET {{offset}}"""  # noqa: S608
+        col_list = select_cols or _get_table_info(sqlite_conn, select_pg_table_name)
 
         if insert_cols:
             col_list = insert_cols
-            columns = ", ".join(col_list)
-            placeholders = ", ".join(["%s"] * len(col_list))
 
-        insert_query = f"""INSERT INTO {table_name} ({columns})
-            VALUES ({placeholders}) ON CONFLICT DO UPDATE"""  # noqa: S608
+        columns = ", ".join(col_list)
+        select_query = f"""SELECT {columns}
+            FROM {select_pg_table_name} LIMIT {batch_size} OFFSET {{offset}}"""  # noqa: S608
+
         total = int(
             sqlite_conn.execute(
                 f"SELECT COUNT(*) FROM {select_pg_table_name}",  # noqa: S608
@@ -352,28 +351,76 @@ def _transfer_helper(
 
         def _gen_rows() -> Iterator[tuple[Any, ...]]:
             offset = 0
-
             while True:
                 batch = sqlite_conn.execute(
                     select_query.format(offset=offset),
                 ).fetchall()
-
                 if not batch:
                     break
-
                 for m in modifier([dict(row) for row in batch]):
                     yield tuple(m[c] for c in col_list)
-
                 offset += batch_size
 
-        _execute_batch_inserts(
-            pg_conn,
-            insert_query,
-            _gen_rows(),
-            batch_size,
-            f"transferring {table_name}",
-            total=total,
-        )
+        if conflict_cols:
+            temp_table = f"staging_{table_name}"
+            conflict_cols_str = ", ".join(conflict_cols)
+            set_clause = ", ".join(
+                f"{c} = EXCLUDED.{c}" for c in col_list if c not in conflict_cols
+            )
+
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    cast(
+                        "LiteralString",
+                        f"CREATE TEMP TABLE {temp_table} AS TABLE {table_name} WITH NO DATA",  # noqa: E501
+                    ),
+                )
+
+            with (
+                tqdm(
+                    desc=f"copying {table_name}",
+                    total=total,
+                    unit="rows",
+                    leave=False,
+                ) as pbar,
+                pg_conn.cursor() as cur,
+                cur.copy(
+                    cast("LiteralString", f"COPY {temp_table} ({columns}) FROM STDIN")
+                ) as copy,
+            ):
+                for i, row in enumerate(_gen_rows()):
+                    copy.write_row(row)
+
+                    if i % 5000 == 0:
+                        pbar.update(5000)
+
+            with pg_conn.cursor() as cur:
+                cur.execute(
+                    cast(
+                        "LiteralString",
+                        f"""INSERT INTO {table_name} ({columns})
+                    SELECT * FROM {temp_table}
+                    ON CONFLICT ({conflict_cols_str})
+                    DO UPDATE SET {set_clause}""",  # noqa: S608
+                    ),
+                )
+            pg_conn.commit()
+
+            with pg_conn.cursor() as cur:
+                cur.execute("LiteralString", f"DROP TABLE IF EXISTS {temp_table}")
+        else:
+            placeholders = ", ".join(["%s"] * len(col_list))
+            insert_query = f"""INSERT INTO {table_name} ({columns})
+                VALUES ({placeholders}) ON CONFLICT DO NOTHING"""  # noqa: S608
+
+            _execute_batch_inserts(
+                pg_conn,
+                insert_query,
+                _gen_rows(),
+                batch_size,
+                f"transferring {table_name}",
+                total=total,
+            )
 
 
 def _no_op_batch_modifier(batch: list[dict]) -> list[dict]:

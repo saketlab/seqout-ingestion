@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
-from typing import Literal
+from typing import Literal, assert_never
 
 import httpx
 from pysradb.sraweb import SRAweb
@@ -106,7 +106,7 @@ def backfill_download_links(
     num_workers: int,
     is_dry_run: bool,
     batch_size: int,
-    source: Literal["ncbi", "ena"],
+    source: Literal["ncbi", "ena", "both"],
     retries: int,
     timeout: int,
     limit: int | None = None,
@@ -120,6 +120,8 @@ def backfill_download_links(
 
     output_db_file = output_dir / "download_links.db"
     with sqlite_connect(output_db_file, busy_timeout=120000) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         exec_query_from_file("tables/download_links.sql", conn=conn)
         exec_query_from_file("tables/study_fetch_log.sql", conn=conn)
         exec_query_from_file("indexes/download_links.sql", conn=conn)
@@ -169,7 +171,48 @@ def backfill_download_links(
     if ncbi_keys_file:
         keys = ncbi_keys_file.read_text().splitlines()
 
-    if source == "ncbi":
+    if source == "both":
+        if not keys:
+            msg = "--ncbi-keys-file is required when source is 'both'"
+            raise ValueError(msg)
+
+        ncbi_nworkers = min(num_workers, len(keys))
+        ena_nworkers = num_workers
+
+        ncbi_worker_data: list[list[str]] = [[] for _ in range(ncbi_nworkers)]
+        ena_worker_data: list[list[str]] = [[] for _ in range(ena_nworkers)]
+        for i, acc in enumerate(target):
+            ncbi_worker_data[i % ncbi_nworkers].append(acc)
+            ena_worker_data[i % ena_nworkers].append(acc)
+
+        pbar = tqdm(
+            total=len(target) * 2, unit="study", desc="download links (ncbi+ena)"
+        )
+
+        with ThreadPoolExecutor(ncbi_nworkers + ena_nworkers) as pool:
+            futures = [
+                pool.submit(
+                    _ena_worker, ena_worker_data[i], output_db_file, pbar, batch_size
+                )
+                for i in range(ena_nworkers)
+            ] + [
+                pool.submit(
+                    _ncbi_worker,
+                    keys[i % len(keys)],
+                    ncbi_worker_data[i],
+                    output_db_file,
+                    pbar,
+                    batch_size,
+                    retries,
+                    timeout,
+                )
+                for i in range(ncbi_nworkers)
+            ]
+            for f in as_completed(futures):
+                f.result()
+
+        pbar.close()
+    elif source == "ncbi":
         if not keys:
             msg = "--ncbi-keys-file is required for ncbi source"
             raise ValueError(msg)
@@ -217,6 +260,8 @@ def backfill_download_links(
                 f.result()
 
         pbar.close()
+    else:
+        assert_never(source)
 
 
 def _ena_worker(
