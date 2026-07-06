@@ -1,10 +1,12 @@
 import csv
 import json
 import logging
+import math
 from collections import defaultdict
 from pathlib import Path
 
 from helpers import batch_query_in, sqlite_connect
+from sc_enrich.counter._process import _classify_file
 from sc_enrich.counter.counter import DownloadLink, FileType
 
 SC_ENRICH_OUTPUT_DIR = "sc_enrich"
@@ -17,6 +19,7 @@ def yuj_setup(
     unified_metadata_db_file: Path,
     geo_db_file: Path,
     ae_db_file: Path,
+    machines_csv_file: Path,
     batch_size: int,
 ) -> None:
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
@@ -168,61 +171,43 @@ def yuj_setup(
                 DownloadLink(type=file_type, url=url),
             )
 
-    with Path.open(output_dir / "yuj_setup.csv", mode="w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["accession", "source", "aliases", "supplementary_data"])
-        data: list[tuple[str, str, str, list[tuple[str, str]]]] = []
+    with Path.open(machines_csv_file, newline="") as f:
+        num_machines = sum(1 for _ in csv.reader(f))
 
-        for r in all_records:
-            accession = str(r[0])
-            source = str(r[1])
-            aliases: list[str] = list(dict(json.loads(r[2])).values())
-            dl_items = download_links_mapping.get(r[0])
-            if not dl_items:
-                continue
+    if num_machines == 0:
+        logger.error("machines CSV is empty")
+        _db_flush()
+        return
 
-            download_links = [(str(i.type), i.url) for i in dl_items]
-            data.append((accession, source, "|".join(aliases), download_links))
+    data: list[tuple[str, str, str, list[tuple[str, str]]]] = []
 
-        writer.writerows(data)
+    for r in all_records:
+        accession = str(r[0])
+        source = str(r[1])
+        aliases: list[str] = list(dict(json.loads(r[2])).values())
+        dl_items = download_links_mapping.get(r[0])
+        if not dl_items:
+            continue
+
+        download_links = [(str(i.type), i.url) for i in dl_items]
+        data.append((accession, source, "|".join(aliases), download_links))
+
+    chunk_size = math.ceil(len(data) / num_machines)
+    master_path = output_dir / "yuj_setup_master.txt"
+    with Path.open(master_path, mode="w") as mf:
+        for i in range(num_machines):
+            chunk = data[i * chunk_size : (i + 1) * chunk_size]
+            if not chunk:
+                break
+
+            csv_path = output_dir / f"yuj_setup_{i}.csv"
+            with Path.open(csv_path, mode="w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(
+                    ["accession", "source", "aliases", "supplementary_data"],
+                )
+                writer.writerows(chunk)
+
+            mf.write(f"{csv_path}\n")
 
     _db_flush()
-
-
-def _classify_file(path: str) -> FileType:  # noqa: PLR0911
-    ignore_words = [
-        "barcode",
-        "feature",
-        "gene",
-        "readme",
-        "annotation",
-        "metadata",
-        "md5sum",
-    ]
-
-    def _is_type(ext: str) -> bool:
-        return ext in path and not _contains_any(path, ignore_words)
-
-    if "barcodes.tsv" in path:
-        return FileType.Barcodes
-    if ".h5ad" in path:
-        return FileType.H5ad
-    if _contains_any(path, [".h5", ".hdf5"]):
-        return FileType.H5
-    if "matrix.mtx" in path or _contains_any(path, [".mtx", ".mtx.gz"]):
-        return FileType.Mtx
-    if _is_type(".txt"):
-        return FileType.Txt
-    if _is_type(".csv"):
-        return FileType.Csv
-    if _is_type(".tsv"):
-        return FileType.Tsv
-    if ".rds" in path:
-        return FileType.Rds
-    if _contains_any(path, [".tar", ".tgz"]):
-        return FileType.Tar
-    return FileType.Unknown
-
-
-def _contains_any(s: str, substrings: list[str]) -> bool:
-    return any(sub in s for sub in substrings)

@@ -23,6 +23,7 @@ def counter_setup(
     unified_metadata_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
     ae_db_file: Path = typer.Option(...),
+    machines_csv_file: Path = typer.Option(...),
     batch_size: int = typer.Option(default=5000),
 ) -> None:
     yuj_setup(
@@ -30,5 +31,6 @@ def counter_setup(
         unified_metadata_db_file,
         geo_db_file,
         ae_db_file,
+        machines_csv_file,
         batch_size,
     )

@@ -2,15 +2,15 @@
 fleet: ./data/yuj_machines.csv
 job: seqout-sc-counting
 remote_dir: yuj-run
-results_glob: ~/yuj-run/results/*.out
+results_glob: ~/yuj-run/results/seqout_sc_count_results.json
 stall_min: 45
-work_command: python3 $HOME/yuj-run/worker.py
-input_file: ./data/items.txt
+work_command: python3 $HOME/yuj-run/yuj_worker.py
+input_file: ./data/sc_enrich/yuj_setup_master.txt
 output_dir: results
-output_suffix: .out
+output_suffix: .json
 bootstrap:
   env_manager: uv # installs uv (no root) and a venv
   python: "3.14t"
 deploy:
-  code: [worker.py, samples.txt] # synced on every deploy
-  payload: [] # heavy data, e.g. [models/, data/]; skip re-send with --no-payload
+  code: [./src/sc_enrich/counter/yuj_worker.py] # synced on every deploy
+  payload: ["./data/sc_enrich"] # heavy data, e.g. [models/, data/]; skip re-send with --no-payload

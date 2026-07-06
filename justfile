@@ -144,6 +144,7 @@ sc_enrich_yuj_setup:
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         --geo-db-file {{ GEO_DB_FILE }} \
         --ae-db-file {{ AE_DB_FILE }} \
+        --machines-csv-file {{ DATA_DIR }}/yuj_machines.csv
 
 [group("sc_enrich")]
 sc_enrich_counter *flags:
