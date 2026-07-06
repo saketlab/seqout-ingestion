@@ -40,7 +40,7 @@ _ingest_args := " --output-dir " + DATA_DIR + " --start-date " + START_DATE + " 
 [private]
 _all_db_args := "--sra-db-file " + SRA_DB_FILE + " --geo-db-file " + GEO_DB_FILE + " --ena-db-file " + ENA_DB_FILE + " --ae-db-file " + AE_DB_FILE + " "
 [private]
-_transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
+_transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --read-batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
 
 [group("ingest")]
 ingest_sra *flags:
@@ -136,6 +136,13 @@ sc_enrich_classify *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich classify \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         {{ flags }}
+
+[group("sc_enrich")]
+sc_enrich_yuj_setup:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich yuj_setup \
+        --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
 
 [group("sc_enrich")]
 sc_enrich_counter *flags:

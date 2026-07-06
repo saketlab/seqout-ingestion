@@ -22,11 +22,13 @@ dependencies = [
     "rpy2>=3.6.7",
     "httpx>=0.28.1",
     "rapidfuzz>=3.14.5",
-    "numpy>=2.3.0rc1"
+    "numpy>=2.3.0rc1",
+    "yuj"
 ]
 
 [tool.uv.sources]
 pysradb = { git = "https://github.com/0xmukesh/pysradb.git", rev = "develop" }
+yuj = { path = "./vendor/yuj" }
 
 [tool.ruff]
 target-version = "py313"
@@ -35,7 +37,7 @@ target-version = "py313"
 select = ["ALL"]
 ignore = [
     "ANN401",
-    "BLE001",
+    "BLE001", "B008",
     "C901", "COM812",
     "D100", "D101", "D103", "D104", "D203", "D212",
     "EM102",

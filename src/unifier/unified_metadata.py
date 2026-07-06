@@ -173,7 +173,7 @@ def build_unified_metadata(
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
 
-        exec_query_from_file("unified_metadata.sql", conn=conn)
+        exec_query_from_file("tables/unified_metadata.sql", conn=conn)
 
         cols = list(rows[0].keys())
         placeholders = ", ".join(["?"] * len(cols))
@@ -296,7 +296,8 @@ def _scan_geo(db_file: Path) -> SourceMap:
     ).fetchall()
 
     series_to_samples = {
-        item[0]: [v["@ref"] for v in json.loads(item[1])] for item in rows
+        item[0]: [v if isinstance(v, str) else v["@ref"] for v in json.loads(item[1])]
+        for item in rows
     }
 
     for series_acc, samples in series_to_samples.items():

@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE INDEX IF NOT EXISTS idx_samples_submission ON sra_samples(submission);
 CREATE INDEX IF NOT EXISTS idx_samples_scientific_name ON sra_samples(scientific_name);
 

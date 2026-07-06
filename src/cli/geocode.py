@@ -10,10 +10,10 @@ geocode_app = typer.Typer()
 
 @geocode_app.command()
 def geocode(
-    unified_metadata_db_file: Path = typer.Option(...),  # noqa: B008
-    geo_db_file: Path = typer.Option(...),  # noqa: B008
-    ror_data_file: Path = typer.Option(None),  # noqa: B008
-    cache_file: Path | None = typer.Option(None),  # noqa: B008
+    unified_metadata_db_file: Path = typer.Option(...),
+    geo_db_file: Path = typer.Option(...),
+    ror_data_file: Path = typer.Option(None),
+    cache_file: Path | None = typer.Option(None),
     save_every: int = typer.Option(50),
     rate_limit: int = typer.Option(
         "3 seconds",

@@ -274,14 +274,28 @@ def _convert_tab_to_csv(
                     b"SUBMISSION",
                     b"STUDY",
                 ):
-                    outf.write(f[0] + b"," + f[3] + b"," + f[4] + b"\n")
+                    outf.write(
+                        f[0]
+                        + b","
+                        + f[3].split(b"T")[0]
+                        + b","
+                        + f[4].split(b"T")[0]
+                        + b"\n"
+                    )
 
             leftover = chunk[chunk.rfind(b"\n") + 1 :]
 
         if leftover:
             f = leftover.split(b"\t", 7)
             if len(f) > file_type_col and f[file_type_col] in (b"SUBMISSION", b"STUDY"):
-                outf.write(f[0] + b"," + f[3] + b"," + f[4] + b"\n")
+                outf.write(
+                    f[0]
+                    + b","
+                    + f[3].split(b"T")[0]
+                    + b","
+                    + f[4].split(b"T")[0]
+                    + b"\n"
+                )
 
 
 def _download_sra_file_dumps(

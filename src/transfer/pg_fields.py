@@ -94,7 +94,6 @@ _SRA_STUDIES_SELECT_COLS = [
     "external_id",
     "attributes_json",
     "links",
-    "center_name",
     "center_project_name",
     "pubmed_id_pysradb",
     "pubmed_last_checked",
@@ -179,7 +178,6 @@ _AE_EXPERIMENTS_SELECT_COLS = [
 ]
 _AE_EXPERIMENTS_INSERT_COLS = [
     *_AE_EXPERIMENTS_SELECT_COLS,
-    "organisms",
     "organizations_text",
     "authors_text",
     "alias",
@@ -313,6 +311,36 @@ _UNIFIED_METADATA_SELECT_COLS = [
 _UNIFIED_METADATA_INSERT_COLS = [
     *_UNIFIED_METADATA_SELECT_COLS,
     "country_code_iso2",
+]
+
+_AE_SAMPLES_COLS = [
+    "experiment_accession",
+    "source_name",
+    "organism",
+    "organism_part",
+    "cell_type",
+    "genotype",
+    "sample_source_name",
+    "sample_title",
+    "sample_description",
+    "library_strategy",
+    "library_source",
+    "library_selection",
+    "ena_experiment",
+    "ena_run",
+    "attributes_json",
+]
+
+_GEO_CONTRIBUTORS_COLS = [
+    "accession",
+    "person",
+    "department",
+    "organization",
+    "address_line",
+    "address_city",
+    "address_state",
+    "address_zipcode",
+    "address_country",
 ]
 
 _UNIFIED_METADATA_CENTERS_SELECT_COLS = [

@@ -16,11 +16,11 @@ _BATCH_SIZE_FLAG = typer.Option(100)
 
 @backfill_app.command()
 def pm_ids(
-    geo_db_file: Path | None = typer.Option(None),  # noqa: B008
-    sra_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ena_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ae_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ncbi_keys_file: Path = typer.Option(...),  # noqa: B008
+    geo_db_file: Path | None = typer.Option(None),
+    sra_db_file: Path | None = typer.Option(None),
+    ena_db_file: Path | None = typer.Option(None),
+    ae_db_file: Path | None = typer.Option(None),
+    ncbi_keys_file: Path = typer.Option(...),
     num_workers: int = _NUM_WORKERS_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
     is_dry_run: bool = typer.Option(default=False),
@@ -45,14 +45,14 @@ def pm_ids(
 
 @backfill_app.command()
 def pm_meta(
-    base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
-    geo_db_file: Path | None = typer.Option(None),  # noqa: B008
-    sra_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ena_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ae_db_file: Path | None = typer.Option(None),  # noqa: B008
-    db_file: Path | None = typer.Option(None),  # noqa: B008
-    ncbi_keys_file: Path = typer.Option(...),  # noqa: B008
-    openalex_keys_file: Path = typer.Option(...),  # noqa: B008
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    geo_db_file: Path | None = typer.Option(None),
+    sra_db_file: Path | None = typer.Option(None),
+    ena_db_file: Path | None = typer.Option(None),
+    ae_db_file: Path | None = typer.Option(None),
+    db_file: Path | None = typer.Option(None),
+    ncbi_keys_file: Path = typer.Option(...),
+    openalex_keys_file: Path = typer.Option(...),
     num_workers: int = _NUM_WORKERS_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
     fill_metrics: bool = typer.Option(default=False),
@@ -88,11 +88,11 @@ def pm_meta(
 
 @backfill_app.command()
 def download_links(
-    base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
     source: Literal["ncbi", "ena", "both"] = typer.Option(...),
-    sra_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ena_db_file: Path | None = typer.Option(None),  # noqa: B008
-    ncbi_keys_file: Path | None = typer.Option(None),  # noqa: B008
+    sra_db_file: Path | None = typer.Option(None),
+    ena_db_file: Path | None = typer.Option(None),
+    ncbi_keys_file: Path | None = typer.Option(None),
     num_workers: int = _NUM_WORKERS_FLAG,
     is_dry_run: bool = typer.Option(default=False),
     batch_size: int = typer.Option(2000),

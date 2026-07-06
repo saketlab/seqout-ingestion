@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE INDEX IF NOT EXISTS idx_geo_series_published_at ON geo_series(published_at);
 CREATE INDEX IF NOT EXISTS idx_geo_series_updated_at ON geo_series(updated_at);
 CREATE INDEX IF NOT EXISTS idx_series_samples_ref ON geo_series(samples_ref);

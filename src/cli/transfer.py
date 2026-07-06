@@ -11,15 +11,16 @@ transfer_app = typer.Typer()
 @transfer_app.command()
 def postgres(
     pg_url: str = typer.Option(...),
-    sra_db_file: Path = typer.Option(...),  # noqa: B008
-    geo_db_file: Path = typer.Option(...),  # noqa: B008
-    ena_db_file: Path = typer.Option(...),  # noqa: B008
-    ae_db_file: Path = typer.Option(...),  # noqa: B008
-    pubmed_metadata_db_file: Path = typer.Option(...),  # noqa: B008
-    unified_metadata_db_file: Path = typer.Option(...),  # noqa: B008
-    download_links_db_file: Path = typer.Option(...),  # noqa: B008
+    sra_db_file: Path = typer.Option(...),
+    geo_db_file: Path = typer.Option(...),
+    ena_db_file: Path = typer.Option(...),
+    ae_db_file: Path = typer.Option(...),
+    pubmed_metadata_db_file: Path = typer.Option(...),
+    unified_metadata_db_file: Path = typer.Option(...),
+    download_links_db_file: Path = typer.Option(...),
+    read_batch_size: int = typer.Option(default=500),
+    num_retries: int = typer.Option(3, "--retries"),
     num_workers: int = typer.Option(4, "--workers"),
-    batch_size: int = typer.Option(default=500),
 ) -> None:
     postgres_transfer(
         pg_url,
@@ -30,21 +31,22 @@ def postgres(
         pubmed_metadata_db_file,
         unified_metadata_db_file,
         download_links_db_file,
+        read_batch_size,
+        num_retries,
         num_workers,
-        batch_size,
     )
 
 
 @transfer_app.command()
 def parquet(
-    output_dir: Path = typer.Option(...),  # noqa: B008
-    sra_db_file: Path = typer.Option(...),  # noqa: B008
-    geo_db_file: Path = typer.Option(...),  # noqa: B008
-    ena_db_file: Path = typer.Option(...),  # noqa: B008
-    ae_db_file: Path = typer.Option(...),  # noqa: B008
-    pubmed_metadata_db_file: Path = typer.Option(...),  # noqa: B008
-    unified_metadata_db_file: Path = typer.Option(...),  # noqa: B008
-    download_links_db_file: Path = typer.Option(...),  # noqa: B008
+    output_dir: Path = typer.Option(...),
+    sra_db_file: Path = typer.Option(...),
+    geo_db_file: Path = typer.Option(...),
+    ena_db_file: Path = typer.Option(...),
+    ae_db_file: Path = typer.Option(...),
+    pubmed_metadata_db_file: Path = typer.Option(...),
+    unified_metadata_db_file: Path = typer.Option(...),
+    download_links_db_file: Path = typer.Option(...),
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
 ) -> None:

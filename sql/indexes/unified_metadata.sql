@@ -1,7 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
-CREATE INDEX IF NOT EXISTS idx_um_source ON unified_metadata(source);
 CREATE INDEX IF NOT EXISTS idx_um_dominant_sci ON unified_metadata(dominant_scientific_name);
 CREATE INDEX IF NOT EXISTS idx_um_dominant_common ON unified_metadata(dominant_common_name);
 CREATE INDEX IF NOT EXISTS idx_um_dominant_l1 ON unified_metadata(dominant_assay_l1);

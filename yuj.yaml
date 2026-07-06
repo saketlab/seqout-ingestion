@@ -1,0 +1,16 @@
+# yuj.yaml: Python job. Flow: yuj bootstrap → deploy → submit → status → pull
+fleet: ./data/yuj_machines.csv
+job: seqout-sc-counting
+remote_dir: yuj-run
+results_glob: ~/yuj-run/results/*.out
+stall_min: 45
+work_command: python3 $HOME/yuj-run/worker.py
+input_file: ./data/items.txt
+output_dir: results
+output_suffix: .out
+bootstrap:
+  env_manager: uv # installs uv (no root) and a venv
+  python: "3.14t"
+deploy:
+  code: [worker.py, samples.txt] # synced on every deploy
+  payload: [] # heavy data, e.g. [models/, data/]; skip re-send with --no-payload

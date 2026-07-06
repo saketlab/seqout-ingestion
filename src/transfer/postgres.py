@@ -1,7 +1,11 @@
 import contextlib
+import datetime
 import functools
 import json
+import logging
 import sqlite3
+import time
+import traceback
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -22,11 +26,13 @@ from transfer.pg_fields import (
     _AE_EXPERIMENTS_SELECT_COLS,
     _AE_GEOCODE_COLS,
     _AE_GEOCODE_NONE_FIELDS,
+    _AE_SAMPLES_COLS,
     _ENA_GEOCODE_COLS,
     _ENA_GEOCODE_SOURCE_FIELDS,
     _ENA_STUDIES_SEARCH_INSERT_COLS,
     _ENA_STUDIES_SEARCH_SELECT_COLS,
     _GEO_CENTER_GEO_FIELDS,
+    _GEO_CONTRIBUTORS_COLS,
     _GEO_GEOCODE_COLS,
     _GEO_GEOCODE_NONE_FIELDS,
     _GEO_SERIES_INSERT_COLS,
@@ -42,6 +48,8 @@ from transfer.pg_fields import (
 )
 
 type _Modifier = Callable[[list[dict]], list[dict]]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,8 +71,9 @@ def postgres_transfer(
     pubmed_metadata_db_file: Path,
     unified_metadata_db_file: Path,
     download_links_db_file: Path,
+    read_batch_size: int,
+    num_retries: int,
     num_workers: int,
-    batch_size: int,
 ) -> None:
     table_info = {
         "geo_series": _TableInfo(
@@ -73,48 +82,58 @@ def postgres_transfer(
                 sra_db_file,
                 geo_db_file,
                 unified_metadata_db_file,
-                batch_size,
+                read_batch_size,
             ),
             select_cols=_GEO_SERIES_SELECT_COLS,
             insert_cols=_GEO_SERIES_INSERT_COLS,
+            conflict_cols=["accession"],
         ),
         "geo_samples": _TableInfo(
             sqlite_db_file=geo_db_file,
             modifier=_geo_sample_batch_modifier,
+            conflict_cols=["accession"],
         ),
         "geo_platforms": _TableInfo(
             sqlite_db_file=geo_db_file,
-            modifier=_no_op_batch_modifier,
+            modifier=_geo_platforms_batch_modifier,
+            conflict_cols=["accession"],
         ),
         "geo_contributors": _TableInfo(
             sqlite_db_file=geo_db_file,
             modifier=_no_op_batch_modifier,
+            select_cols=_GEO_CONTRIBUTORS_COLS,
+            insert_cols=_GEO_CONTRIBUTORS_COLS,
         ),
         "sra_studies": _TableInfo(
             sqlite_db_file=sra_db_file,
             modifier=_sra_studies_batch_modifier(
                 sra_db_file,
                 unified_metadata_db_file,
-                batch_size,
+                read_batch_size,
             ),
             select_cols=_SRA_STUDIES_SELECT_COLS,
             insert_cols=_SRA_STUDIES_INSERT_COLS,
+            conflict_cols=["accession"],
         ),
         "sra_submissions": _TableInfo(
             sqlite_db_file=sra_db_file,
-            modifier=_no_op_batch_modifier,
+            modifier=_sra_submissions_batch_modifier,
+            conflict_cols=["accession"],
         ),
         "sra_experiments": _TableInfo(
             sqlite_db_file=sra_db_file,
             modifier=_sra_experiments_batch_modifier,
+            conflict_cols=["accession"],
         ),
         "sra_samples": _TableInfo(
             sqlite_db_file=sra_db_file,
             modifier=_sra_samples_batch_modifier,
+            conflict_cols=["accession"],
         ),
         "sra_runs": _TableInfo(
             sqlite_db_file=sra_db_file,
             modifier=_no_op_batch_modifier,
+            conflict_cols=["accession"],
         ),
         "sra_run_download_links": _TableInfo(
             sqlite_db_file=download_links_db_file,
@@ -124,15 +143,18 @@ def postgres_transfer(
         ),
         "ena_experiments": _TableInfo(
             sqlite_db_file=ena_db_file,
-            modifier=_no_op_batch_modifier,
+            modifier=_ena_experiments_batch_modifier,
+            conflict_cols=["run_accession"],
         ),
         "ena_studies": _TableInfo(
             sqlite_db_file=ena_db_file,
-            modifier=_no_op_batch_modifier,
+            modifier=_ena_studies_batch_modifier,
+            conflict_cols=["study_accession"],
         ),
         "ena_samples": _TableInfo(
             sqlite_db_file=ena_db_file,
-            modifier=_no_op_batch_modifier,
+            modifier=_ena_samples_batch_modifier,
+            conflict_cols=["sample_accession"],
         ),
         "ena_studies_search": _TableInfo(
             sqlite_db_file=ena_db_file,
@@ -145,24 +167,29 @@ def postgres_transfer(
             sqlite_db_file=ae_db_file,
             modifier=_arrayexpress_experiments_batch_modifier(
                 unified_metadata_db_file,
-                batch_size,
+                read_batch_size,
             ),
             select_cols=_AE_EXPERIMENTS_SELECT_COLS,
             insert_cols=_AE_EXPERIMENTS_INSERT_COLS,
+            conflict_cols=["accession"],
         ),
         "arrayexpress_samples": _TableInfo(
             sqlite_db_file=ae_db_file,
             modifier=_arrayexpress_samples_batch_modifier,
+            select_cols=_AE_SAMPLES_COLS,
+            insert_cols=_AE_SAMPLES_COLS,
         ),
         "pubmed_metadata": _TableInfo(
             sqlite_db_file=pubmed_metadata_db_file,
-            modifier=_no_op_batch_modifier,
+            modifier=_pubmed_metadata_batch_modifier,
+            conflict_cols=["pmid"],
         ),
         "unified_metadata": _TableInfo(
             sqlite_db_file=unified_metadata_db_file,
             modifier=_unified_metadata_batch_modifier,
             select_cols=_UNIFIED_METADATA_SELECT_COLS,
             insert_cols=_UNIFIED_METADATA_INSERT_COLS,
+            conflict_cols=["canonical_accession"],
         ),
         "unified_metadata_centers": _TableInfo(
             sqlite_db_file=unified_metadata_db_file,
@@ -170,6 +197,7 @@ def postgres_transfer(
             select_cols=_UNIFIED_METADATA_CENTERS_SELECT_COLS,
             insert_cols=_UNIFIED_METADATA_CENTERS_INSERT_COLS,
             select_table_name="unified_centers",
+            conflict_cols=["canonical_accession", "position"],
         ),
     }
 
@@ -185,7 +213,8 @@ def postgres_transfer(
                         info.sqlite_db_file,
                         info.modifier,
                         table_name,
-                        batch_size,
+                        read_batch_size,
+                        num_retries,
                         info.select_cols,
                         info.insert_cols,
                         info.select_table_name,
@@ -198,42 +227,47 @@ def postgres_transfer(
         (
             "geo_geocode",
             _transfer_geo_geocode,
-            (pg_url, geo_db_file, unified_metadata_db_file, batch_size),
+            (pg_url, geo_db_file, unified_metadata_db_file, read_batch_size),
         ),
     )
     all_tasks.append(
         (
             "sra_geocode",
             _transfer_sra_geocode,
-            (pg_url, sra_db_file, unified_metadata_db_file, batch_size),
+            (pg_url, sra_db_file, unified_metadata_db_file, read_batch_size),
         ),
     )
     all_tasks.append(
         (
             "ena_geocode",
             _transfer_ena_geocode,
-            (pg_url, ena_db_file, unified_metadata_db_file, batch_size),
+            (pg_url, ena_db_file, unified_metadata_db_file, read_batch_size),
         ),
     )
     all_tasks.append(
         (
             "ae_geocode",
             _transfer_ae_geocode,
-            (pg_url, ae_db_file, unified_metadata_db_file, batch_size),
+            (pg_url, ae_db_file, unified_metadata_db_file, read_batch_size),
         ),
     )
     all_tasks.append(
         (
             "study_publications",
             _transfer_study_publications,
-            (pg_url, unified_metadata_db_file, pubmed_metadata_db_file, batch_size),
+            (
+                pg_url,
+                unified_metadata_db_file,
+                pubmed_metadata_db_file,
+                read_batch_size,
+            ),
         ),
     )
     all_tasks.append(
         (
             "cross_refs",
             _transfer_cross_refs,
-            (pg_url, unified_metadata_db_file, batch_size),
+            (pg_url, unified_metadata_db_file, read_batch_size),
         ),
     )
 
@@ -254,9 +288,189 @@ def postgres_transfer(
             try:
                 f.result()
             except BaseException:
+                table_name = futures[f]
                 pool.shutdown(wait=False, cancel_futures=True)
+                tqdm.write(f"{table_name} failed\n\t{traceback.format_exc()}")
                 raise
             outer_pbar.update(1)
+
+
+def _transfer_helper(
+    pg_url: str,
+    sqlite_db_file: Path,
+    modifier: _Modifier,
+    table_name: str,
+    read_batch_size: int,
+    num_retries: int,
+    select_cols: list[str] | None = None,
+    insert_cols: list[str] | None = None,
+    select_table_name: str | None = None,
+    conflict_cols: list[str] | None = None,
+) -> None:
+    select_pg_table_name = select_table_name or table_name
+
+    with sqlite_connect(sqlite_db_file) as sqlite_conn:
+        sqlite_conn.execute("PRAGMA cache_size = -200000")
+        sqlite_conn.execute("PRAGMA mmap_size = 30000000000")
+        sqlite_conn.execute("PRAGMA temp_store = MEMORY")
+        sqlite_conn.execute("PRAGMA synchronous = OFF")
+        sqlite_conn.execute("PRAGMA journal_mode = WAL")
+
+        sqlite_conn.row_factory = sqlite3.Row
+        select_col_list = select_cols or _get_table_info(
+            sqlite_conn, select_pg_table_name
+        )
+        insert_col_list = insert_cols or select_col_list
+
+        select_columns = ", ".join(select_col_list)
+        insert_columns = ", ".join(insert_col_list)
+
+        total = int(
+            sqlite_conn.execute(
+                f"SELECT COUNT(*) FROM {select_pg_table_name}",  # noqa: S608
+            ).fetchone()[0],
+        )
+
+        conflict_cols_str = ", ".join(conflict_cols) if conflict_cols else None
+        set_clause = (
+            ", ".join(
+                f"{c} = EXCLUDED.{c}" for c in insert_col_list if c not in conflict_cols
+            )
+            if conflict_cols
+            else None
+        )
+        on_conflict_sql = (
+            f"ON CONFLICT ({conflict_cols_str}) DO UPDATE SET {set_clause}"
+            if conflict_cols
+            else "ON CONFLICT DO NOTHING"
+        )
+
+        checkpoint_path = Path(f"{sqlite_db_file}.checkpoint")
+        start_offset = 0
+        if checkpoint_path.exists():
+            try:
+                cp = json.loads(checkpoint_path.read_text())
+                if cp.get("table_name") == table_name:
+                    start_offset = cp["offset"]
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        pg_conn = psycopg.connect(
+            pg_url,
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5,
+        )
+
+        with tqdm(
+            desc=f"copying {table_name}",
+            total=total,
+            unit="rows",
+            leave=False,
+            initial=start_offset,
+        ) as pbar:
+            offset = start_offset
+            while offset < total:
+                batch_rows = sqlite_conn.execute(
+                    f"SELECT {select_columns} FROM {select_pg_table_name}"  # noqa: S608
+                    f" LIMIT {read_batch_size} OFFSET {offset}",
+                ).fetchall()
+                if not batch_rows:
+                    break
+
+                batch = [
+                    tuple(m[c] for c in insert_col_list)
+                    for m in modifier([dict(r) for r in batch_rows])
+                ]
+
+                for attempt in range(num_retries):
+                    try:
+                        with pg_conn.cursor() as cur:
+                            if conflict_cols:
+                                temp_table = f"staging_{table_name}"
+                                cur.execute(
+                                    cast(
+                                        "LiteralString",
+                                        f"CREATE TEMP TABLE {temp_table} AS TABLE {table_name} WITH NO DATA",  # noqa: E501
+                                    ),
+                                )
+
+                                with cur.copy(
+                                    cast(
+                                        "LiteralString",
+                                        f"COPY {temp_table} ({insert_columns}) FROM STDIN",  # noqa: E501
+                                    ),
+                                ) as copy:
+                                    for row in batch:
+                                        copy.write_row(row)
+
+                                cur.execute(
+                                    cast(
+                                        "LiteralString",
+                                        f"""INSERT INTO {table_name} ({insert_columns})
+                                        SELECT DISTINCT ON ({conflict_cols_str})
+                                        {insert_columns} FROM {temp_table}
+                                        ORDER BY {conflict_cols_str}
+                                        {on_conflict_sql}""",  # noqa: S608
+                                    ),
+                                )
+
+                                cur.execute(
+                                    cast(
+                                        "LiteralString",
+                                        f"DROP TABLE IF EXISTS {temp_table}",
+                                    ),
+                                )
+                            else:
+                                with cur.copy(
+                                    cast(
+                                        "LiteralString",
+                                        f"COPY {table_name} ({insert_columns}) FROM STDIN",  # noqa: E501
+                                    ),
+                                ) as copy:
+                                    for row in batch:
+                                        copy.write_row(row)
+
+                            pg_conn.commit()
+                        break
+                    except (
+                        psycopg.OperationalError,
+                        psycopg.DatabaseError,
+                    ) as exc:
+                        if attempt == num_retries - 1:
+                            raise
+                        wait = min(2**attempt, 60)
+                        tqdm.write(
+                            f"{table_name}: batch at offset {offset} failed "
+                            f"(attempt {attempt + 1}/{num_retries}, retrying in {wait:.0f}s) - {exc}",  # noqa: E501
+                        )
+                        time.sleep(wait)
+                        pg_conn.close()
+                        pg_conn = psycopg.connect(
+                            pg_url,
+                            keepalives=1,
+                            keepalives_idle=30,
+                            keepalives_interval=10,
+                            keepalives_count=5,
+                        )
+
+                offset += len(batch_rows)
+                checkpoint_path.write_text(
+                    json.dumps(
+                        {
+                            "table_name": table_name,
+                            "offset": offset,
+                            "total": total,
+                        },
+                    ),
+                )
+                pbar.update(len(batch_rows))
+
+        pg_conn.close()
+
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
 
 
 def _get_table_info(conn: sqlite3.Connection, table_name: str) -> list[str]:
@@ -273,9 +487,10 @@ def _query_in(
     query_suffix: str = "",
 ) -> list[tuple]:
     results = []
+    chunk_size = min(batch_size, 999)  # sqlite's max variable number
 
-    for i in range(0, len(items), batch_size):
-        chunk = items[i : i + batch_size]
+    for i in range(0, len(items), chunk_size):
+        chunk = items[i : i + chunk_size]
         ph = ", ".join(["?"] * len(chunk))
         results.extend(
             conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
@@ -312,122 +527,66 @@ def _execute_batch_inserts(
             pbar.update(len(batch))
 
 
-def _transfer_helper(
-    pg_url: str,
-    sqlite_db_file: Path,
-    modifier: _Modifier,
-    table_name: str,
-    batch_size: int,
-    select_cols: list[str] | None = None,
-    insert_cols: list[str] | None = None,
-    select_table_name: str | None = None,
-    conflict_cols: list[str] | None = None,
-) -> None:
-    select_pg_table_name = select_table_name or table_name
-
-    with (
-        sqlite_connect(sqlite_db_file) as sqlite_conn,
-        psycopg.connect(pg_url) as pg_conn,
-    ):
-        sqlite_conn.execute("PRAGMA cache_size = -200000")
-        sqlite_conn.execute("PRAGMA mmap_size = 30000000000")
-        sqlite_conn.execute("PRAGMA temp_store = MEMORY")
-
-        sqlite_conn.row_factory = sqlite3.Row
-        col_list = select_cols or _get_table_info(sqlite_conn, select_pg_table_name)
-
-        if insert_cols:
-            col_list = insert_cols
-
-        columns = ", ".join(col_list)
-        select_query = f"""SELECT {columns}
-            FROM {select_pg_table_name} LIMIT {batch_size} OFFSET {{offset}}"""  # noqa: S608
-
-        total = int(
-            sqlite_conn.execute(
-                f"SELECT COUNT(*) FROM {select_pg_table_name}",  # noqa: S608
-            ).fetchone()[0],
-        )
-
-        def _gen_rows() -> Iterator[tuple[Any, ...]]:
-            offset = 0
-            while True:
-                batch = sqlite_conn.execute(
-                    select_query.format(offset=offset),
-                ).fetchall()
-                if not batch:
-                    break
-                for m in modifier([dict(row) for row in batch]):
-                    yield tuple(m[c] for c in col_list)
-                offset += batch_size
-
-        if conflict_cols:
-            temp_table = f"staging_{table_name}"
-            conflict_cols_str = ", ".join(conflict_cols)
-            set_clause = ", ".join(
-                f"{c} = EXCLUDED.{c}" for c in col_list if c not in conflict_cols
-            )
-
-            with pg_conn.cursor() as cur:
-                cur.execute(
-                    cast(
-                        "LiteralString",
-                        f"CREATE TEMP TABLE {temp_table} AS TABLE {table_name} WITH NO DATA",  # noqa: E501
-                    ),
-                )
-
-            with (
-                tqdm(
-                    desc=f"copying {table_name}",
-                    total=total,
-                    unit="rows",
-                    leave=False,
-                ) as pbar,
-                pg_conn.cursor() as cur,
-                cur.copy(
-                    cast("LiteralString", f"COPY {temp_table} ({columns}) FROM STDIN")
-                ) as copy,
-            ):
-                for i, row in enumerate(_gen_rows()):
-                    copy.write_row(row)
-
-                    if i % 5000 == 0:
-                        pbar.update(5000)
-
-            with pg_conn.cursor() as cur:
-                cur.execute(
-                    cast(
-                        "LiteralString",
-                        f"""INSERT INTO {table_name} ({columns})
-                    SELECT * FROM {temp_table}
-                    ON CONFLICT ({conflict_cols_str})
-                    DO UPDATE SET {set_clause}""",  # noqa: S608
-                    ),
-                )
-            pg_conn.commit()
-
-            with pg_conn.cursor() as cur:
-                cur.execute("LiteralString", f"DROP TABLE IF EXISTS {temp_table}")
-        else:
-            placeholders = ", ".join(["%s"] * len(col_list))
-            insert_query = f"""INSERT INTO {table_name} ({columns})
-                VALUES ({placeholders}) ON CONFLICT DO NOTHING"""  # noqa: S608
-
-            _execute_batch_inserts(
-                pg_conn,
-                insert_query,
-                _gen_rows(),
-                batch_size,
-                f"transferring {table_name}",
-                total=total,
-            )
-
-
 def _no_op_batch_modifier(batch: list[dict]) -> list[dict]:
     return batch
 
 
+def _parse_date(v: object) -> str | None:
+    if not v:
+        return None
+    v = str(v).strip()
+    if not v or v == "-":
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%Y%m%d"):
+        try:
+            return (
+                datetime.datetime.strptime(v, fmt)
+                .astimezone(datetime.UTC)
+                .strftime("%Y-%m-%d")
+            )
+        except ValueError:
+            continue
+    return None
+
+
+def _fix_dates(batch: list[dict], cols: tuple[str, ...]) -> None:
+    for value in batch:
+        for col in cols:
+            value[col] = _parse_date(value.get(col))
+
+
+def _sra_submissions_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("published_at", "updated_at"))
+    return batch
+
+
+def _geo_platforms_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("published_at", "updated_at"))
+    return batch
+
+
+def _ena_studies_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("first_public", "last_updated", "pubmed_last_checked"))
+    return batch
+
+
+def _ena_experiments_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("first_public", "last_updated"))
+    return batch
+
+
+def _ena_samples_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("first_public", "last_updated"))
+    return batch
+
+
+def _pubmed_metadata_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("pub_date",))
+    return batch
+
+
 def _geo_sample_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("published_at", "updated_at"))
     for value in batch:
         channels = _ensure_list(_convert_to_json(value["channels"]))
         supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
@@ -456,7 +615,7 @@ def _geo_series_batch_modifier(
             samples_ref = _ensure_list(_convert_to_json(value["samples_ref"]))
             supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
 
-            samples = [v["@ref"] for v in samples_ref]
+            samples = [v if isinstance(v, str) else v["@ref"] for v in samples_ref]
             alias = next(
                 (
                     str(x["@target"]).split("?term=", 1)[-1]
@@ -650,6 +809,7 @@ def _geo_series_batch_modifier(
 
             results.append(modified)
 
+        _fix_dates(results, ("published_at", "updated_at", "pubmed_last_checked"))
         return results
 
     return modifier
@@ -671,7 +831,10 @@ def _sra_samples_batch_modifier(batch: list[dict]) -> list[dict]:
 
 def _arrayexpress_samples_batch_modifier(batch: list[dict]) -> list[dict]:
     for value in batch:
-        value["attributes_json"] = Jsonb(_convert_to_json(value["attributes_json"]))
+        raw = value["attributes_json"]
+        if raw:
+            raw = raw.replace("\\u0000", "")
+        value["attributes_json"] = Jsonb(_convert_to_json(raw))
     return batch
 
 
@@ -796,12 +959,14 @@ def _sra_studies_batch_modifier(
 
             results.append(modified)
 
+        _fix_dates(results, ("published_at", "updated_at", "pubmed_last_checked"))
         return results
 
     return modifier
 
 
 def _ena_studies_search_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("first_public", "last_updated"))
     for value in batch:
         value["accession"] = value.pop("study_accession")
     return batch
@@ -893,12 +1058,14 @@ def _arrayexpress_experiments_batch_modifier(
 
             results.append(modified)
 
+        _fix_dates(results, ("release_date", "submission_date", "pubmed_last_checked"))
         return results
 
     return modifier
 
 
 def _unified_metadata_batch_modifier(batch: list[dict]) -> list[dict]:
+    _fix_dates(batch, ("first_published",))
     for value in batch:
         for col in (
             "aliases",
@@ -1373,7 +1540,8 @@ def _transfer_study_publications(
         placeholders = ", ".join(["%s"] * len(cols))
         insert_query = f"""INSERT INTO study_publications ({cols_str})
         VALUES ({placeholders})
-        ON CONFLICT (accession, source) DO UPDATE"""  # noqa: S608
+        ON CONFLICT (accession, source) DO UPDATE
+        SET publications = EXCLUDED.publications"""  # noqa: S608
 
         def _gen_rows() -> Iterator[tuple]:
             for (acc, source), pubs in groups.items():

@@ -1,6 +1,3 @@
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-
 CREATE INDEX IF NOT EXISTS idx_ena_studies_scientific_name ON ena_studies(scientific_name);
 CREATE INDEX IF NOT EXISTS idx_ena_studies_first_public ON ena_studies(first_public);
 CREATE INDEX IF NOT EXISTS idx_ena_studies_geo_accession ON ena_studies(geo_accession);

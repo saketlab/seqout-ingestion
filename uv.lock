@@ -1098,6 +1098,7 @@ dependencies = [
     { name = "testing-postgresql" },
     { name = "tqdm" },
     { name = "typer" },
+    { name = "yuj" },
 ]
 
 [package.dev-dependencies]
@@ -1130,6 +1131,7 @@ requires-dist = [
     { name = "testing-postgresql", specifier = ">=1.3.0" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "typer", specifier = ">=0.26.7" },
+    { name = "yuj", directory = "vendor/yuj" },
 ]
 
 [package.metadata.requires-dev]
@@ -1359,4 +1361,41 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/19/70/80f3b7c10d2630aa66414bf23d210386700aa390547278c789afa994fd7e/xmltodict-1.0.4.tar.gz", hash = "sha256:6d94c9f834dd9e44514162799d344d815a3a4faec913717a9ecbfa5be1bb8e61", size = 26124, upload-time = "2026-02-22T02:21:22.074Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/34/98a2f52245f4d47be93b580dae5f9861ef58977d73a79eb47c58f1ad1f3a/xmltodict-1.0.4-py3-none-any.whl", hash = "sha256:a4a00d300b0e1c59fc2bfccb53d7b2e88c32f200df138a0dd2229f842497026a", size = 13580, upload-time = "2026-02-22T02:21:21.039Z" },
+]
+
+[[package]]
+name = "yuj"
+source = { directory = "vendor/yuj" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "furo", marker = "extra == 'docs'", specifier = ">=2024.5" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0" },
+    { name = "paramiko", marker = "extra == 'paramiko'", specifier = ">=3.4" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.0" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=7.3" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = ">=0.5" },
+    { name = "sphinx-design", marker = "extra == 'docs'", specifier = ">=0.6" },
+    { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=0.9" },
+    { name = "typer", specifier = ">=0.12" },
+]
+provides-extras = ["docs", "paramiko"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pre-commit", specifier = ">=3.8" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "shellcheck-py", specifier = ">=0.10" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
 ]

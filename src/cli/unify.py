@@ -10,12 +10,12 @@ unify_app = typer.Typer()
 
 @unify_app.command()
 def build_catalog(
-    base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
-    geo_db_file: Path = typer.Option(...),  # noqa: B008
-    sra_db_file: Path = typer.Option(...),  # noqa: B008
-    ena_db_file: Path = typer.Option(...),  # noqa: B008
-    ae_db_file: Path = typer.Option(...),  # noqa: B008
-    db_file: Path | None = typer.Option(None),  # noqa: B008
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    geo_db_file: Path = typer.Option(...),
+    sra_db_file: Path = typer.Option(...),
+    ena_db_file: Path = typer.Option(...),
+    ae_db_file: Path = typer.Option(...),
+    db_file: Path | None = typer.Option(None),
     dump_parquet: bool = typer.Option(default=False),
 ) -> None:
     build_unified_catalog(
@@ -31,16 +31,16 @@ def build_catalog(
 
 @unify_app.command()
 def build_metadata(
-    base_output_dir: Path = typer.Option(..., "--output-dir"),  # noqa: B008
-    db_file: Path | None = typer.Option(None),  # noqa: B008
-    geo_db_file: Path = typer.Option(...),  # noqa: B008
-    sra_db_file: Path = typer.Option(...),  # noqa: B008
-    ena_db_file: Path = typer.Option(...),  # noqa: B008
-    ae_db_file: Path = typer.Option(...),  # noqa: B008
-    unified_catalog_db_file: Path = typer.Option(...),  # noqa: B008
-    pubmed_metadata_db_file: Path = typer.Option(...),  # noqa: B008
-    assay_mapping_csv_file: Path = typer.Option(...),  # noqa: B008
-    taxonomy_mapping_csv_file: Path = typer.Option(...),  # noqa: B008
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    db_file: Path | None = typer.Option(None),
+    geo_db_file: Path = typer.Option(...),
+    sra_db_file: Path = typer.Option(...),
+    ena_db_file: Path = typer.Option(...),
+    ae_db_file: Path = typer.Option(...),
+    unified_catalog_db_file: Path = typer.Option(...),
+    pubmed_metadata_db_file: Path = typer.Option(...),
+    assay_mapping_csv_file: Path = typer.Option(...),
+    taxonomy_mapping_csv_file: Path = typer.Option(...),
     batch_size: int = typer.Option(2000),
 ) -> None:
     build_unified_metadata(
