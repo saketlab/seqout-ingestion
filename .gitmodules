@@ -1,3 +1,3 @@
 [submodule "vendor/yuj"]
 	path = vendor/yuj
-	url = git@github.com:saketlab/yuj.git
+	url = git@github.com:0xmukesh/yuj.git

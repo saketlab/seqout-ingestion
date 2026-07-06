@@ -1,16 +1,20 @@
-# yuj.yaml: Python job. Flow: yuj bootstrap → deploy → submit → status → pull
 fleet: ./data/yuj_machines.csv
-job: seqout-sc-counting
-remote_dir: yuj-run
-results_glob: ~/yuj-run/results/seqout_sc_count_results.json
+job: seqout-sc-count
+remote_dir: seqout-sc-count
+results_glob: ~/seqout-sc-count/results/seqout_sc_count_results.json
 stall_min: 45
-work_command: python3 $HOME/yuj-run/yuj_worker.py
+work_command: bash $HOME/seqout-sc-count/recipes/install_deps.sh && PYTHONPATH=$HOME/seqout-sc-count/src $HOME/seqout-sc-count/.venv/bin/python $HOME/seqout-sc-count/src/sc_enrich/counter/yuj_worker.py
 input_file: ./data/sc_enrich/yuj_setup_master.txt
 output_dir: results
 output_suffix: .json
 bootstrap:
-  env_manager: uv # installs uv (no root) and a venv
+  env_manager: uv
   python: "3.14t"
+  extras: [R]
 deploy:
-  code: [./src/sc_enrich/counter/yuj_worker.py] # synced on every deploy
-  payload: ["./data/sc_enrich"] # heavy data, e.g. [models/, data/]; skip re-send with --no-payload
+  code:
+    - ./src
+    - ./recipes
+    - pyproject.toml
+  payload:
+    - ./data/sc_enrich
