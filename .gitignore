@@ -1,10 +1,8 @@
 .venv/
 .tox/
-.yuj/
 __pycache__/
 *.egg-info/
 .ruff_cache/
 data/
 scripts/
 .env
-.env.yuj

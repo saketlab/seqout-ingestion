@@ -3,7 +3,7 @@ from pathlib import Path
 import typer
 
 from sc_enrich.classify import sc_classify
-from sc_enrich.counter.yuj_setup import yuj_setup
+from sc_enrich.counter import sc_counter
 
 sc_enrich_app = typer.Typer()
 
@@ -18,19 +18,29 @@ def classify(
 
 
 @sc_enrich_app.command()
-def counter_setup(
+def counter(
     output_dir: Path = typer.Option(...),
     unified_metadata_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
     ae_db_file: Path = typer.Option(...),
-    machines_csv_file: Path = typer.Option(...),
-    batch_size: int = typer.Option(default=5000),
+    workers: int = typer.Option(8),
+    chunk_size: int = typer.Option(10 * 1024 * 1024),
+    retries: int = typer.Option(20),
+    timeout: int = typer.Option(30),
+    max_timeout: int = typer.Option(120),
+    batch_size: int = typer.Option(5000),
+    check: bool = typer.Option(default=False, help="only check, don't update counts"),
 ) -> None:
-    yuj_setup(
+    sc_counter(
         output_dir,
         unified_metadata_db_file,
         geo_db_file,
         ae_db_file,
-        machines_csv_file,
+        workers,
+        chunk_size,
+        retries,
+        timeout,
+        max_timeout,
         batch_size,
+        check=check,
     )

@@ -27,7 +27,6 @@ dependencies = [
 
 [tool.uv.sources]
 pysradb = { git = "https://github.com/0xmukesh/pysradb.git", rev = "develop" }
-yuj = { path = "./vendor/yuj" }
 
 [tool.ruff]
 target-version = "py313"
@@ -56,6 +55,5 @@ dev = [
     "ruff>=0.11.8",
     "pre-commit>=4.2.0",
     "tox",
-    "tox-uv",
-    "yuj"
+    "tox-uv"
 ]
