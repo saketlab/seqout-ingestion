@@ -409,3 +409,22 @@ def exec_query_from_file(
 
     if not is_custom_conn:
         conn.close()
+
+
+def batch_query_in(
+    conn: sqlite3.Connection,
+    query_prefix: str,
+    items: list[str],
+    batch_size: int,
+    query_suffix: str = "",
+) -> list[tuple]:
+    results = []
+    chunk_size = min(batch_size, 999)  # sqlite's max variable number
+
+    for i in range(0, len(items), chunk_size):
+        chunk = items[i : i + chunk_size]
+        ph = ", ".join(["?"] * len(chunk))
+        results.extend(
+            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
+        )
+    return results

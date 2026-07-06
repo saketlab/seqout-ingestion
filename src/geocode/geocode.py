@@ -17,7 +17,7 @@ from rapidfuzz import fuzz
 from tqdm import tqdm
 
 from geocode.geocode_constants import HARDCODED_GEOCODE_DATA
-from helpers import sqlite_connect
+from helpers import batch_query_in, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ def geocode_missing(
     geo_country_mapping: dict[str, str] = {}
     if geo_accessions:
         with sqlite_connect(str(geo_db_file)) as geo_conn:
-            rows = _query_in(
+            rows = batch_query_in(
                 geo_conn,
                 (
                     "SELECT accession, address_country "
@@ -676,25 +676,6 @@ def _find_missing(
         return conn.execute(query).fetchall()
     finally:
         conn.close()
-
-
-def _query_in(
-    conn: sqlite3.Connection,
-    query_prefix: str,
-    items: list[str],
-    batch_size: int,
-    query_suffix: str = "",
-) -> list[tuple]:
-    results = []
-
-    for i in range(0, len(items), batch_size):
-        chunk = items[i : i + batch_size]
-        ph = ", ".join(["?"] * len(chunk))
-        results.extend(
-            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
-        )
-
-    return results
 
 
 def _update_many(

@@ -19,7 +19,7 @@ from psycopg.types.json import Jsonb
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
-from helpers import sqlite_connect
+from helpers import batch_query_in, sqlite_connect
 from transfer.pg_fields import (
     _AE_CENTER_GEO_FIELDS,
     _AE_EXPERIMENTS_INSERT_COLS,
@@ -479,25 +479,6 @@ def _get_table_info(conn: sqlite3.Connection, table_name: str) -> list[str]:
     return [row[1] for row in rows]
 
 
-def _query_in(
-    conn: sqlite3.Connection,
-    query_prefix: str,
-    items: list[str],
-    batch_size: int,
-    query_suffix: str = "",
-) -> list[tuple]:
-    results = []
-    chunk_size = min(batch_size, 999)  # sqlite's max variable number
-
-    for i in range(0, len(items), chunk_size):
-        chunk = items[i : i + chunk_size]
-        ph = ", ".join(["?"] * len(chunk))
-        results.extend(
-            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
-        )
-    return results
-
-
 def _execute_batch_inserts(
     pg_conn: psycopg.Connection,
     insert_query: str,
@@ -647,7 +628,7 @@ def _geo_series_batch_modifier(
             unique_samples = list(set(all_samples))
             conn = _get_conn(geo_db_file)
 
-            for sample_acc, org_json, channels_json, platform in _query_in(
+            for sample_acc, org_json, channels_json, platform in batch_query_in(
                 conn,
                 """SELECT
                     gs.accession, gp.organism, gs.channels,
@@ -683,7 +664,7 @@ def _geo_series_batch_modifier(
             unique_aliases = list(alias_set)
             conn = _get_conn(sra_db_file)
 
-            for study, strategy, model in _query_in(
+            for study, strategy, model in batch_query_in(
                 conn,
                 """SELECT study, library_strategy, instrument_model
                 FROM sra_experiments WHERE study""",
@@ -701,7 +682,7 @@ def _geo_series_batch_modifier(
             unique_accessions = list(set(all_accessions))
             conn = _get_conn(unified_metadata_db_file)
 
-            for acc, aliases_json in _query_in(
+            for acc, aliases_json in batch_query_in(
                 conn,
                 "SELECT canonical_accession, aliases "
                 "FROM unified_metadata WHERE canonical_accession",
@@ -718,7 +699,7 @@ def _geo_series_batch_modifier(
             unique_accessions = list(set(all_accessions))
             conn = _get_conn(geo_db_file)
 
-            for acc, person, department, organization, country in _query_in(
+            for acc, person, department, organization, country in batch_query_in(
                 conn,
                 """SELECT
                     accession, person, department,
@@ -878,7 +859,7 @@ def _sra_studies_batch_modifier(
             unique_submissions = list(all_submissions)
             conn = _get_conn(sra_db_file)
 
-            for sub, org in _query_in(
+            for sub, org in batch_query_in(
                 conn,
                 "SELECT submission, scientific_name FROM sra_samples WHERE submission",
                 unique_submissions,
@@ -895,7 +876,7 @@ def _sra_studies_batch_modifier(
             unique_submissions = list(all_submissions)
             conn = _get_conn(sra_db_file)
 
-            for sub, strategy, model, platform in _query_in(
+            for sub, strategy, model, platform in batch_query_in(
                 conn,
                 """SELECT
                     submission, library_strategy, instrument_model,
@@ -917,7 +898,7 @@ def _sra_studies_batch_modifier(
             unique_accessions = list(set(all_accessions))
             conn = _get_conn(unified_metadata_db_file)
 
-            for acc, country in _query_in(
+            for acc, country in batch_query_in(
                 conn,
                 """SELECT canonical_accession, country
                 FROM unified_centers WHERE canonical_accession""",
@@ -985,7 +966,7 @@ def _arrayexpress_experiments_batch_modifier(
         if all_accessions:
             unique_accessions = list(set(all_accessions))
             conn = _get_conn(unified_metadata_db_file)
-            for acc, country in _query_in(
+            for acc, country in batch_query_in(
                 conn,
                 """SELECT canonical_accession, country
                 FROM unified_centers WHERE canonical_accession""",
@@ -1517,7 +1498,7 @@ def _transfer_study_publications(
         if all_pmids:
             unique_pmids = list(all_pmids)
             pm_conn.row_factory = sqlite3.Row
-            for row in _query_in(
+            for row in batch_query_in(
                 pm_conn,
                 "SELECT * FROM pubmed_metadata WHERE pmid",
                 unique_pmids,

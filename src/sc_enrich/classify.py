@@ -115,6 +115,7 @@ def sc_classify(
     is_dry_run: bool,
 ) -> None:
     conn = sqlite_connect(str(unified_metadata_db_file))
+    logger.info("re-building fts index, might take a while...")
     _build_fts_index(conn)
 
     candidates: set[str] = set()

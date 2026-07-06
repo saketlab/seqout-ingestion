@@ -139,7 +139,8 @@ sc_enrich_classify *flags:
 
 [group("sc_enrich")]
 sc_enrich_yuj_setup:
-    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich yuj_setup \
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich counter-setup \
+        --output-dir {{ DATA_DIR }} \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         --geo-db-file {{ GEO_DB_FILE }} \
         --ae-db-file {{ AE_DB_FILE }} \

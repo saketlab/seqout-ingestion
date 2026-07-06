@@ -24,7 +24,7 @@ import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 from tqdm import tqdm
 
-from helpers import download_file, sqlite_connect
+from helpers import batch_query_in, download_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ def sc_counter(
         else:
             accessions.append(accession)
 
-    rows = _query_in(
+    rows = batch_query_in(
         conn,
         "SELECT canonical_accession, aliases "
         "FROM unified_metadata WHERE canonical_accession",
@@ -183,7 +183,7 @@ def sc_counter(
 
     gse_list = [acc for acc in accessions_to_process if acc.startswith("GSE")]
     try:
-        rows = _query_in(
+        rows = batch_query_in(
             geo_conn,
             "SELECT accession, samples_ref FROM geo_series WHERE accession",
             gse_list,
@@ -219,7 +219,7 @@ def sc_counter(
 
     all_gsms = list(gsm_to_gse.keys())
     if all_gsms:
-        rows = _query_in(
+        rows = batch_query_in(
             geo_conn,
             "SELECT accession, supplementary_data FROM geo_samples WHERE accession",
             all_gsms,
@@ -526,25 +526,6 @@ def _check_disk_space(path: Path, min_bytes: int = MIN_DISK_SPACE_BYTES) -> bool
         return usage.free >= min_bytes
 
 
-def _query_in(
-    conn: sqlite3.Connection,
-    query_prefix: str,
-    items: list[str],
-    batch_size: int,
-    query_suffix: str = "",
-) -> list[tuple]:
-    results = []
-
-    for i in range(0, len(items), batch_size):
-        chunk = items[i : i + batch_size]
-        ph = ", ".join(["?"] * len(chunk))
-        results.extend(
-            conn.execute(f"{query_prefix} IN ({ph}) {query_suffix}", chunk).fetchall(),
-        )
-
-    return results
-
-
 def _flush_updates(
     conn: sqlite3.Connection,
     updates: list[tuple[str, int]],
@@ -594,10 +575,6 @@ def _flush_updates(
     conn.commit()
 
 
-def _contains_any(s: str, substrings: list[str]) -> bool:
-    return any(sub in s for sub in substrings)
-
-
 def _classify_file(path: str) -> FileType:  # noqa: PLR0911
     ignore_words = [
         "barcode",
@@ -631,6 +608,10 @@ def _classify_file(path: str) -> FileType:  # noqa: PLR0911
     if _contains_any(path, [".tar", ".tgz"]):
         return FileType.Tar
     return FileType.Unknown
+
+
+def _contains_any(s: str, substrings: list[str]) -> bool:
+    return any(sub in s for sub in substrings)
 
 
 def _is_gzipped(path: Path) -> bool:

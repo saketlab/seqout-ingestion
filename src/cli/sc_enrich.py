@@ -18,15 +18,15 @@ def classify(
 
 
 @sc_enrich_app.command()
-def counter_yuj_setup(
-    base_output_dir: Path = typer.Option(...),
+def counter_setup(
+    output_dir: Path = typer.Option(...),
     unified_metadata_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
     ae_db_file: Path = typer.Option(...),
     batch_size: int = typer.Option(default=5000),
 ) -> None:
     yuj_setup(
-        base_output_dir,
+        output_dir,
         unified_metadata_db_file,
         geo_db_file,
         ae_db_file,
