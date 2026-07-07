@@ -11,6 +11,7 @@ import sqlite3
 import sys
 import tarfile
 import tempfile
+import threading
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
@@ -27,6 +28,9 @@ from tqdm import tqdm
 from helpers import batch_query_in, download_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
+
+rds_batch_processor: Any = None
+
 
 if TYPE_CHECKING:
     from rpy2.robjects.vectors import Vector
@@ -59,10 +63,17 @@ class DownloadLink:
         return self.url.split("/")[-1]
 
 
+@dataclasses.dataclass
+class _RdsBatchItem:
+    path: Path
+    result: tuple[int, str] | None
+    event: threading.Event
+
+
 SC_ENRICH_OUTPUT_DIR = "sc_enrich"
 MIN_DISK_SPACE_BYTES = 5 * 1024**3
 POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
-
+_RDS_BATCH_SIZE = 20
 
 FILE_TYPE_PRIORITY = [
     FileType.Barcodes,
@@ -98,6 +109,9 @@ def sc_counter(
         shutil.rmtree(output_dir, ignore_errors=True)
     output_dir.mkdir(exist_ok=True, parents=True)
 
+    global rds_batch_processor  # noqa: PLW0603
+    rds_batch_processor = _RdsBatchProcessor()
+
     tmp_dir = output_dir / ".tmp"
     tmp_dir.mkdir(exist_ok=True, parents=True)
 
@@ -120,10 +134,10 @@ def sc_counter(
     ae_conn = sqlite_connect(ae_db_file)
 
     columns = [row[1] for row in conn.execute("PRAGMA table_info(unified_metadata)")]
-    if "single_cell_count" not in columns:
+    if "single_cell_counts" not in columns:
         conn.execute(
             "ALTER TABLE unified_metadata "
-            "ADD COLUMN single_cell_count INTEGER DEFAULT 0;",
+            "ADD COLUMN single_cell_counts TEXT DEFAULT '{}';",
         )
 
     if "single_cell_file_format" not in columns:
@@ -140,7 +154,8 @@ def sc_counter(
     rows: list[tuple[str, str]] = conn.execute(
         "SELECT canonical_accession, source "
         "FROM unified_metadata WHERE is_single_cell = '1' "
-        "AND (single_cell_count IS NULL OR single_cell_count = 0);",
+        "AND (single_cell_counts IS NULL OR single_cell_counts = '0' "
+        "OR single_cell_counts = '{}');",
     ).fetchall()
 
     accessions: list[str | tuple[str, str]] = []
@@ -216,6 +231,7 @@ def sc_counter(
     download_links_mapping: dict[str, list[DownloadLink]] = defaultdict(
         list[DownloadLink],
     )
+    link_url_to_sample: dict[str, dict[str, str]] = defaultdict(dict[str, str])
 
     all_gsms = list(gsm_to_gse.keys())
     if all_gsms:
@@ -247,64 +263,51 @@ def sc_counter(
                 download_links_mapping[gse].append(
                     DownloadLink(type=file_type, url=url),
                 )
+                link_url_to_sample[gse][url] = gsm_accession
 
-    for series_accession in accessions_to_process:
-        if series_accession.startswith("GSE"):
-            if len(download_links_mapping.get(series_accession, [])) > 0:
-                continue
+    ae_missing = [
+        acc
+        for acc in accessions_to_process
+        if not acc.startswith("GSE") and acc not in download_links_mapping
+    ]
+    if ae_missing:
+        try:
+            rows = batch_query_in(
+                ae_conn,
+                "SELECT accession, processed_data_files "
+                "FROM arrayexpress_experiments WHERE accession",
+                ae_missing,
+                999,
+            )
+        except sqlite3.OperationalError:
+            logger.exception(
+                "database error querying arrayexpress_experiments (disk may be full)",
+            )
+            rows = []
 
-            series_row = geo_conn.execute(
-                "SELECT supplementary_data FROM geo_series WHERE accession = ?",
-                (series_accession,),
-            ).fetchone()
-            if series_row is None:
-                continue
-
-            supl_data_json_val: str | None = series_row[0]
-            if supl_data_json_val is None:
-                continue
-
-            supl_data = json.loads(supl_data_json_val)
-            for item in supl_data:
-                url = item.get("#text")
-                if url is None:
-                    continue
-
-                file_type = _classify_file(url)
-                if file_type == FileType.Tar:
-                    download_links_mapping[series_accession].append(
-                        DownloadLink(type=file_type, url=url),
-                    )
-                    break
-        else:
-            row = ae_conn.execute(
-                "SELECT processed_data_files "
-                "FROM arrayexpress_experiments WHERE accession = ?",
-                (series_accession,),
-            ).fetchone()
-            if row is None:
-                continue
-
-            processed_data_files_json = row[0]
+        for accession, processed_data_files_json in rows:
             if processed_data_files_json is None:
                 continue
-
             processed_data_files = json.loads(processed_data_files_json)
             for item in processed_data_files:
                 url = item.get("url")
                 if url is None:
                     continue
-
                 file_type = _classify_file(url)
                 if file_type == FileType.Unknown:
                     continue
-
-                download_links_mapping[series_accession].append(
+                download_links_mapping[accession].append(
                     DownloadLink(type=file_type, url=url),
                 )
+                link_url_to_sample[accession][url] = accession
 
     for links in download_links_mapping.values():
         links.sort(key=lambda x: FILE_TYPE_PRIORITY.index(x.type))
+
+    link_sample_map: dict[str, dict[int, str]] = {}
+    for acc, links in download_links_mapping.items():
+        by_url = link_url_to_sample.get(acc, {})
+        link_sample_map[acc] = {i: by_url[link.url] for i, link in enumerate(links)}
 
     pbar = tqdm(
         total=len(download_links_mapping.keys()),
@@ -314,8 +317,8 @@ def sc_counter(
     pbar_accessions: set[str] = set()
     accession_links: dict[str, list[DownloadLink]] = dict(download_links_mapping)
 
-    download_workers = num_workers // 3
-    process_workers = num_workers - download_workers
+    download_workers = max(1, num_workers * 3 // 4)
+    process_workers = max(1, num_workers - download_workers)
 
     with (
         ThreadPoolExecutor(max_workers=download_workers) as download_pool,
@@ -337,9 +340,9 @@ def sc_counter(
             # particularly for this script
             validate_content_length=False,
         )
-        updates: list[tuple[str, int]] = []
+        updates: list[tuple[str, str]] = []
         done_accessions: set[str] = set()
-        accession_max_count: dict[str, int] = {}
+        accession_sample_counts: dict[str, dict[str, int]] = {}
         accession_best_type: dict[str, str] = {}
         accession_remaining: dict[str, int] = {}
         sc_found: int = 0
@@ -352,15 +355,18 @@ def sc_counter(
                 return
             done_accessions.add(accession)
 
+            sample_counts = accession_sample_counts.get(accession, {})
+            json_str = json.dumps(sample_counts, sort_keys=True)
+
             if check:
-                if accession_max_count.get(accession, 0) == 0:
-                    updates.append((accession, 0))
+                if not sample_counts:
+                    updates.append((accession, json_str))
                     if len(updates) >= batch_size:
                         _flush_updates(conn, updates, accession_best_type, check=True)
                         updates.clear()
                 pbar.set_description(f"sc: {sc_found}/{pbar.total}")
             else:
-                updates.append((accession, accession_max_count.get(accession, 0)))
+                updates.append((accession, json_str))
                 if len(updates) >= batch_size:
                     _flush_updates(conn, updates, accession_best_type)
                     updates.clear()
@@ -463,7 +469,7 @@ def sc_counter(
                         _on_link_done(accession)
 
                 if f in process_futures:
-                    single_cell_count, fmt = f.result()
+                    single_cell_counts, fmt = f.result()
                     accession, dest_path, sniffed_path, file_type, link_idx = (
                         process_futures.pop(f)
                     )
@@ -478,13 +484,20 @@ def sc_counter(
                         _on_link_done(accession)
                         continue
 
-                    if check and single_cell_count > 0:
+                    sample = link_sample_map.get(accession, {}).get(link_idx, accession)
+
+                    if check and single_cell_counts > 0:
                         done_accessions.add(accession)
-                        accession_max_count[accession] = single_cell_count
+                        accession_sample_counts.setdefault(accession, {})[sample] = (
+                            single_cell_counts
+                        )
                         accession_best_type[accession] = fmt
                         sc_found += 1
                         pbar.set_description(f"SC: {sc_found}/{pbar.total}")
-                        updates.append((accession, single_cell_count))
+                        json_str = json.dumps(
+                            accession_sample_counts[accession], sort_keys=True
+                        )
+                        updates.append((accession, json_str))
                         if len(updates) >= batch_size:
                             _flush_updates(
                                 conn, updates, accession_best_type, check=True
@@ -496,11 +509,16 @@ def sc_counter(
                         _on_link_done(accession)
                         continue
 
-                    prev = accession_max_count.get(accession, 0)
-                    if single_cell_count > prev:
-                        accession_max_count[accession] = single_cell_count
+                    prev = accession_sample_counts.get(accession, {}).get(sample, 0)
+                    if single_cell_counts > prev:
+                        accession_sample_counts.setdefault(accession, {})[sample] = (
+                            single_cell_counts
+                        )
                         accession_best_type[accession] = fmt
                     _on_link_done(accession)
+
+            if rds_batch_processor is not None:
+                rds_batch_processor.flush_all()
 
         if updates:
             _flush_updates(conn, updates, accession_best_type, check=check)
@@ -513,6 +531,8 @@ def sc_counter(
             len(download_links_mapping),
         )
 
+    if rds_batch_processor is not None:
+        rds_batch_processor.flush_all()
     _db_flush()
     shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -528,7 +548,7 @@ def _check_disk_space(path: Path, min_bytes: int = MIN_DISK_SPACE_BYTES) -> bool
 
 def _flush_updates(
     conn: sqlite3.Connection,
-    updates: list[tuple[str, int]],
+    updates: list[tuple[str, str]],
     accession_best_type: dict[str, str] | None = None,
     *,
     check: bool = False,
@@ -536,40 +556,35 @@ def _flush_updates(
     if accession_best_type is None:
         accession_best_type = {}
 
-    non_sc = [acc for acc, cnt in updates if cnt == 0]
-    sc = [(acc, cnt) for acc, cnt in updates if cnt > 0]
+    non_sc = [acc for acc, cnt_str in updates if cnt_str == "{}"]
+    sc = [(acc, cnt_str) for acc, cnt_str in updates if cnt_str != "{}"]
 
     if non_sc:
         placeholders = ", ".join(repr(acc) for acc in non_sc)
-        if check:
-            conn.execute(
-                f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
-                f"single_cell_modality = '', single_cell_file_format = '' "
-                f"WHERE canonical_accession IN ({placeholders})",
-            )
-        else:
-            conn.execute(
-                f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
-                f"single_cell_modality = '', single_cell_count = 0, "
-                f"single_cell_file_format = '' "
-                f"WHERE canonical_accession IN ({placeholders})",
-            )
+        conn.execute(
+            f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
+            f"single_cell_modality = '', single_cell_counts = '{{}}', "
+            f"single_cell_file_format = '' "
+            f"WHERE canonical_accession IN ({placeholders})",
+        )
 
-    for accession, single_cell_count in sc:
-        fmt = accession_best_type.get(accession, "")
+    if sc:
         if check:
-            conn.execute(
+            conn.executemany(
                 "UPDATE unified_metadata "
                 "SET is_single_cell = 1, single_cell_file_format = ? "
                 "WHERE canonical_accession = ?",
-                (fmt, accession),
+                [(accession_best_type.get(acc, ""), acc) for acc, _ in sc],
             )
         else:
-            conn.execute(
+            sc_params = [
+                (cnt_str, accession_best_type.get(acc, ""), acc) for acc, cnt_str in sc
+            ]
+            conn.executemany(
                 "UPDATE unified_metadata "
-                "SET single_cell_count = ?, single_cell_file_format = ? "
+                "SET single_cell_counts = ?, single_cell_file_format = ? "
                 "WHERE canonical_accession = ?",
-                (single_cell_count, fmt, accession),
+                sc_params,
             )
 
     conn.commit()
@@ -763,7 +778,7 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
                     continue
 
                 file_type, sniffed_path = result
-                single_cell_count, _ = _is_sc(
+                single_cell_counts, _ = _is_sc(
                     sniffed_path,
                     file_type,
                     chunk_size,
@@ -773,7 +788,7 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
 
                 if sniffed_path != tmp_path:
                     sniffed_path.unlink(missing_ok=True)
-                max_count = max(max_count, single_cell_count)
+                max_count = max(max_count, single_cell_counts)
 
             shutil.rmtree(extract_dir, ignore_errors=True)
 
@@ -799,16 +814,24 @@ def _process_h5(path: Path, _: int) -> int:
     n_cells = None
 
     with h5py.File(path, "r") as f:
-
-        def find_barcodes(name: str, obj: Any) -> None:
-            nonlocal n_cells
-            if n_cells is not None:
-                return
-            if obj is not None and name.endswith("/barcodes"):
+        for candidate in ("matrix/barcodes", "barcodes"):
+            if candidate in f:
                 with contextlib.suppress(TypeError):
-                    n_cells = len(obj)
+                    n_cells = len(f[candidate])
+                if n_cells is not None:
+                    break
 
-        f.visititems(find_barcodes)
+        if n_cells is None:
+
+            def find_barcodes(name: str, obj: Any) -> None:
+                nonlocal n_cells
+                if n_cells is not None:
+                    return
+                if obj is not None and name.endswith("/barcodes"):
+                    with contextlib.suppress(TypeError):
+                        n_cells = len(obj)
+
+            f.visititems(find_barcodes)
 
     return n_cells if n_cells is not None and n_cells > 1 else 0
 
@@ -883,7 +906,9 @@ def _process_rds(path: Path, _: int) -> tuple[int, str]:
     try:
         result = pyreadr.read_r(path)
     except LibrdataError:
-        return _process_rds_rpy2(path)
+        if rds_batch_processor is not None:
+            return rds_batch_processor.submit(path)
+        return (0, "unknown")
 
     if not result:
         logger.error("no objects found in rds %s", path)
@@ -899,110 +924,146 @@ def _process_rds(path: Path, _: int) -> tuple[int, str]:
     return (n_cells if n_cells > 1 else 0, "dataframe")
 
 
-def _process_rds_rpy2(path: Path) -> tuple[int, str]:
+class _RdsBatchProcessor:
+    def __init__(self, batch_size: int = _RDS_BATCH_SIZE) -> None:
+        self.batch_size = batch_size
+        self._lock = threading.Lock()
+        self._pending: list[_RdsBatchItem] = []
+
+    def submit(self, path: Path) -> tuple[int, str]:
+        item = _RdsBatchItem(path=path, result=None, event=threading.Event())
+        should_flush = False
+        with self._lock:
+            self._pending.append(item)
+            if len(self._pending) >= self.batch_size:
+                should_flush = True
+        if should_flush:
+            self._flush()
+        item.event.wait()
+        return item.result if item.result is not None else (0, "unknown")
+
+    def _flush(self) -> bool:
+        with self._lock:
+            batch = self._pending[: self.batch_size]
+            self._pending = self._pending[self.batch_size :]
+        if not batch:
+            return False
+        paths = [item.path for item in batch]
+        try:
+            results = _rds_batch_rpy2(paths)
+        except Exception:
+            logger.exception("batch RDS rpy2 processing failed")
+            results = [(0, "unknown")] * len(paths)
+        with self._lock:
+            for item, result in zip(batch, results, strict=True):
+                item.result = result
+                item.event.set()
+        return True
+
+    def flush_all(self) -> None:
+        while self._flush():
+            pass
+
+
+def _rds_batch_rpy2(paths: list[Path]) -> list[tuple[int, str]]:
+    paths_r = ", ".join(json.dumps(str(p)) for p in paths)
+    r_script = f"""
+    paths <- c({paths_r})
+    results <- vector("list", length(paths))
+    for (i in seq_along(paths)) {{
+        obj <- tryCatch(readRDS(paths[i]), error = function(e) NULL)
+        if (is.null(obj)) {{
+            results[[i]] <- c(0L, "unknown")
+            next
+        }}
+        n_cells <- 0L
+        obj_type <- "unknown"
+        if (inherits(obj, "Seurat")) {{
+            obj_type <- "seurat"
+            counts <- tryCatch(
+                Seurat::GetAssayData(obj, layer = "counts"),
+                error = function(e) tryCatch(
+                    Seurat::GetAssayData(obj, slot = "counts"),
+                    error = function(e2) NULL
+                )
+            )
+            if (!is.null(counts)) n_cells <- ncol(counts)
+        }} else if (inherits(obj, "SeuratObject")) {{
+            obj_type <- "seurat"
+            counts <- tryCatch(
+                SeuratObject::GetAssayData(obj, layer = "counts"),
+                error = function(e) NULL
+            )
+            if (!is.null(counts)) n_cells <- ncol(counts)
+        }} else if (inherits(obj, "cell_data_set")) {{
+            obj_type <- "cell_data_set"
+            n_cells <- ncol(obj)
+        }} else if (inherits(obj, "SpatialExperiment")) {{
+            obj_type <- "SpatialExperiment"
+            counts <- tryCatch(
+                SpatialExperiment::counts(obj),
+                error = function(e) NULL
+            )
+            if (!is.null(counts)) n_cells <- ncol(counts)
+        }} else if (inherits(obj, "SingleCellExperiment")) {{
+            obj_type <- "SingleCellExperiment"
+            counts <- tryCatch(
+                SingleCellExperiment::counts(obj),
+                error = function(e) NULL
+            )
+            if (!is.null(counts)) n_cells <- ncol(counts)
+        }} else if (inherits(obj, "CellDataSet")) {{
+            obj_type <- "CellDataSet"
+            exprs_mat <- tryCatch(
+                Biobase::exprs(obj),
+                error = function(e) NULL
+            )
+            if (!is.null(exprs_mat)) n_cells <- ncol(exprs_mat)
+        }} else if (inherits(obj, "ExpressionSet")) {{
+            obj_type <- "ExpressionSet"
+            exprs_mat <- tryCatch(
+                Biobase::exprs(obj),
+                error = function(e) NULL
+            )
+            if (!is.null(exprs_mat)) n_cells <- ncol(exprs_mat)
+        }} else if (inherits(obj, "liger")) {{
+            obj_type <- "liger"
+            raw_data <- tryCatch(
+                obj@raw.data,
+                error = function(e) NULL
+            )
+            if (!is.null(raw_data)) n_cells <- sum(sapply(raw_data, ncol))
+        }} else if (inherits(obj, "Pagoda2")) {{
+            obj_type <- "Pagoda2"
+            n_cells <- nrow(obj$counts)
+        }} else if (inherits(obj, "Conos")) {{
+            obj_type <- "Conos"
+            n_cells <- tryCatch(
+                sum(sapply(obj$samples, ncol)),
+                error = function(e) 0L
+            )
+        }} else if (is.data.frame(obj) || is.matrix(obj)) {{
+            obj_type <- "dataframe"
+            n_cells <- ncol(obj)
+        }} else {{
+            n_cells <- tryCatch(ncol(obj), error = function(e) 0L)
+            if (is.null(n_cells) || is.na(n_cells)) n_cells <- 0L
+        }}
+        results[[i]] <- c(n_cells, obj_type)
+    }}
+    results
+    """
+
     try:
-        ro.r(f'obj <- readRDS("{path}")')
-
-        vec = cast(
-            "Vector",
-            ro.r("""
-            n_cells <- 0
-            obj_type <- "unknown"
-
-            if (inherits(obj, "Seurat")) {
-                obj_type <- "seurat"
-                counts <- tryCatch(
-                    Seurat::GetAssayData(obj, layer = "counts"),
-                    error = function(e) tryCatch(
-                        Seurat::GetAssayData(obj, slot = "counts"),
-                        error = function(e2) NULL
-                    )
-                )
-                if (!is.null(counts)) {
-                    n_cells <- ncol(counts)
-                }
-            } else if (inherits(obj, "SeuratObject")) {
-                obj_type <- "seurat"
-                counts <- tryCatch(
-                    SeuratObject::GetAssayData(obj, layer = "counts"),
-                    error = function(e) NULL
-                )
-                if (!is.null(counts)) {
-                    n_cells <- ncol(counts)
-                }
-            } else if (inherits(obj, "cell_data_set")) {
-                obj_type <- "cell_data_set"
-                n_cells <- ncol(obj)
-            } else if (inherits(obj, "SpatialExperiment")) {
-                obj_type <- "SpatialExperiment"
-                counts <- tryCatch(
-                    SpatialExperiment::counts(obj),
-                    error = function(e) NULL
-                )
-                if (!is.null(counts)) {
-                    n_cells <- ncol(counts)
-                }
-            } else if (inherits(obj, "SingleCellExperiment")) {
-                obj_type <- "SingleCellExperiment"
-                counts <- tryCatch(
-                    SingleCellExperiment::counts(obj),
-                    error = function(e) NULL
-                )
-                if (!is.null(counts)) {
-                    n_cells <- ncol(counts)
-                }
-            } else if (inherits(obj, "CellDataSet")) {
-                obj_type <- "CellDataSet"
-                exprs_mat <- tryCatch(
-                    Biobase::exprs(obj),
-                    error = function(e) NULL
-                )
-                if (!is.null(exprs_mat)) {
-                    n_cells <- ncol(exprs_mat)
-                }
-            } else if (inherits(obj, "ExpressionSet")) {
-                obj_type <- "ExpressionSet"
-                exprs_mat <- tryCatch(
-                    Biobase::exprs(obj),
-                    error = function(e) NULL
-                )
-                if (!is.null(exprs_mat)) {
-                    n_cells <- ncol(exprs_mat)
-                }
-            } else if (inherits(obj, "liger")) {
-                obj_type <- "liger"
-                raw_data <- tryCatch(
-                    obj@raw.data,
-                    error = function(e) NULL
-                )
-                if (!is.null(raw_data)) {
-                    n_cells <- sum(sapply(raw_data, ncol))
-                }
-            } else if (inherits(obj, "Pagoda2")) {
-                obj_type <- "Pagoda2"
-                n_cells <- nrow(obj$counts)
-            } else if (inherits(obj, "Conos")) {
-                obj_type <- "Conos"
-                n_cells <- tryCatch(
-                    sum(sapply(obj$samples, ncol)),
-                    error = function(e) 0
-                )
-            } else if (is.data.frame(obj) || is.matrix(obj)) {
-                obj_type <- "dataframe"
-                n_cells <- ncol(obj)
-            } else {
-                n_cells <- tryCatch(ncol(obj), error = function(e) 0)
-                if (is.null(n_cells) || is.na(n_cells)) n_cells <- 0
-            }
-            c(n_cells, obj_type)
-        """),
-        )
-
-        n_cells = int(vec[0])
-        obj_type = str(vec[1])
-
+        raw = cast("list", ro.r(r_script))
     except Exception:
-        logger.exception("rpy2 fallback failed for %s", path)
-        return (0, "unknown")
-    else:
-        return (n_cells if n_cells > 1 else 0, obj_type)
+        logger.exception("batch RDS rpy2 processing failed")
+        return [(0, "unknown")] * len(paths)
+
+    parsed = []
+    for i in range(len(raw)):
+        item = cast("Vector", raw[i])
+        n_cells = int(item[0])
+        obj_type = str(item[1])
+        parsed.append((n_cells if n_cells > 1 else 0, obj_type))
+    return parsed

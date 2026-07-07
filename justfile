@@ -142,6 +142,7 @@ geocode *flags:
 sc_enrich_classify *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich classify \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        --batch-size {{ BATCH_SIZE }} \
         {{ flags }}
 
 [group("sc_enrich")]
