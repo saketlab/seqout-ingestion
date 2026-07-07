@@ -1,6 +1,5 @@
 set dotenv-load
 
-export PYTHON_GIL := "0"
 export DATA_DIR := env("DATA_DIR", "/data/share/seqout")
 
 LOG_LEVEL := env("LOG_LEVEL", "info")
@@ -28,6 +27,13 @@ ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", DATA_DIR + "/data/assay_mapping.
 TAXONOMY_MAPPING_FILE := env("TAXONOMY_MAPPING_FILE", DATA_DIR + "/data/ncbi_taxonomy_common_names.csv")
 ROR_DATA := env("ROR_DATA", "/data/ror_data.json")
 GEOCODING_CACHE_FILE := env("GEOCODING_CACHE_FILE", DATA_DIR + "/geocoding/geocoding_cache.json")
+
+CHROMA_DB_DIR := env("CHROMA_DB_DIR", DATA_DIR + "/embeddings/prod")
+NEIGHBORS_DB_FILE := env("NEIGHBORS_DB_FILE", DATA_DIR + "/embeddings/neighbors.sqlite3")
+LABELS_DIR := env("LABELS_DIR", DATA_DIR + "/embeddings/labels")
+EMBED_MODEL := env("EMBED_MODEL", "codefuse-ai/F2LLM-v2-8B")
+VLLM_BASE_URL := env("VLLM_BASE_URL", "http://localhost:1729/v1")
+LABEL_MODEL := env("LABEL_MODEL", "unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q8_K_XL")
 
 PYTHON := ".venv/bin/python"
 ENTRYPOINT := "./src/main.py --log-level " + LOG_LEVEL
@@ -162,3 +168,54 @@ transfer_parquet *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer parquet \
         {{ _transfer_args }} \
         {{ flags }}
+
+[group("embed")]
+embed_run *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed run \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --ae-db-file {{ AE_DB_FILE }} \
+        --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --model-name {{ EMBED_MODEL }} \
+        {{ flags }}
+
+[group("embed")]
+embed_coords *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed coords \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+[group("embed")]
+embed_cluster *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed cluster \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+[group("embed")]
+embed_neighbors *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed neighbors \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        {{ flags }}
+
+[group("embed")]
+embed_labels *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed labels \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --labels-dir {{ LABELS_DIR }} \
+        --vllm-base-url {{ VLLM_BASE_URL }} \
+        --model {{ LABEL_MODEL }} \
+        {{ flags }}
+
+[group("embed")]
+embed_transfer *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed transfer \
+        --pg-url "$PG_URL" \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        --labels-dir {{ LABELS_DIR }} \
+        {{ flags }}
+
+[group("embed")]
+embed_all: embed_run embed_coords embed_cluster embed_neighbors embed_labels embed_transfer

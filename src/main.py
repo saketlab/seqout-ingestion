@@ -4,6 +4,7 @@ from typing import Literal
 import typer
 
 from cli.backfill import backfill_app
+from cli.embed import embed_app
 from cli.geocode import geocode_app
 from cli.ingest import ingest_app
 from cli.sc_enrich import sc_enrich_app
@@ -43,6 +44,7 @@ cli.add_typer(unify_app, name="unify")
 cli.add_typer(geocode_app)
 cli.add_typer(sc_enrich_app, name="sc_enrich")
 cli.add_typer(transfer_app, name="transfer")
+cli.add_typer(embed_app, name="embed")
 
 if __name__ == "__main__":
     cli()

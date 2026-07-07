@@ -1,12 +1,11 @@
+from __future__ import annotations
+
 import functools
 import logging
 import multiprocessing as mp
-import sqlite3
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from multiprocessing.sharedctypes import Synchronized
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import tqdm
@@ -15,6 +14,12 @@ from pysradb.sraweb import SRAweb
 from backfill.backfill_utils import _chunked, _parse_pmid
 from helpers import exec_query_from_file, sqlite_connect
 from pipeline_types import Datasource
+
+if TYPE_CHECKING:
+    import sqlite3
+    from collections.abc import Callable
+    from multiprocessing.sharedctypes import Synchronized
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
