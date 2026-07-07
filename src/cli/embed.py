@@ -2,12 +2,6 @@ from pathlib import Path
 
 import typer
 
-from embed.cluster import compute_clusters
-from embed.coords import compute_coords
-from embed.embedder import embed_new
-from embed.labels import generate_labels
-from embed.neighbors import compute_neighbors
-
 embed_app = typer.Typer()
 
 
@@ -20,6 +14,8 @@ def run(
     chroma_db_dir: Path = typer.Option(...),
     model_name: str = typer.Option("codefuse-ai/F2LLM-v2-8B"),
 ) -> None:
+    from embed.embedder import embed_new
+
     embed_new(
         geo_db_file,
         sra_db_file,
@@ -34,6 +30,8 @@ def run(
 def coords(
     chroma_db_dir: Path = typer.Option(...),
 ) -> None:
+    from embed.coords import compute_coords
+
     compute_coords(chroma_db_dir)
 
 
@@ -41,6 +39,8 @@ def coords(
 def cluster(
     chroma_db_dir: Path = typer.Option(...),
 ) -> None:
+    from embed.cluster import compute_clusters
+
     compute_clusters(chroma_db_dir)
 
 
@@ -51,6 +51,8 @@ def neighbors(
     k: int = typer.Option(300),
     query_chunk: int = typer.Option(1024),
 ) -> None:
+    from embed.neighbors import compute_neighbors
+
     compute_neighbors(chroma_db_dir, neighbors_db_file, k, query_chunk)
 
 
@@ -61,4 +63,6 @@ def labels(
     vllm_base_url: str = typer.Option("http://localhost:1729/v1"),
     model: str = typer.Option("unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q8_K_XL"),
 ) -> None:
+    from embed.labels import generate_labels
+
     generate_labels(chroma_db_dir, labels_dir, vllm_base_url, model)

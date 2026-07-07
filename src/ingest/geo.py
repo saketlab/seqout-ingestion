@@ -126,9 +126,11 @@ async def ingest_geo(
 
     downloader = functools.partial(
         download_file,
+        num_workers=num_workers,
         num_retries=retries,
         timeout=timeout_,
         max_wait=max_timeout,
+        validate_content_length=False,
     )
 
     exec_query_from_file("tables/geo.sql", db_file)
@@ -164,6 +166,7 @@ async def _build_geo_dict(
     async with httpx.AsyncClient(
         limits=limits,
         timeout=timeout_config,
+        follow_redirects=True,
     ) as session:
         resp_text = await _get(
             session,
@@ -198,7 +201,8 @@ async def _build_geo_dict(
         ]
         fetch_all_results: list[list[str]] = await tqdm.gather(
             *fetch_all_tasks,
-            desc="fetching all accessions",
+            desc="building geo dict",
+            unit="series",
         )
 
         all_series_accession_mapping: dict[str, list[str]] = {

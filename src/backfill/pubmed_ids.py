@@ -228,15 +228,13 @@ def _worker(
 
     for batch in _chunked(data, batch_size):
         try:
-            sra_df = (
-                sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
-            )
+            pm_df = sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
         except KeyError:
-            sra_df = pd.DataFrame()
+            pm_df = pd.DataFrame()
 
         pmid_updates = []
 
-        for _, row in sra_df.iterrows():
+        for _, row in pm_df.iterrows():
             acc = row.get(col_name)
             pmid = _parse_pmid(row.get("pmid"))
             if acc and pmid:

@@ -3,9 +3,6 @@ from pathlib import Path
 import typer
 
 from embed.embed_constants import TransferStep
-from transfer.embed import embed_transfer
-from transfer.parquet import parquet_transfer
-from transfer.postgres import postgres_transfer
 
 transfer_app = typer.Typer()
 
@@ -24,6 +21,8 @@ def postgres(
     num_retries: int = typer.Option(3, "--retries"),
     num_workers: int = typer.Option(4, "--workers"),
 ) -> None:
+    from transfer.postgres import postgres_transfer
+
     postgres_transfer(
         pg_url,
         sra_db_file,
@@ -52,6 +51,8 @@ def parquet(
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
 ) -> None:
+    from transfer.parquet import parquet_transfer
+
     parquet_transfer(
         output_dir,
         sra_db_file,
@@ -78,6 +79,8 @@ def embed(
         "(coords-neighbors -> coords2d -> labels)",
     ),
 ) -> None:
+    from transfer.embed import embed_transfer
+
     embed_transfer(
         pg_url,
         chroma_db_dir,
