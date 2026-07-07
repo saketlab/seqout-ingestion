@@ -2,6 +2,8 @@ from pathlib import Path
 
 import typer
 
+from embed.embed_constants import TransferStep
+from transfer.embed import embed_transfer
 from transfer.parquet import parquet_transfer
 from transfer.postgres import postgres_transfer
 
@@ -61,4 +63,25 @@ def parquet(
         download_links_db_file,
         num_workers,
         batch_size,
+    )
+
+
+@transfer_app.command()
+def embed(
+    pg_url: str = typer.Option(...),
+    chroma_db_dir: Path = typer.Option(...),
+    neighbors_db_file: Path = typer.Option(...),
+    labels_dir: Path = typer.Option(...),
+    start_from: TransferStep = typer.Option(
+        default=TransferStep.coords_neighbors,
+        help="resume the transfer from this sub-step onward "
+        "(coords-neighbors -> coords2d -> labels)",
+    ),
+) -> None:
+    embed_transfer(
+        pg_url,
+        chroma_db_dir,
+        neighbors_db_file,
+        labels_dir,
+        start_from=start_from,
     )

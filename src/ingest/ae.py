@@ -7,6 +7,7 @@ import re
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import httpx
 import humanfriendly
@@ -328,7 +329,7 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
     with filepath.open() as f:
         data = json.load(f)
 
-    result: dict[str, str | int | list | dict | None] = {
+    result: dict[str, Any] = {
         "accession": accession,
         "overflow": {},
     }
@@ -339,7 +340,7 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
 
     external_links = []
     processed_files = []
-    exp_factors_detail = []
+    exp_factors_detail: list = []
     authors = []
     orgs = []
     protocol_texts = []
@@ -349,7 +350,7 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
         items = _json_coerce_list(it)
         for sub in items:
             sub_type = sub.get("type")
-            if not type:
+            if not sub_type:
                 continue
 
             attrs = {a["name"]: a.get("value", "") for a in sub.get("attributes", [])}
@@ -497,7 +498,7 @@ def _parse_idf(filepath: Path) -> dict | None:
         "Protocol Type": ("protocol_types", _idf_to_json_array),
     }
 
-    result: dict[str, str | dict | None] = {"overflow": {}}
+    result: dict[str, Any] = {"overflow": {}}
     rows = []
 
     with filepath.open() as f:
@@ -529,7 +530,7 @@ def _merge_json_and_idf(json_data: dict | None, idf_data: dict | None) -> dict |
     if not json_data and not idf_data:
         return None
 
-    result = {
+    result: dict[str, Any] = {
         "accession": None,
         "title": None,
         "organism": None,

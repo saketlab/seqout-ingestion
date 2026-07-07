@@ -1595,9 +1595,9 @@ def _transfer_cross_refs(
                         pmid_groups.append((str(acc), p, str(source)))
 
         if pmid_groups:
-            cols = ["accession", "pubmed_id", "source"]
-            cols_str = ", ".join(cols)
-            ph = ", ".join(["%s"] * len(cols))
+            pmid_cols = ["accession", "pubmed_id", "source"]
+            cols_str = ", ".join(pmid_cols)
+            ph = ", ".join(["%s"] * len(pmid_cols))
             insert_q = f"""INSERT INTO cross_ref_pubmed ({cols_str})
                 VALUES ({ph}) ON CONFLICT (accession, pubmed_id, source) DO UPDATE"""  # noqa: S608
             _execute_batch_inserts(
@@ -1611,15 +1611,15 @@ def _transfer_cross_refs(
 
         for table_name, groups in ref_groups.items():
             if table_name == "cross_ref_ae":
-                cols = ["ae_accession", "target_accession", "link_type"]
+                ref_cols = ["ae_accession", "target_accession", "link_type"]
             elif table_name == "cross_ref_ena":
-                cols = ["ena_accession", "target_accession", "link_type"]
+                ref_cols = ["ena_accession", "target_accession", "link_type"]
             else:
-                cols = ["geo_accession", "target_accession", "link_type"]
-            cols_str = ", ".join(cols)
-            ph = ", ".join(["%s"] * len(cols))
+                ref_cols = ["geo_accession", "target_accession", "link_type"]
+            cols_str = ", ".join(ref_cols)
+            ph = ", ".join(["%s"] * len(ref_cols))
             insert_q = f"""INSERT INTO {table_name} ({cols_str})
-                VALUES ({ph}) ON CONFLICT ({", ".join(cols)}) DO UPDATE"""  # noqa: S608
+                VALUES ({ph}) ON CONFLICT ({", ".join(ref_cols)}) DO UPDATE"""  # noqa: S608
             _execute_batch_inserts(
                 pg_conn,
                 insert_q,

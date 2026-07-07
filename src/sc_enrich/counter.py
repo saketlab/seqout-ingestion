@@ -253,18 +253,18 @@ def sc_counter(
             if len(download_links_mapping.get(series_accession, [])) > 0:
                 continue
 
-            rows = geo_conn.execute(
+            series_row = geo_conn.execute(
                 "SELECT supplementary_data FROM geo_series WHERE accession = ?",
                 (series_accession,),
             ).fetchone()
-            if rows is None:
+            if series_row is None:
                 continue
 
-            supl_data_json = rows[0]
-            if supl_data_json is None:
+            supl_data_json_val: str | None = series_row[0]
+            if supl_data_json_val is None:
                 continue
 
-            supl_data = json.loads(supl_data_json)
+            supl_data = json.loads(supl_data_json_val)
             for item in supl_data:
                 url = item.get("#text")
                 if url is None:
@@ -463,7 +463,7 @@ def sc_counter(
                         _on_link_done(accession)
 
                 if f in process_futures:
-                    single_cell_count = f.result()
+                    single_cell_count, fmt = f.result()
                     accession, dest_path, sniffed_path, file_type, link_idx = (
                         process_futures.pop(f)
                     )
@@ -481,7 +481,7 @@ def sc_counter(
                     if check and single_cell_count > 0:
                         done_accessions.add(accession)
                         accession_max_count[accession] = single_cell_count
-                        accession_best_type[accession] = file_type.value
+                        accession_best_type[accession] = fmt
                         sc_found += 1
                         pbar.set_description(f"SC: {sc_found}/{pbar.total}")
                         updates.append((accession, single_cell_count))
@@ -499,7 +499,7 @@ def sc_counter(
                     prev = accession_max_count.get(accession, 0)
                     if single_cell_count > prev:
                         accession_max_count[accession] = single_cell_count
-                        accession_best_type[accession] = file_type.value
+                        accession_best_type[accession] = fmt
                     _on_link_done(accession)
 
         if updates:
@@ -684,36 +684,34 @@ def _file_type_sniffer(path: Path, chunk_size: int) -> tuple[FileType, Path]:  #
     return FileType.Txt, path
 
 
-def _is_sc(  # noqa: PLR0911
+def _is_sc(
     dest_path: Path,
     file_type: FileType,
     chunk_size: int,
     tmp_dir: Path | None = None,
-) -> int:
-    if file_type == FileType.Barcodes:
-        return _process_barcodes(dest_path, chunk_size)
-    if file_type == FileType.H5:
-        return _process_h5(dest_path, chunk_size)
-    if file_type == FileType.H5ad:
-        return _process_h5ad(dest_path, chunk_size)
+) -> tuple[int, str]:
     if file_type == FileType.Tar:
-        return _process_tar(dest_path, chunk_size, tmp_dir=tmp_dir)
-    if file_type == FileType.Txt:
-        return _process_txt(dest_path, chunk_size)
-    if file_type == FileType.Mtx:
-        return _process_mtx(dest_path, chunk_size)
-    if file_type == FileType.Tsv:
-        return _process_delimiter_file_types("\t")(dest_path, chunk_size)
-    if file_type == FileType.Csv:
-        return _process_delimiter_file_types(",")(dest_path, chunk_size)
-    if file_type == FileType.SpaceDelimited:
-        return _process_delimiter_file_types(" ")(dest_path, chunk_size)
-    if file_type == FileType.SemicolonDelimited:
-        return _process_delimiter_file_types(";")(dest_path, chunk_size)
+        return (_process_tar(dest_path, chunk_size, tmp_dir=tmp_dir), file_type.value)
     if file_type == FileType.Rds:
         return _process_rds(dest_path, chunk_size)
 
-    return 0
+    handlers = {
+        FileType.Barcodes: _process_barcodes,
+        FileType.H5: _process_h5,
+        FileType.H5ad: _process_h5ad,
+        FileType.Txt: _process_txt,
+        FileType.Mtx: _process_mtx,
+        FileType.Tsv: _process_delimiter_file_types("\t"),
+        FileType.Csv: _process_delimiter_file_types(","),
+        FileType.SpaceDelimited: _process_delimiter_file_types(" "),
+        FileType.SemicolonDelimited: _process_delimiter_file_types(";"),
+    }
+
+    handler = handlers.get(file_type)
+    if handler is not None:
+        return (handler(dest_path, chunk_size), file_type.value)
+
+    return (0, file_type.value)
 
 
 def safe_process(
@@ -765,7 +763,7 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
                     continue
 
                 file_type, sniffed_path = result
-                single_cell_count = _is_sc(
+                single_cell_count, _ = _is_sc(
                     sniffed_path,
                     file_type,
                     chunk_size,
@@ -881,8 +879,7 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
     return _wrapper
 
 
-@safe_process
-def _process_rds(path: Path, _: int) -> int:
+def _process_rds(path: Path, _: int) -> tuple[int, str]:
     try:
         result = pyreadr.read_r(path)
     except LibrdataError:
@@ -890,19 +887,19 @@ def _process_rds(path: Path, _: int) -> int:
 
     if not result:
         logger.error("no objects found in rds %s", path)
-        return 0
+        return (0, "unknown")
 
     rds_df = next(iter(result.values()))
     _expected_ndim = 2
     if not hasattr(rds_df, "shape") or len(rds_df.shape) != _expected_ndim:
         logger.error("unexpected object type in rds %s: %s", path, type(rds_df))
-        return 0
+        return (0, "unknown")
 
     n_cells = rds_df.shape[1]
-    return n_cells if n_cells > 1 else 0
+    return (n_cells if n_cells > 1 else 0, "dataframe")
 
 
-def _process_rds_rpy2(path: Path) -> int:
+def _process_rds_rpy2(path: Path) -> tuple[int, str]:
     try:
         ro.r(f'obj <- readRDS("{path}")')
 
@@ -910,8 +907,10 @@ def _process_rds_rpy2(path: Path) -> int:
             "Vector",
             ro.r("""
             n_cells <- 0
+            obj_type <- "unknown"
 
             if (inherits(obj, "Seurat")) {
+                obj_type <- "seurat"
                 counts <- tryCatch(
                     Seurat::GetAssayData(obj, layer = "counts"),
                     error = function(e) tryCatch(
@@ -923,6 +922,7 @@ def _process_rds_rpy2(path: Path) -> int:
                     n_cells <- ncol(counts)
                 }
             } else if (inherits(obj, "SeuratObject")) {
+                obj_type <- "seurat"
                 counts <- tryCatch(
                     SeuratObject::GetAssayData(obj, layer = "counts"),
                     error = function(e) NULL
@@ -931,8 +931,19 @@ def _process_rds_rpy2(path: Path) -> int:
                     n_cells <- ncol(counts)
                 }
             } else if (inherits(obj, "cell_data_set")) {
+                obj_type <- "cell_data_set"
                 n_cells <- ncol(obj)
+            } else if (inherits(obj, "SpatialExperiment")) {
+                obj_type <- "SpatialExperiment"
+                counts <- tryCatch(
+                    SpatialExperiment::counts(obj),
+                    error = function(e) NULL
+                )
+                if (!is.null(counts)) {
+                    n_cells <- ncol(counts)
+                }
             } else if (inherits(obj, "SingleCellExperiment")) {
+                obj_type <- "SingleCellExperiment"
                 counts <- tryCatch(
                     SingleCellExperiment::counts(obj),
                     error = function(e) NULL
@@ -940,7 +951,17 @@ def _process_rds_rpy2(path: Path) -> int:
                 if (!is.null(counts)) {
                     n_cells <- ncol(counts)
                 }
+            } else if (inherits(obj, "CellDataSet")) {
+                obj_type <- "CellDataSet"
+                exprs_mat <- tryCatch(
+                    Biobase::exprs(obj),
+                    error = function(e) NULL
+                )
+                if (!is.null(exprs_mat)) {
+                    n_cells <- ncol(exprs_mat)
+                }
             } else if (inherits(obj, "ExpressionSet")) {
+                obj_type <- "ExpressionSet"
                 exprs_mat <- tryCatch(
                     Biobase::exprs(obj),
                     error = function(e) NULL
@@ -949,6 +970,7 @@ def _process_rds_rpy2(path: Path) -> int:
                     n_cells <- ncol(exprs_mat)
                 }
             } else if (inherits(obj, "liger")) {
+                obj_type <- "liger"
                 raw_data <- tryCatch(
                     obj@raw.data,
                     error = function(e) NULL
@@ -957,20 +979,30 @@ def _process_rds_rpy2(path: Path) -> int:
                     n_cells <- sum(sapply(raw_data, ncol))
                 }
             } else if (inherits(obj, "Pagoda2")) {
+                obj_type <- "Pagoda2"
                 n_cells <- nrow(obj$counts)
+            } else if (inherits(obj, "Conos")) {
+                obj_type <- "Conos"
+                n_cells <- tryCatch(
+                    sum(sapply(obj$samples, ncol)),
+                    error = function(e) 0
+                )
             } else if (is.data.frame(obj) || is.matrix(obj)) {
+                obj_type <- "dataframe"
                 n_cells <- ncol(obj)
             } else {
                 n_cells <- tryCatch(ncol(obj), error = function(e) 0)
                 if (is.null(n_cells) || is.na(n_cells)) n_cells <- 0
             }
-            n_cells
+            c(n_cells, obj_type)
         """),
         )
+
         n_cells = int(vec[0])
+        obj_type = str(vec[1])
 
     except Exception:
         logger.exception("rpy2 fallback failed for %s", path)
-        return 0
+        return (0, "unknown")
     else:
-        return n_cells if n_cells > 1 else 0
+        return (n_cells if n_cells > 1 else 0, obj_type)

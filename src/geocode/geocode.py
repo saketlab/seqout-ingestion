@@ -203,20 +203,21 @@ def geocode_missing(
                 for center_name in uncached_centers:
                     accessions = center_to_accessions[center_name]
                     n = len(accessions)
-                    result = _geocode_from_ror(
+                    geo_result: dict[str, Any] | None = _geocode_from_ror(
                         center_name,
                         ror_index,
                         accessions,
                         geo_country_mapping,
                     )
-                    if result is not None:
-                        with cache_lock:
-                            cache[center_name] = result
-                        in_queue.put((center_name, result))
-                        updated += n
-                        pbar.update(n)
-                    else:
+                    if geo_result is None:
                         api_centers.append(center_name)
+                        continue
+
+                    with cache_lock:
+                        cache[center_name] = geo_result
+                    in_queue.put((center_name, geo_result))
+                    updated += n
+                    pbar.update(n)
 
                 if api_centers:
                     logger.info("geocoding %d centers via ArcGIS API", len(api_centers))
@@ -237,20 +238,20 @@ def geocode_missing(
                     for center_name in api_centers:
                         accessions = center_to_accessions[center_name]
                         n = len(accessions)
-                        result = _geocode_item(
+                        geo_result = _geocode_item(
                             center_name,
                             accessions,
                             geo_country_mapping,
                             osm_geocoder,
                             arcgis_geocoder,
                         )
-                        if result is None:
+                        if geo_result is None:
                             pbar.update(n)
                             continue
 
                         with cache_lock:
-                            cache[center_name] = result
-                        in_queue.put((center_name, result))
+                            cache[center_name] = geo_result
+                        in_queue.put((center_name, geo_result))
                         updated += n
                         pbar.update(n)
 

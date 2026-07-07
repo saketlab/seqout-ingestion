@@ -192,11 +192,11 @@ def sc_classify(
         unit="batch",
         desc="writing updates",
     ):
-        batch = updates[i : i + batch_size]
+        updates_batch = updates[i : i + batch_size]
         conn.executemany(
             "UPDATE unified_metadata SET is_single_cell = ?, "
             "single_cell_modality = ? WHERE canonical_accession = ?",
-            batch,
+            updates_batch,
         )
         conn.commit()
 

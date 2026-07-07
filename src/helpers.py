@@ -151,7 +151,7 @@ def _download_simple(
                 headers["Range"] = f"bytes={already_downloaded}-"
 
             with (
-                httpx.Client() as client,
+                httpx.Client(follow_redirects=True) as client,
                 client.stream("GET", url, headers=headers, timeout=timeout) as r,
             ):
                 if r.status_code == http.HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE:
@@ -400,6 +400,10 @@ def exec_query_from_file(
 
     sql_dir = Path(__file__).resolve().parent.parent / "sql"
     query = (sql_dir / query_file).read_text()
+
+    if not isinstance(conn, sqlite3.Connection | psycopg.Connection):
+        msg = "conn must be a sqlite3 or psycopg connection"
+        raise TypeError(msg)
 
     if isinstance(conn, sqlite3.Connection):
         conn.cursor().executescript(query)

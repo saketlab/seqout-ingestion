@@ -187,11 +187,11 @@ def build_unified_metadata(
             )
 
         for start in range(0, len(centers_rows), batch_size):
-            batch = centers_rows[start : start + batch_size]
+            centers_batch = centers_rows[start : start + batch_size]
             conn.executemany(
                 "INSERT OR IGNORE INTO unified_centers "
                 "(canonical_accession, center_name, position) VALUES (?, ?, ?)",
-                batch,
+                centers_batch,
             )
 
         exec_query_from_file("indexes/unified_metadata.sql", conn=conn)

@@ -450,7 +450,7 @@ def _journal_lookup_worker(
     with sqlite_connect(db_file, busy_timeout=5000) as conn:
         _setup_wal(conn)
 
-        rows = []
+        rows: list = []
 
         def _flush() -> None:
             nonlocal local_updated, rows

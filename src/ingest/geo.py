@@ -11,7 +11,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import StrEnum
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 import httpx
 import humanfriendly
@@ -390,7 +390,7 @@ def _parse_dates(root: ET._Element, s: str) -> datetime.date | None:
 def _et_to_dict(elem: ET._Element | list[ET._Element]) -> list | dict | str:
     if isinstance(elem, list):
         return [_et_to_dict(v) for v in elem]
-    result: dict | str = {}
+    result: Any = {}
 
     for key, value in elem.attrib.items():
         result[f"@{key}"] = value

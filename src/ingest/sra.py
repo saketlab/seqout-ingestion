@@ -333,7 +333,8 @@ def _download_sra_file_dumps(
         downloader(url, dest_path, num_workers=workers_per_file, chunk_size=chunk_size)
 
     if concurrent_files == 1:
-        [_process_per_file(file) for file in missing_files]
+        for file in missing_files:
+            _process_per_file(file)
     else:
         with ThreadPoolExecutor(max_workers=concurrent_files) as pool:
             futures = [pool.submit(_process_per_file, file) for file in missing_files]

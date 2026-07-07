@@ -21,6 +21,9 @@ UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_c
 UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified_metadata/unified_metadata.db")
 DOWNLOAD_LINKS_DB_FILE := env("DOWNLOAD_LINKS_DB_FILE", DATA_DIR + "/download_links/download_links.db")
 PUBMED_METADATA_DB_FILE := env("PUBMED_METADATA_DB_FILE", DATA_DIR + "/pubmed_metadata/pubmed_metadata.db")
+CHROMA_DB_DIR := env("CHROMA_DB_DIR", DATA_DIR + "/embed/chroma_db")
+NEIGHBORS_DB_FILE := env("NEIGHBORS_DB_FILE", DATA_DIR + "/embed/neighbors.sqlite3")
+LABELS_DIR := env("LABELS_DIR", DATA_DIR + "/embed/labels")
 
 NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/keys/ncbi.txt")
 OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/keys/openalex.txt")
@@ -41,6 +44,10 @@ _ingest_args := " --output-dir " + DATA_DIR + " --start-date " + START_DATE + " 
 _all_db_args := "--sra-db-file " + SRA_DB_FILE + " --geo-db-file " + GEO_DB_FILE + " --ena-db-file " + ENA_DB_FILE + " --ae-db-file " + AE_DB_FILE + " "
 [private]
 _transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --read-batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
+[private]
+_embed_db_args := "--geo-db-file " + GEO_DB_FILE + " --sra-db-file " + SRA_DB_FILE + " --ae-db-file " + AE_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --chroma-db-dir " + CHROMA_DB_DIR + " "
+[private]
+_tox_cuda := "tox run -e cuda -- "
 
 [group("ingest")]
 ingest_sra *flags:
@@ -162,4 +169,45 @@ transfer_postgres *flags:
 transfer_parquet *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer parquet \
         {{ _transfer_args }} \
+        {{ flags }}
+
+[group("embed")]
+embed_run *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed run \
+        {{ _embed_db_args }} \
+        {{ flags }}
+
+[group("embed")]
+embed_coords *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed coords \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+[group("embed")]
+embed_cluster *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed cluster \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+[group("embed")]
+embed_neighbors *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed neighbors \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        {{ flags }}
+
+[group("embed")]
+embed_labels *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed labels \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --labels-dir {{ LABELS_DIR }} \
+        {{ flags }}
+
+[group("transfer")]
+transfer_embed *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer embed \
+        --pg-url "$PG_URL" \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
