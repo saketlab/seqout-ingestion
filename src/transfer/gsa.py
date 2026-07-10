@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
+from itertools import groupby
 from typing import TYPE_CHECKING, Any, LiteralString, cast
 
 import psycopg
@@ -82,6 +84,16 @@ _GSA_SAMPLES_COLS = [
     "biomaterial_provider",
     "collection_date",
 ]
+_GSA_RUN_DOWNLOAD_COLS = [
+    "run_accession",
+    "study_accession",
+    "experiment_accession",
+    "library_layout",
+    "fastq_ftp",
+    "fastq_bytes",
+    "fastq_md5",
+]
+_BYTES_IN_NAME_RE = re.compile(r"\((\d+)\s*bytes\)")
 
 
 def gsa_transfer_tasks(
@@ -104,6 +116,7 @@ def gsa_transfer_tasks(
         ("gsa_studies_search", _transfer_gsa_studies_search, common),
         ("gsa_experiments", _transfer_gsa_experiments, common),
         ("gsa_samples", _transfer_gsa_samples, common),
+        ("gsa_run_downloads", _transfer_gsa_run_downloads, common),
     ]
 
 
@@ -237,8 +250,10 @@ def _transfer_gsa_studies_search(
         if hra:
             with sqlite_connect(hra) as c:
                 for acc, title, disease, org, proj, rel in c.execute(
+                    # Controlled studies have no fetchable detail; exclude from search.
                     """SELECT accession, title, disease, organization,
-                        project_accession, release_time FROM gsa_human_studies""",
+                        project_accession, release_time FROM gsa_human_studies
+                        WHERE access = 'Open'""",
                 ):
                     fp = _iso_date(rel)
                     yield (acc, title, disease, None, org, proj, fp, fp)
@@ -373,4 +388,95 @@ def _transfer_gsa_samples(
         "sample_accession",
         batch_size,
         "gsa_samples",
+    )
+
+
+def _bytes_from_name(name: str | None) -> str:
+    """CRA file names embed the size as 'CRD000008 (7374228529 bytes)'."""
+    match = _BYTES_IN_NAME_RE.search(name or "")
+    return match.group(1) if match else ""
+
+
+def _join_or_none(parts: tuple[str | None, ...]) -> str | None:
+    """Semicolon-join per-file values, or None if every value is empty."""
+    joined = ";".join(p or "" for p in parts)
+    return joined if joined.strip(";") else None
+
+
+def _download_row(
+    run: str,
+    study: str,
+    exp: str | None,
+    layout: str | None,
+    files: list[tuple[str, str | None, str]],
+) -> tuple | None:
+    """Join per-file (url, md5, bytes) into semicolon-delimited fastq_* fields."""
+    kept = [(url, md5, byts) for url, md5, byts in files if url]
+    if not kept:
+        return None
+    urls, md5s, byts = zip(*kept, strict=True)
+    fastq_ftp = ";".join(urls)
+    fastq_bytes, fastq_md5 = _join_or_none(byts), _join_or_none(md5s)
+    return (run, study, exp, layout, fastq_ftp, fastq_bytes, fastq_md5)
+
+
+def _transfer_gsa_run_downloads(
+    pg_url: str,
+    cra: Path | None,
+    hra: Path | None,
+    batch_size: int,
+) -> None:
+    # CRA file*_url are clean (bytes embedded in file*_name); HRA workbook urls are
+    # unreliable, so HRA downloads come from gsa_human_run_files (manifest-built).
+    cra_sql = """
+        SELECT r.accession, r.study_accession, r.experiment_accession,
+            r.file1_name, r.file1_md5, r.file1_url,
+            r.file2_name, r.file2_md5, r.file2_url, e.library_layout
+        FROM gsa_runs r
+        LEFT JOIN gsa_experiments e
+            ON e.accession = r.experiment_accession
+            AND e.study_accession = r.study_accession"""
+    hra_sql = """
+        SELECT f.run_accession, r.study_accession, r.experiment_accession,
+            e.library_layout, f.file_url, f.file_md5
+        FROM gsa_human_run_files f
+        JOIN gsa_human_runs r
+            ON r.accession = f.run_accession
+            AND r.study_accession = f.study_accession
+        LEFT JOIN gsa_human_experiments e
+            ON e.accession = r.experiment_accession
+            AND e.study_accession = r.study_accession
+        ORDER BY f.run_accession, f.file_ord"""
+
+    def cra_rows(conn: Any) -> Iterator[tuple]:
+        for run, study, exp, n1, m1, u1, n2, m2, u2, layout in conn.execute(cra_sql):
+            files = [(u1, m1, _bytes_from_name(n1)), (u2, m2, _bytes_from_name(n2))]
+            row = _download_row(run, study, exp, layout, files)
+            if row:
+                yield row
+
+    def hra_rows(conn: Any) -> Iterator[tuple]:
+        for run, group in groupby(conn.execute(hra_sql), key=lambda row: row[0]):
+            members = list(group)
+            _, study, exp, layout, *_ = members[0]
+            files = [(url, md5, "") for _, _, _, _, url, md5 in members]
+            if row := _download_row(run, study, exp, layout, files):
+                yield row
+
+    def rows() -> Iterator[tuple]:
+        if cra:
+            with sqlite_connect(cra) as c:
+                yield from cra_rows(c)
+        if hra:
+            with sqlite_connect(hra) as c:
+                yield from hra_rows(c)
+
+    _upsert(
+        pg_url,
+        "sra_run_download_links",
+        _GSA_RUN_DOWNLOAD_COLS,
+        rows(),
+        "run_accession",
+        batch_size,
+        "gsa_run_downloads",
     )

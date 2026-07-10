@@ -3,7 +3,6 @@ from pathlib import Path
 import typer
 
 from sc_enrich.classify import sc_classify
-from sc_enrich.counter import sc_counter
 
 sc_enrich_app = typer.Typer()
 
@@ -34,6 +33,8 @@ def counter(
         default=False, help="check all records regardless of sc_count_last_checked"
     ),
 ) -> None:
+    from sc_enrich.counter import sc_counter
+
     sc_counter(
         output_dir,
         unified_metadata_db_file,

@@ -13,12 +13,14 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
+import httpx
 import humanfriendly
 from tqdm import tqdm
 
 from helpers import batch_query_in, exec_query_from_file, send_req, sqlite_connect
 from ingest.gsa_common import (
     GSA_BASE_URL,
+    GSA_DOWNLOAD_URL,
     apply_write_pragmas,
     bulk_upsert,
     bulk_upsert_preserve,
@@ -41,8 +43,22 @@ GSA_HUMAN_OUTPUT_DIR = "gsa_human"
 STUDY_LIST_URL = f"{GSA_BASE_URL}/gsa-human/file/downLoadFilterFiles"
 HUMAN_EXPORT_URL = f"{GSA_BASE_URL}/gsa-human/file/exportExcelFile"
 HUMAN_BROWSE_URL = f"{GSA_BASE_URL}/gsa-human/browse/"
+# md5sum.txt lines: md5<TAB>/study/[batch/]run/filename
+MANIFEST_URL_TMPL = f"{GSA_DOWNLOAD_URL}/gsa-human/{{acc}}/md5sum.txt"
+GSA_HUMAN_FTP_BASE = "ftp://download.big.ac.cn/gsa-human"
 _FILENAME_TMPL = "/data/gsa-Human/webApp/gsa-human/batchExcel/human/{acc}/{acc}.xlsx"
 _STUDY_ID_RE = re.compile(r"study_id\s*=\s*'(\d+)'")
+_RUN_ACC_RE = re.compile(r"^HRR\d+$")
+_MIN_RUN_PATH_SEGMENTS = 2  # run + filename
+
+RUN_FILES_COLUMNS = [
+    "run_accession",
+    "study_accession",
+    "file_ord",
+    "file_name",
+    "file_md5",
+    "file_url",
+]
 
 STUDY_COLUMNS = [
     "accession",
@@ -287,6 +303,19 @@ def ingest_gsa_human(
     )
     _log_status_counts(statuses)
 
+    # 2b. per-study md5sum.txt manifests -> authoritative run download files
+    fetch_manifest = functools.partial(
+        _fetch_manifest, retries=retries, timeout=timeout, max_timeout=max_timeout
+    )
+    download_studies(
+        detail_accs,
+        studies_dir,
+        fetch_manifest,
+        num_workers,
+        desc="downloading gsa-human manifests",
+        suffix=".md5sum.txt",
+    )
+
     # 3. load
     exec_query_from_file("tables/gsa_human.sql", db_file)
     _ingest(db_file, studies_dir, study_records, detail_accs, statuses, date_str)
@@ -371,6 +400,50 @@ def _fetch_study_detail(
         return r.content
 
 
+def _fetch_manifest(
+    accession: str,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
+) -> bytes | None:
+    # download host has no WAF, so no browser-UA client needed.
+    try:
+        r = send_req(
+            "GET",
+            MANIFEST_URL_TMPL.format(acc=accession),
+            num_retries=retries,
+            timeout=timeout,
+            max_wait=max_timeout,
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == httpx.codes.NOT_FOUND:
+            return None
+        raise
+    return r.content
+
+
+def _parse_manifest(text: str, study_acc: str) -> list[tuple]:
+    """Parse 'md5<TAB>/study/[batch/]run/filename' lines into run-file rows."""
+    rows: list[tuple] = []
+    ord_by_run: dict[str, int] = {}
+    for line in text.splitlines():
+        md5, tab, path = line.partition("\t")
+        if not tab:
+            continue
+        md5, path = md5.strip(), path.strip()
+        segments = [s for s in path.split("/") if s]
+        if len(segments) < _MIN_RUN_PATH_SEGMENTS:
+            continue
+        run = segments[-2]  # /study/[batch/]run/filename
+        if not _RUN_ACC_RE.match(run):
+            continue
+        order = ord_by_run.get(run, 0)
+        ord_by_run[run] = order + 1
+        url = f"{GSA_HUMAN_FTP_BASE}{path}"
+        rows.append((run, study_acc, order, segments[-1], md5 or None, url))
+    return rows
+
+
 def _ingest(
     db_file: Path,
     studies_dir: Path,
@@ -419,6 +492,20 @@ def _ingest(
                     )
                     bulk_upsert(conn, table, columns, parsed[table])
                     counts[table] = len(parsed[table])
+
+            # run files come from the manifest, independent of the workbook.
+            manifest_path = studies_dir / f"{acc}.md5sum.txt"
+            if manifest_path.exists():
+                conn.execute(
+                    "DELETE FROM gsa_human_run_files WHERE study_accession = ?",
+                    (acc,),
+                )
+                bulk_upsert(
+                    conn,
+                    "gsa_human_run_files",
+                    RUN_FILES_COLUMNS,
+                    _parse_manifest(manifest_path.read_text(), acc),
+                )
 
             sid_path = studies_dir / f"{acc}.study_id"
             study_id = sid_path.read_text().strip() if sid_path.exists() else None

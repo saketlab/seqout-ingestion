@@ -15,3 +15,6 @@ CREATE INDEX IF NOT EXISTS idx_gsa_human_experiments_sample ON gsa_human_experim
 CREATE INDEX IF NOT EXISTS idx_gsa_human_runs_study ON gsa_human_runs(study_accession);
 CREATE INDEX IF NOT EXISTS idx_gsa_human_runs_experiment ON gsa_human_runs(experiment_accession);
 CREATE INDEX IF NOT EXISTS idx_gsa_human_runs_sample ON gsa_human_runs(sample_accession);
+
+-- run_accession is already covered by the (run_accession, file_ord) primary key.
+CREATE INDEX IF NOT EXISTS idx_gsa_human_run_files_study ON gsa_human_run_files(study_accession);

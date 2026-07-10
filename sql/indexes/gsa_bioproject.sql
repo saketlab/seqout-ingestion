@@ -1,0 +1,2 @@
+-- No secondary indexes needed: gsa_projects is looked up by its PK (accession).
+-- File exists so the ingest load can call exec_query_from_file uniformly.

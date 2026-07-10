@@ -1,10 +1,4 @@
 -- GSA-Human — CNCB-NGDC Genome Sequence Archive for Human, HRA studies.
--- Only Access = 'Open' studies are fetched; controlled-access studies keep their
--- study row but no detail (gated behind a data-access request).
--- HRA workbooks ship in three layouts, all funnelling into the tables below:
---   * Individual  + Sample/Experiment/Run   (subject-based studies)
---   * Cell Line   + Sample/Experiment/Run   (cell-line studies)
---   * Individuals & samples + Files          (older combined layout)
 -- Organism is implicitly Homo sapiens.
 
 CREATE TABLE IF NOT EXISTS gsa_human_studies (
@@ -119,6 +113,18 @@ CREATE TABLE IF NOT EXISTS gsa_human_runs (
     assembly_accession   TEXT,
     omics_type           TEXT,
     PRIMARY KEY (accession, study_accession)
+);
+
+-- Per-run download files from each study's md5sum.txt manifest; the workbook
+-- file*_url columns are unreliable (shifted a column, bam runs carry none).
+CREATE TABLE IF NOT EXISTS gsa_human_run_files (
+    run_accession   TEXT NOT NULL,          -- HRR...
+    study_accession TEXT NOT NULL,          -- HRA...
+    file_ord        INTEGER NOT NULL,       -- 0-based order within the run
+    file_name       TEXT NOT NULL,
+    file_md5        TEXT,
+    file_url        TEXT NOT NULL,          -- ftp://download.big.ac.cn/gsa-human/...
+    PRIMARY KEY (run_accession, file_ord)
 );
 
 -- Per-study download/parse status, for resume + reporting.

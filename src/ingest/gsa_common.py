@@ -39,16 +39,12 @@ def make_client(timeout: int) -> httpx.Client:
 
 def parse_workbook(xlsx_bytes: bytes) -> dict[str, list[dict]]:
     """Parse an xlsx into ``{sheet_title: [row_dict, ...]}``."""
-    # read_only off: GSA workbooks under-report dimensions in read-only mode
-    # (every sheet collapses to a single row).
     wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), read_only=False)
     try:
         sheets: dict[str, list[dict]] = {}
         for ws in wb.worksheets:
             rows = ws.iter_rows(values_only=True)
             try:
-                # collapse internal whitespace: GSA ships stray double-spaces in
-                # some column names.
                 header = [
                     " ".join(str(h).split()) if h is not None else ""
                     for h in next(rows)
@@ -73,13 +69,14 @@ def download_studies(
     fetch: Callable[[str], bytes | None],
     num_workers: int,
     desc: str,
+    suffix: str = ".xlsx",
 ) -> dict[str, str]:
-    """Fetch each study's workbook to disk; return ``acc -> status`` per study."""
+    """Fetch each study's file (workbook/manifest) to disk; ``acc -> status``."""
     out_dir.mkdir(parents=True, exist_ok=True)
     statuses: dict[str, str] = {}
 
     def _worker(acc: str) -> tuple[str, str]:
-        dest = out_dir / f"{acc}.xlsx"
+        dest = out_dir / f"{acc}{suffix}"
         if dest.exists() and dest.stat().st_size > 0:
             return acc, "cached"
         try:
@@ -89,7 +86,7 @@ def download_studies(
             return acc, "failed"
         if not data:
             return acc, "empty"
-        tmp = dest.with_suffix(".xlsx.part")
+        tmp = dest.with_name(dest.name + ".part")
         tmp.write_bytes(data)
         tmp.rename(dest)  # atomic: a partial download never looks complete
         return acc, "ok"
