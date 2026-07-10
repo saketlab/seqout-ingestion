@@ -422,6 +422,10 @@ def download_file_ftp(
                 pbar.close()
 
             ftp.quit()
+        except ftplib.error_perm:
+            if dest_path.exists():
+                dest_path.unlink()
+            raise
         except Exception as exc:
             if dest_path.exists():
                 dest_path.unlink()
@@ -437,6 +441,8 @@ def download_file_ftp(
                 wait,
             )
             time.sleep(wait)
+        else:
+            return dest_path
 
     raise RuntimeError(f"failed after {num_retries} retries")
 

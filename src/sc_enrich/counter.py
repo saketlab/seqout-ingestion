@@ -25,7 +25,7 @@ import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 from tqdm import tqdm
 
-from helpers import batch_query_in, download_file_ftp, sqlite_connect
+from helpers import batch_query_in, download_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class DownloadLink:
     url: str
 
     def parse_url(self) -> str:  # noqa: D102
-        return self.url.replace("https://", "ftp://")
+        return self.url.replace("ftp://", "https://")
 
     def extract_filename(self) -> str:  # noqa: D102
         return self.url.split("/")[-1]
@@ -144,12 +144,12 @@ def sc_counter(
     if check_all:
         rows = conn.execute(
             "SELECT canonical_accession, source "
-            "FROM unified_metadata WHERE is_single_cell = '0';",
+            "FROM unified_metadata WHERE is_single_cell = '1';",
         ).fetchall()
     else:
         rows = conn.execute(
             "SELECT canonical_accession, source "
-            "FROM unified_metadata WHERE is_single_cell = '0' "
+            "FROM unified_metadata WHERE is_single_cell = '1' "
             "AND sc_count_last_checked IS NULL;",
         ).fetchall()
 
@@ -323,12 +323,13 @@ def sc_counter(
         process_futures: dict[Future, tuple[str, Path, Path, FileType, int]] = {}
         downloaded_paths: set[Path] = set()
         downloader = functools.partial(
-            download_file_ftp,
+            download_file,
             chunk_size=chunk_size,
             num_retries=retries,
             timeout=timeout,
             max_wait=max_timeout,
             with_pbar=False,
+            validate_content_length=False,
         )
         updates: list[tuple[str, str]] = []
         done_accessions: set[str] = set()
@@ -409,6 +410,7 @@ def sc_counter(
                     downloader,
                     url=link.parse_url(),
                     dest_path=dest_path,
+                    num_workers=1,
                 )
                 download_futures[future] = (accession, idx)
 
@@ -553,8 +555,8 @@ def _flush_updates(
     if non_sc:
         placeholders = ", ".join(repr(acc) for acc in non_sc)
         conn.execute(
-            f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
-            f"single_cell_modality = '', single_cell_counts = '{{}}', "
+            f"UPDATE unified_metadata "  # noqa: S608
+            f"SET single_cell_modality = '', single_cell_counts = '{{}}', "
             f"single_cell_file_format = '', "
             f"sc_count_last_checked = datetime('now') "
             f"WHERE canonical_accession IN ({placeholders})",
@@ -564,7 +566,7 @@ def _flush_updates(
         if not count_exact:
             conn.executemany(
                 "UPDATE unified_metadata "
-                "SET is_single_cell = 1, single_cell_file_format = ?, "
+                "SET single_cell_file_format = ?, "
                 "sc_count_last_checked = datetime('now') "
                 "WHERE canonical_accession = ?",
                 [(accession_best_type.get(acc, ""), acc) for acc, _ in sc],
