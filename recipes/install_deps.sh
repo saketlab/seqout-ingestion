@@ -17,5 +17,11 @@ awk '
 ' pyproject.toml > "$tmp" && mv "$tmp" pyproject.toml
 
 export RPY2_CFFI_MODE=ABI
+
+if ! command -v uv &>/dev/null; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+
 uv sync
 echo "$hash" > .deps-hash
