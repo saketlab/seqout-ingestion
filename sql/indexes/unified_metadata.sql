@@ -7,6 +7,7 @@ CREATE INDEX IF NOT EXISTS idx_um_country ON unified_metadata(country);
 CREATE INDEX IF NOT EXISTS idx_um_country_code ON unified_metadata(country_code);
 CREATE INDEX IF NOT EXISTS idx_um_is_single_cell ON unified_metadata(is_single_cell);
 CREATE INDEX IF NOT EXISTS idx_um_modality ON unified_metadata(single_cell_modality);
+CREATE INDEX IF NOT EXISTS idx_um_sc_last_checked ON unified_metadata(sc_count_last_checked);
 
 CREATE INDEX IF NOT EXISTS idx_umc_center ON unified_centers(center_name);
 CREATE INDEX IF NOT EXISTS idx_umc_latlon ON unified_centers(latitude, longitude) WHERE latitude IS NOT NULL;

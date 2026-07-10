@@ -25,7 +25,7 @@ import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 from tqdm import tqdm
 
-from helpers import batch_query_in, download_file, sqlite_connect
+from helpers import batch_query_in, download_file_ftp, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class DownloadLink:
     url: str
 
     def parse_url(self) -> str:  # noqa: D102
-        return self.url.replace("ftp://", "https://")
+        return self.url.replace("https://", "ftp://")
 
     def extract_filename(self) -> str:  # noqa: D102
         return self.url.split("/")[-1]
@@ -102,7 +102,8 @@ def sc_counter(
     max_timeout: int,
     batch_size: int,
     *,
-    check: bool = False,
+    count_exact: bool = True,
+    check_all: bool = False,
 ) -> None:
     output_dir = base_output_dir / SC_ENRICH_OUTPUT_DIR
     if output_dir.exists():
@@ -133,30 +134,24 @@ def sc_counter(
     geo_conn = sqlite_connect(geo_db_file)
     ae_conn = sqlite_connect(ae_db_file)
 
-    columns = [row[1] for row in conn.execute("PRAGMA table_info(unified_metadata)")]
-    if "single_cell_counts" not in columns:
-        conn.execute(
-            "ALTER TABLE unified_metadata "
-            "ADD COLUMN single_cell_counts TEXT DEFAULT '{}';",
-        )
-
-    if "single_cell_file_format" not in columns:
-        conn.execute(
-            "ALTER TABLE unified_metadata "
-            "ADD COLUMN single_cell_file_format TEXT DEFAULT '';",
-        )
+    _update_table_schema(conn)
 
     def _db_flush() -> None:
         ae_conn.close()
         geo_conn.close()
         conn.close()
 
-    rows: list[tuple[str, str]] = conn.execute(
-        "SELECT canonical_accession, source "
-        "FROM unified_metadata WHERE is_single_cell = '1' "
-        "AND (single_cell_counts IS NULL OR single_cell_counts = '0' "
-        "OR single_cell_counts = '{}');",
-    ).fetchall()
+    if check_all:
+        rows = conn.execute(
+            "SELECT canonical_accession, source "
+            "FROM unified_metadata WHERE is_single_cell = '0';",
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT canonical_accession, source "
+            "FROM unified_metadata WHERE is_single_cell = '0' "
+            "AND sc_count_last_checked IS NULL;",
+        ).fetchall()
 
     accessions: list[str | tuple[str, str]] = []
     search_for_aliases: list[str] = []
@@ -328,17 +323,12 @@ def sc_counter(
         process_futures: dict[Future, tuple[str, Path, Path, FileType, int]] = {}
         downloaded_paths: set[Path] = set()
         downloader = functools.partial(
-            download_file,
+            download_file_ftp,
             chunk_size=chunk_size,
             num_retries=retries,
             timeout=timeout,
             max_wait=max_timeout,
             with_pbar=False,
-            # a lot of the rds files have hugely varying expected
-            # (`Content-Length`) and actual download size
-            # due to which the download fails, so this check is silenced
-            # particularly for this script
-            validate_content_length=False,
         )
         updates: list[tuple[str, str]] = []
         done_accessions: set[str] = set()
@@ -358,11 +348,13 @@ def sc_counter(
             sample_counts = accession_sample_counts.get(accession, {})
             json_str = json.dumps(sample_counts, sort_keys=True)
 
-            if check:
+            if not count_exact:
                 if not sample_counts:
                     updates.append((accession, json_str))
                     if len(updates) >= batch_size:
-                        _flush_updates(conn, updates, accession_best_type, check=True)
+                        _flush_updates(
+                            conn, updates, accession_best_type, count_exact=False
+                        )
                         updates.clear()
                 pbar.set_description(f"sc: {sc_found}/{pbar.total}")
             else:
@@ -417,7 +409,6 @@ def sc_counter(
                     downloader,
                     url=link.parse_url(),
                     dest_path=dest_path,
-                    num_workers=1,
                 )
                 download_futures[future] = (accession, idx)
 
@@ -486,7 +477,7 @@ def sc_counter(
 
                     sample = link_sample_map.get(accession, {}).get(link_idx, accession)
 
-                    if check and single_cell_counts > 0:
+                    if not count_exact and single_cell_counts > 0:
                         done_accessions.add(accession)
                         accession_sample_counts.setdefault(accession, {})[sample] = (
                             single_cell_counts
@@ -500,7 +491,7 @@ def sc_counter(
                         updates.append((accession, json_str))
                         if len(updates) >= batch_size:
                             _flush_updates(
-                                conn, updates, accession_best_type, check=True
+                                conn, updates, accession_best_type, count_exact=False
                             )
                             updates.clear()
                         if accession not in pbar_accessions:
@@ -521,10 +512,10 @@ def sc_counter(
                 rds_batch_processor.flush_all()
 
         if updates:
-            _flush_updates(conn, updates, accession_best_type, check=check)
+            _flush_updates(conn, updates, accession_best_type, count_exact=count_exact)
 
     pbar.close()
-    if check:
+    if not count_exact:
         logger.info(
             "check complete: %d / %d accessions have single-cell data",
             sc_found,
@@ -551,7 +542,7 @@ def _flush_updates(
     updates: list[tuple[str, str]],
     accession_best_type: dict[str, str] | None = None,
     *,
-    check: bool = False,
+    count_exact: bool = True,
 ) -> None:
     if accession_best_type is None:
         accession_best_type = {}
@@ -564,15 +555,17 @@ def _flush_updates(
         conn.execute(
             f"UPDATE unified_metadata SET is_single_cell = 0, "  # noqa: S608
             f"single_cell_modality = '', single_cell_counts = '{{}}', "
-            f"single_cell_file_format = '' "
+            f"single_cell_file_format = '', "
+            f"sc_count_last_checked = datetime('now') "
             f"WHERE canonical_accession IN ({placeholders})",
         )
 
     if sc:
-        if check:
+        if not count_exact:
             conn.executemany(
                 "UPDATE unified_metadata "
-                "SET is_single_cell = 1, single_cell_file_format = ? "
+                "SET is_single_cell = 1, single_cell_file_format = ?, "
+                "sc_count_last_checked = datetime('now') "
                 "WHERE canonical_accession = ?",
                 [(accession_best_type.get(acc, ""), acc) for acc, _ in sc],
             )
@@ -582,12 +575,33 @@ def _flush_updates(
             ]
             conn.executemany(
                 "UPDATE unified_metadata "
-                "SET single_cell_counts = ?, single_cell_file_format = ? "
+                "SET single_cell_counts = ?, single_cell_file_format = ?, "
+                "sc_count_last_checked = datetime('now') "
                 "WHERE canonical_accession = ?",
                 sc_params,
             )
 
     conn.commit()
+
+
+def _update_table_schema(conn: sqlite3.Connection) -> None:
+    columns = [row[1] for row in conn.execute("PRAGMA table_info(unified_metadata)")]
+    if "single_cell_counts" not in columns:
+        conn.execute(
+            "ALTER TABLE unified_metadata "
+            "ADD COLUMN single_cell_counts TEXT DEFAULT '{}';",
+        )
+
+    if "single_cell_file_format" not in columns:
+        conn.execute(
+            "ALTER TABLE unified_metadata "
+            "ADD COLUMN single_cell_file_format TEXT DEFAULT '';",
+        )
+
+    if "sc_count_last_checked" not in columns:
+        conn.execute(
+            "ALTER TABLE unified_metadata ADD COLUMN sc_count_last_checked TEXT;",
+        )
 
 
 def _contains_any(s: str, substrings: list[str]) -> bool:

@@ -1,3 +1,4 @@
+import ftplib
 import http
 import logging
 import sqlite3
@@ -6,6 +7,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, LiteralString, cast
+from urllib.parse import urlparse
 
 import httpx
 import psycopg
@@ -370,6 +372,73 @@ def _download_multipart(
 
     if pbar:
         pbar.close()
+
+
+def download_file_ftp(
+    url: str,
+    dest_path: Path,
+    *,
+    chunk_size: int,
+    num_retries: int,
+    timeout: int,
+    max_wait: int,
+    with_pbar: bool = False,
+) -> Path:
+    dest_path.parent.mkdir(exist_ok=True, parents=True)
+
+    parsed = urlparse(url)
+    if not parsed.hostname or not parsed.path:
+        raise ValueError(f"invalid FTP URL: {url}")
+
+    for attempt in range(num_retries):
+        try:
+            ftp = ftplib.FTP(parsed.hostname, timeout=timeout)  # noqa: S321
+            ftp.login("anonymous", "guest@")
+            ftp.set_pasv(True)
+            ftp.voidcmd("TYPE I")
+
+            total = ftp.size(parsed.path)
+            pbar = (
+                tqdm(
+                    total=total,
+                    unit="B",
+                    unit_scale=True,
+                    desc=f"downloading {url[:100]}",
+                )
+                if with_pbar
+                else None
+            )
+
+            with dest_path.open("wb") as f:
+
+                def write_cb(data: bytes, pbar: tqdm | None = pbar) -> None:
+                    f.write(data)
+                    if pbar:
+                        pbar.update(len(data))
+
+                ftp.retrbinary(f"RETR {parsed.path}", write_cb, blocksize=chunk_size)
+
+            if pbar:
+                pbar.close()
+
+            ftp.quit()
+        except Exception as exc:
+            if dest_path.exists():
+                dest_path.unlink()
+            if attempt == num_retries - 1:
+                raise
+            wait = min(2**attempt, max_wait)
+            logger.warning(
+                "failed to download %s (attempt %d/%d): %s. retrying in %.0fs",
+                url,
+                attempt + 1,
+                num_retries,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
+
+    raise RuntimeError(f"failed after {num_retries} retries")
 
 
 def sqlite_connect(

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS unified_metadata (
     is_single_cell           INTEGER DEFAULT 0,
     single_cell_modality     TEXT,
     single_cell_counts       TEXT DEFAULT '{}',
-    single_cell_file_format  TEXT
+    single_cell_file_format  TEXT,
+    sc_count_last_checked    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS unified_centers (

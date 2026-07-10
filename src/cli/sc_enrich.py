@@ -29,7 +29,10 @@ def counter(
     timeout: int = typer.Option(30),
     max_timeout: int = typer.Option(120),
     batch_size: int = typer.Option(5000),
-    check: bool = typer.Option(default=False, help="only check, don't update counts"),
+    count_exact: bool = typer.Option(default=True, help="store exact cell counts"),
+    check_all: bool = typer.Option(
+        default=False, help="check all records regardless of sc_count_last_checked"
+    ),
 ) -> None:
     sc_counter(
         output_dir,
@@ -42,5 +45,6 @@ def counter(
         timeout,
         max_timeout,
         batch_size,
-        check=check,
+        count_exact=count_exact,
+        check_all=check_all,
     )
