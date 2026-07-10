@@ -43,6 +43,16 @@ def postgres(
 
 
 @transfer_app.command()
+def sample_tsv(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Fold sample title/description into each study's search tsv (recall)."""
+    from transfer.sample_tsv import sample_tsv_transfer
+
+    sample_tsv_transfer(pg_url)
+
+
+@transfer_app.command()
 def parquet(
     output_dir: Path = typer.Option(...),
     sra_db_file: Path = typer.Option(...),
