@@ -1,0 +1,20 @@
+fleet: /data/share/seqout/yuj_machines.csv
+job: seqout-sc-count
+remote_dir: seqout-sc-count
+results_glob: ~/seqout-sc-count/results/results.json
+stall_min: 45
+work_command: bash $HOME/seqout-sc-count/recipes/install_deps.sh && PYTHONPATH=$HOME/seqout-sc-count/src $HOME/seqout-sc-count/.venv/bin/python $HOME/seqout-sc-count/src/sc_enrich/counter/yuj_worker.py
+input_file: ./yuj_setup/yuj_setup_master.txt
+output_dir: results
+output_suffix: .json
+bootstrap:
+  env_manager: uv
+  python: "3.14t"
+  extras: [micromamba]
+deploy:
+  code:
+    - ./src
+    - ./recipes
+    - pyproject.toml
+  payload:
+    - /data/share/seqout/yuj_setup

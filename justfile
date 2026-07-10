@@ -164,17 +164,13 @@ sc_enrich_classify *flags:
         {{ flags }}
 
 [group("sc_enrich")]
-sc_enrich_counter *flags:
-    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich counter \
-        --output-dir {{ DATA_DIR }} \
+sc_enrich_yuj_setup *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich counter-setup \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         --geo-db-file {{ GEO_DB_FILE }} \
         --ae-db-file {{ AE_DB_FILE }} \
-        --workers {{ WORKERS }} \
-        --batch-size {{ BATCH_SIZE }} \
-        --retries {{ RETRIES }} \
-        --timeout {{ TIMEOUT }} \
-        --max-timeout {{ MAX_TIMEOUT }} \
+        --output-dir {{ DATA_DIR }}/yuj_setup \
+        --machines-csv-file {{ DATA_DIR }}/yuj_machines.csv \
         {{ flags }}
 
 [group("transfer")]

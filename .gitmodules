@@ -1,0 +1,6 @@
+[submodule "vendor"]
+	path = vendor
+	url = git@github.com:saketlab/yuj.git
+[submodule "vendor/yuj"]
+	path = vendor/yuj
+	url = git@github.com:saketlab/yuj.git
