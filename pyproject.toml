@@ -24,6 +24,8 @@ dependencies = [
     "httpx>=0.28.1",
     "rapidfuzz>=3.14.5",
     "numpy>=2.3.0rc1",
+    "pysocks>=1.7.1",
+    "yuj",
 ]
 
 [tool.ruff]
@@ -51,7 +53,8 @@ line-ending = "lf"
 environments = ["sys_platform == 'linux'"]
 
 [tool.uv.sources]
-pysradb = { git = "https://github.com/0xmukesh/pysradb.git", rev = "develop" }
+pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
+yuj = { path = "./vendor/yuj" }
 
 [dependency-groups]
 dev = [

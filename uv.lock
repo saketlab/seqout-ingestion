@@ -1192,7 +1192,7 @@ wheels = [
 
 [[package]]
 name = "langsmith"
-version = "0.10.1"
+version = "0.10.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1210,9 +1210,9 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/18/f9c960784ffd3a50b46f8fce04dd557a97caf9869ab9435e87c79b5bc37d/langsmith-0.10.1.tar.gz", hash = "sha256:b8b8981b4623bd0fc96609c90ef6afd9241a036922c58a5f1f4591616e2670e0", size = 4709885, upload-time = "2026-07-09T17:14:01.988Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/8e/49a69c6793bf3fc5af62481e7e9b678fce59d1b384323d3ce87959a653e3/langsmith-0.10.2.tar.gz", hash = "sha256:9aa685383fbdec07a0df51dafc333ab0d4b6b995771172a232c3364714eb17a6", size = 4707343, upload-time = "2026-07-10T13:21:54.931Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b3/a5/c0a12ee0455baf2de2411832b456fe226e0667ecc7e39524faa464e27ba1/langsmith-0.10.1-py3-none-any.whl", hash = "sha256:565f6ab9c1e3cea4d0a7da2c0b535b3d8acd291a0df51b39e9e25b7b14c4b56d", size = 653374, upload-time = "2026-07-09T17:14:00.238Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/17/cc8eaf4e82e4bb22009bdde20085ff91719dce643d355fed94d523300130/langsmith-0.10.2-py3-none-any.whl", hash = "sha256:c2a3929055758ac1831582f0939fafc0973cc08432365bbad335c336338ec37c", size = 652545, upload-time = "2026-07-10T13:21:52.13Z" },
 ]
 
 [[package]]
@@ -2670,9 +2670,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pysocks"
+version = "1.7.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/11/293dd436aea955d45fc4e8a35b6ae7270f5b8e00b53cf6c024c83b657a11/PySocks-1.7.1.tar.gz", hash = "sha256:3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0", size = 284429, upload-time = "2019-09-20T02:07:35.714Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/59/b4572118e098ac8e46e399a1dd0f2d85403ce8bbaad9ec79373ed6badaf9/PySocks-1.7.1-py3-none-any.whl", hash = "sha256:2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5", size = 16725, upload-time = "2019-09-20T02:06:22.938Z" },
+]
+
+[[package]]
 name = "pysradb"
 version = "3.0.0.dev0"
-source = { git = "https://github.com/0xmukesh/pysradb.git?rev=develop#7ce83420d63fb6f096bf04d43d606388b02ac1b6" }
+source = { git = "https://github.com/saketkc/pysradb.git?rev=develop#1265077e3fe86d2ca392a17edaf037f64f9cf265" }
 dependencies = [
     { name = "lxml" },
     { name = "pandas" },
@@ -3162,6 +3171,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pycountry" },
     { name = "pyreadr" },
+    { name = "pysocks" },
     { name = "pysradb" },
     { name = "rapidfuzz" },
     { name = "results" },
@@ -3169,6 +3179,7 @@ dependencies = [
     { name = "testing-postgresql" },
     { name = "tqdm" },
     { name = "typer" },
+    { name = "yuj" },
 ]
 
 [package.dev-dependencies]
@@ -3206,13 +3217,15 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=19.0.0,<24" },
     { name = "pycountry", specifier = ">=24.6.1" },
     { name = "pyreadr", specifier = ">=0.5.6" },
-    { name = "pysradb", git = "https://github.com/0xmukesh/pysradb.git?rev=develop" },
+    { name = "pysocks", specifier = ">=1.7.1" },
+    { name = "pysradb", git = "https://github.com/saketkc/pysradb.git?rev=develop" },
     { name = "rapidfuzz", specifier = ">=3.14.5" },
     { name = "results", specifier = ">=1.4.1772627293" },
     { name = "rpy2", specifier = ">=3.6.7" },
     { name = "testing-postgresql", specifier = ">=1.3.0" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "typer", specifier = ">=0.26.7" },
+    { name = "yuj", directory = "vendor/yuj" },
 ]
 
 [package.metadata.requires-dev]
@@ -3910,6 +3923,43 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ee/78/393913f4b9039e1edd09ae8a9bbb9d539be909a8abf6d8a2084585bed4b7/yarl-1.24.2-cp314-cp314t-musllinux_1_2_s390x.whl", hash = "sha256:533ded4dceb5f1f3da7906244f4e82cf46cfd40d84c69a1faf5ac506aa65ecbe", size = 105584, upload-time = "2026-05-19T21:30:55.962Z" },
     { url = "https://files.pythonhosted.org/packages/78/87/deb17b7049bbe74ea11a713b86f8f27800cc1c8648b0b797243ebb4830ba/yarl-1.24.2-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:7b3a85525f6e7eeabcfdd372862b21ee1915db1b498a04e8bf0e389b607ff0bd", size = 103410, upload-time = "2026-05-19T21:30:57.962Z" },
     { url = "https://files.pythonhosted.org/packages/fd/4d/4b880086bd0d3e034d25647be1d830afc3e3f610e98c4ab3490af6b1b6d5/yarl-1.24.2-py3-none-any.whl", hash = "sha256:2783d9226db8797636cd6896e4de81feed252d1db72265686c9558d97a4d94b9", size = 53576, upload-time = "2026-05-19T21:31:03.909Z" },
+]
+
+[[package]]
+name = "yuj"
+source = { directory = "vendor/yuj" }
+dependencies = [
+    { name = "jinja2" },
+    { name = "pyyaml" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "furo", marker = "extra == 'docs'", specifier = ">=2024.5" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=3.0" },
+    { name = "paramiko", marker = "extra == 'paramiko'", specifier = ">=3.4" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "rich", specifier = ">=13.0" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=7.3" },
+    { name = "sphinx-copybutton", marker = "extra == 'docs'", specifier = ">=0.5" },
+    { name = "sphinx-design", marker = "extra == 'docs'", specifier = ">=0.6" },
+    { name = "sphinxcontrib-mermaid", marker = "extra == 'docs'", specifier = ">=0.9" },
+    { name = "typer", specifier = ">=0.12" },
+]
+provides-extras = ["docs", "paramiko"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.11" },
+    { name = "pre-commit", specifier = ">=3.8" },
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "ruff", specifier = ">=0.6" },
+    { name = "shellcheck-py", specifier = ">=0.10" },
+    { name = "types-pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]

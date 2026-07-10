@@ -1,6 +1,7 @@
 import ftplib
 import http
 import logging
+import socket
 import sqlite3
 import time
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from urllib.parse import urlparse
 
 import httpx
 import psycopg
+import socks
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -390,61 +392,70 @@ def download_file_ftp(
     if not parsed.hostname or not parsed.path:
         raise ValueError(f"invalid FTP URL: {url}")
 
-    for attempt in range(num_retries):
-        try:
-            ftp = ftplib.FTP(parsed.hostname, timeout=timeout)  # noqa: S321
-            ftp.login("anonymous", "guest@")
-            ftp.set_pasv(True)
-            ftp.voidcmd("TYPE I")
+    orig_socket = socket.socket
+    socks.set_default_proxy(socks.SOCKS5, "10.195.102.16", 1080)
+    socket.socket = socks.socksocket
 
-            total = ftp.size(parsed.path)
-            pbar = (
-                tqdm(
-                    total=total,
-                    unit="B",
-                    unit_scale=True,
-                    desc=f"downloading {url[:100]}",
+    try:
+        for attempt in range(num_retries):
+            try:
+                ftp = ftplib.FTP(parsed.hostname, timeout=timeout)  # noqa: S321
+                ftp.login("anonymous", "guest@")
+                ftp.set_pasv(True)
+                ftp.voidcmd("TYPE I")
+
+                total = ftp.size(parsed.path)
+                pbar = (
+                    tqdm(
+                        total=total,
+                        unit="B",
+                        unit_scale=True,
+                        desc=f"downloading {url[:100]}",
+                    )
+                    if with_pbar
+                    else None
                 )
-                if with_pbar
-                else None
-            )
 
-            with dest_path.open("wb") as f:
+                with dest_path.open("wb") as f:
 
-                def write_cb(data: bytes, pbar: tqdm | None = pbar) -> None:
-                    f.write(data)
-                    if pbar:
-                        pbar.update(len(data))
+                    def write_cb(data: bytes, pbar: tqdm | None = pbar) -> None:
+                        f.write(data)
+                        if pbar:
+                            pbar.update(len(data))
 
-                ftp.retrbinary(f"RETR {parsed.path}", write_cb, blocksize=chunk_size)
+                    ftp.retrbinary(
+                        f"RETR {parsed.path}", write_cb, blocksize=chunk_size
+                    )
 
-            if pbar:
-                pbar.close()
+                if pbar:
+                    pbar.close()
 
-            ftp.quit()
-        except ftplib.error_perm:
-            if dest_path.exists():
-                dest_path.unlink()
-            raise
-        except Exception as exc:
-            if dest_path.exists():
-                dest_path.unlink()
-            if attempt == num_retries - 1:
+                ftp.quit()
+            except ftplib.error_perm:
+                if dest_path.exists():
+                    dest_path.unlink()
                 raise
-            wait = min(2**attempt, max_wait)
-            logger.warning(
-                "failed to download %s (attempt %d/%d): %s. retrying in %.0fs",
-                url,
-                attempt + 1,
-                num_retries,
-                exc,
-                wait,
-            )
-            time.sleep(wait)
-        else:
-            return dest_path
+            except Exception as exc:
+                if dest_path.exists():
+                    dest_path.unlink()
+                if attempt == num_retries - 1:
+                    raise
+                wait = min(2**attempt, max_wait)
+                logger.warning(
+                    "failed to download %s (attempt %d/%d): %s. retrying in %.0fs",
+                    url,
+                    attempt + 1,
+                    num_retries,
+                    exc,
+                    wait,
+                )
+                time.sleep(wait)
+            else:
+                return dest_path
 
-    raise RuntimeError(f"failed after {num_retries} retries")
+        raise RuntimeError(f"failed after {num_retries} retries")
+    finally:
+        socket.socket = orig_socket
 
 
 def sqlite_connect(
