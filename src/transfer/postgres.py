@@ -20,6 +20,7 @@ from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from helpers import batch_query_in, sqlite_connect
+from transfer.gsa import gsa_transfer_tasks
 from transfer.pg_fields import (
     _AE_CENTER_GEO_FIELDS,
     _AE_EXPERIMENTS_INSERT_COLS,
@@ -74,6 +75,8 @@ def postgres_transfer(
     read_batch_size: int,
     num_retries: int,
     num_workers: int,
+    gsa_db_file: Path | None = None,
+    gsa_human_db_file: Path | None = None,
 ) -> None:
     table_info = {
         "geo_series": _TableInfo(
@@ -268,6 +271,14 @@ def postgres_transfer(
             "cross_refs",
             _transfer_cross_refs,
             (pg_url, unified_metadata_db_file, read_batch_size),
+        ),
+    )
+    all_tasks.extend(
+        gsa_transfer_tasks(
+            pg_url,
+            gsa_db_file,
+            gsa_human_db_file,
+            read_batch_size,
         ),
     )
 

@@ -6,4 +6,5 @@ class Datasource(enum.StrEnum):
     Sra = "sra"
     Ena = "ena"
     ArrayExpress = "ae"
+    Gsa = "gsa"
     _None = "none"

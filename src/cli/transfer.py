@@ -20,6 +20,8 @@ def postgres(
     read_batch_size: int = typer.Option(default=500),
     num_retries: int = typer.Option(3, "--retries"),
     num_workers: int = typer.Option(4, "--workers"),
+    gsa_db_file: Path | None = typer.Option(None),
+    gsa_human_db_file: Path | None = typer.Option(None),
 ) -> None:
     from transfer.postgres import postgres_transfer
 
@@ -35,6 +37,8 @@ def postgres(
         read_batch_size,
         num_retries,
         num_workers,
+        gsa_db_file=gsa_db_file,
+        gsa_human_db_file=gsa_human_db_file,
     )
 
 

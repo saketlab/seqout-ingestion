@@ -37,6 +37,8 @@ def build_unified_metadata(
     sra_db_file: Path,
     ena_db_file: Path,
     ae_db_file: Path,
+    gsa_db_file: Path,
+    gsa_human_db_file: Path,
     unified_catalog_db_file: Path,
     pubmed_metadata_db_file: Path,
     assay_mapping_csv_file: Path,
@@ -54,12 +56,13 @@ def build_unified_metadata(
     taxonomy = _load_taxonomy_mapping(taxonomy_mapping_csv_file)
 
     source_data: dict[str, SourceMap] = {}
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         futures = {
             pool.submit(_scan_geo, geo_db_file): "geo",
             pool.submit(_scan_sra, sra_db_file): "sra",
             pool.submit(_scan_ae, ae_db_file): "ae",
             pool.submit(_scan_ena, ena_db_file): "ena",
+            pool.submit(_scan_gsa, gsa_db_file, gsa_human_db_file): "gsa",
         }
 
         for f in tqdm(
@@ -71,8 +74,10 @@ def build_unified_metadata(
             label = futures[f]
             source_data[label] = f.result()
 
-    geo, sra, ae, ena = (source_data[k] for k in ("geo", "sra", "ae", "ena"))
-    sources = (geo, sra, ae, ena)
+    geo, sra, ae, ena, gsa = (
+        source_data[k] for k in ("geo", "sra", "ae", "ena", "gsa")
+    )
+    sources = (geo, sra, ae, ena, gsa)
     pmid_map = _merge_pmid_map(sources)
     published_map = _merge_published_map(sources)
 
@@ -725,6 +730,104 @@ def _scan_ena(db_file: Path) -> SourceMap:
     m.pmids = dict(pmids)
 
     conn.close()
+    return m
+
+
+def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
+    """Merge open GSA (CRA) + GSA-Human (HRA) into one SourceMap keyed by accession."""
+    m = SourceMap()
+
+    # --- open GSA / CRA ---
+    conn = sqlite_connect(gsa_db_file)
+    organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
+    for study, organism in conn.execute(
+        "SELECT study_accession, organism FROM gsa_samples WHERE organism IS NOT NULL",
+    ):
+        org = str(organism).strip()
+        if org:
+            organism_count[study][org] += 1
+    library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
+    exp_count: Counter[str] = Counter()
+    for study, strategy in conn.execute(
+        "SELECT study_accession, library_strategy FROM gsa_experiments",
+    ):
+        exp_count[study] += 1
+        strat = str(strategy).strip() if strategy else ""
+        if strat:
+            library_count[study][strat] += 1
+    sample_count: Counter[str] = Counter()
+    for (study,) in conn.execute("SELECT study_accession FROM gsa_samples"):
+        sample_count[study] += 1
+    for acc, organization, release_time, pmid in conn.execute(
+        """SELECT accession, organization, release_time, pubmed_id_pysradb
+        FROM gsa_studies""",
+    ):
+        if organization and organization.strip():
+            m.center[acc] = [organization.strip()]
+        if release_time:
+            m.published[acc] = release_time
+        if pmid and str(pmid).strip():
+            m.pmids[acc] = {str(pmid).strip()}
+    conn.close()
+    m.organism = {k: dict(v) for k, v in organism_count.items()}
+    m.library = {k: dict(v) for k, v in library_count.items()}
+    m.num_experiments = dict(exp_count)
+    m.num_samples = dict(sample_count)
+
+    # --- GSA-Human / HRA (every study is human) ---
+    # Open studies have real per-study experiment/sample rows (fetched workbooks);
+    # controlled studies have only the study-level row, so fall back to its columns.
+    conn = sqlite_connect(gsa_human_db_file)
+    hra_library: dict[str, Counter[str]] = defaultdict(Counter[str])
+    for study, strategy in conn.execute(
+        "SELECT study_accession, library_strategy FROM gsa_human_experiments",
+    ):
+        strat = str(strategy).strip() if strategy else ""
+        if strat:
+            hra_library[study][strat] += 1
+    hra_exp_count: Counter[str] = Counter()
+    for (study,) in conn.execute("SELECT study_accession FROM gsa_human_experiments"):
+        hra_exp_count[study] += 1
+    hra_sample_count: Counter[str] = Counter()
+    for (study,) in conn.execute("SELECT study_accession FROM gsa_human_samples"):
+        hra_sample_count[study] += 1
+
+    for (
+        acc,
+        organization,
+        release_time,
+        pmid,
+        strategy,
+        study_type,
+        n_individuals,
+        n_samples,
+        n_experiments,
+    ) in conn.execute(
+        """SELECT accession, organization, release_time, pubmed_id_pysradb,
+            strategy, study_type, n_individuals, n_samples, n_experiments
+        FROM gsa_human_studies""",
+    ):
+        # every HRA study is human; keep the real individual count, defaulting only
+        # a truly-unknown (NULL) count to 1 to still mark human presence.
+        m.organism[acc] = {
+            "Homo sapiens": n_individuals if n_individuals is not None else 1,
+        }
+        # prefer real per-experiment strategies; fall back to the study-level string
+        # for controlled studies that have no fetched experiment rows.
+        if acc in hra_library:
+            m.library[acc] = dict(hra_library[acc])
+        elif lib := (strategy or study_type or "").strip():
+            m.library[acc] = {lib: 1}
+        m.num_experiments[acc] = hra_exp_count.get(acc) or n_experiments or 0
+        m.num_samples[acc] = hra_sample_count.get(acc) or n_samples or 0
+        if organization and organization.strip():
+            m.center[acc] = [organization.strip()]
+        if release_time:
+            m.published[acc] = release_time
+        if pmid and str(pmid).strip():
+            m.pmids[acc] = {str(pmid).strip()}
+    conn.close()
+
     return m
 
 

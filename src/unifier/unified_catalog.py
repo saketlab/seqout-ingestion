@@ -19,6 +19,8 @@ def build_unified_catalog(
     sra_db_file: Path,
     ena_db_file: Path,
     ae_db_file: Path,
+    gsa_db_file: Path,
+    gsa_human_db_file: Path,
     db_file: Path | None,
     dump_parquet: bool,
 ) -> None:
@@ -31,7 +33,10 @@ def build_unified_catalog(
     sra_dict = _load_sra(sra_db_file)
     ena_dict = _load_ena(ena_db_file)
     ae_dict = _load_ae(ae_db_file)
+    gsa_dict = _load_gsa(gsa_db_file)
+    gsa_human_dict = _load_gsa_human(gsa_human_db_file)
     catalog = _build_catalog_tuples(geo_dict, sra_dict, ena_dict, ae_dict)
+    catalog.extend(_build_gsa_tuples(gsa_dict, gsa_human_dict))
 
     with sqlite_connect(db_file) as conn:
         exec_query_from_file("tables/unified_studies.sql", conn=conn)
@@ -118,6 +123,95 @@ def _load_ae(ae_db_file: Path) -> dict[str, tuple[str, str, list[dict]]]:
 
         result[acc] = (_clean_string(title), _clean_string(desc), links)
     return result
+
+
+def _load_gsa(gsa_db_file: Path) -> dict[str, tuple[str, str, str]]:
+    """
+    CRA studies -> (title, description, project_accession).
+
+    GSA has no study abstract, so the description is synthesised from the study's
+    distinct experiment titles to give the catalog some searchable text.
+    """
+    with sqlite_connect(gsa_db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, title, alias, project_accession FROM gsa_studies",
+        ).fetchall()
+        exp_titles = dict(
+            conn.execute(
+                """SELECT study_accession, group_concat(DISTINCT title)
+                FROM gsa_experiments WHERE title IS NOT NULL AND title != ''
+                GROUP BY study_accession""",
+            ).fetchall(),
+        )
+
+    result = {}
+    for acc, title, alias, project in rows:
+        result[acc] = (
+            _clean_string(title) or _clean_string(alias),
+            _clean_string(exp_titles.get(acc, "")).replace(",", "; "),
+            _clean_string(project),
+        )
+    return result
+
+
+def _load_gsa_human(gsa_human_db_file: Path) -> dict[str, tuple[str, str, str]]:
+    """
+    HRA studies -> (title, description, project_accession).
+
+    Description is synthesised from the study's distinct experiment titles (as for
+    CRA); controlled studies have no fetched experiments, so fall back to disease.
+    """
+    with sqlite_connect(gsa_human_db_file) as conn:
+        rows = conn.execute(
+            """SELECT accession, title, disease, project_accession
+            FROM gsa_human_studies""",
+        ).fetchall()
+        exp_titles = dict(
+            conn.execute(
+                """SELECT study_accession, group_concat(DISTINCT title)
+                FROM gsa_human_experiments WHERE title IS NOT NULL AND title != ''
+                GROUP BY study_accession""",
+            ).fetchall(),
+        )
+
+    result = {}
+    for acc, title, disease, project in rows:
+        desc = _clean_string(exp_titles.get(acc, "")).replace(",", "; ")
+        result[acc] = (
+            _clean_string(title),
+            desc or _clean_string(disease),
+            _clean_string(project),
+        )
+    return result
+
+
+def _build_gsa_tuples(
+    gsa_dict: dict[str, tuple[str, str, str]],
+    gsa_human_dict: dict[str, tuple[str, str, str]],
+) -> list[tuple[str, str, str, str, str]]:
+    """
+    Build catalog rows for GSA.
+
+    GSA (CRA + HRA) is a distinct accession namespace from the western archives,
+    so it appends directly with a bioproject (PRJCA) cross-link, no dedup claiming.
+    """
+    catalog: list[tuple[str, str, str, str, str]] = []
+    for source_dict in (gsa_dict, gsa_human_dict):
+        for acc, (title, desc, project) in source_dict.items():
+            # never drop a study for blank text — fall back to the accession as title
+            # so every gsa study reaches unified_studies (and stays enrichable).
+            aliases = {"bioproject": project} if project else {}
+            catalog.append(
+                (
+                    acc,
+                    "gsa",
+                    title or acc,
+                    desc,
+                    json.dumps(aliases, separators=(",", ":")),
+                ),
+            )
+    logger.info("\tgsa: %d canonical", len(catalog))
+    return catalog
 
 
 # future reference: https://github.com/saketlab/pysradb-ingestion/blob/d117090430a6e2b095d5fda71c65e3275db10e6a/embed/build_unified_catalog.py#L142-L394

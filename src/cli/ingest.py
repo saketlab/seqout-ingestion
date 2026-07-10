@@ -13,6 +13,8 @@ from cli.utils import (
 from ingest.ae import ingest_ae
 from ingest.ena import ingest_ena
 from ingest.geo import ingest_geo
+from ingest.gsa import ingest_gsa
+from ingest.gsa_human import ingest_gsa_human
 from ingest.sra import ingest_sra
 
 ingest_app = typer.Typer()
@@ -145,6 +147,54 @@ def ae(
         end_date,
         num_workers,
         batch_size,
+        retries,
+        timeout,
+        max_timeout,
+    )
+
+
+@ingest_app.command()
+@_validate_date_range
+def gsa(
+    base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
+    start_date: datetime.date = _DATE_FLAG,
+    end_date: datetime.date = _DATE_FLAG,
+    num_workers: int = _NUM_WORKERS_FLAG,
+    retries: int = _RETRIES_FLAG,
+    timeout: int = _TIMEOUT_FLAG,
+    max_timeout: int = _MAX_TIMEOUT,
+) -> None:
+    ingest_gsa(
+        base_output_dir,
+        db_file,
+        start_date,
+        end_date,
+        num_workers,
+        retries,
+        timeout,
+        max_timeout,
+    )
+
+
+@ingest_app.command()
+@_validate_date_range
+def gsa_human(
+    base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
+    start_date: datetime.date = _DATE_FLAG,
+    end_date: datetime.date = _DATE_FLAG,
+    num_workers: int = _NUM_WORKERS_FLAG,
+    retries: int = _RETRIES_FLAG,
+    timeout: int = _TIMEOUT_FLAG,
+    max_timeout: int = _MAX_TIMEOUT,
+) -> None:
+    ingest_gsa_human(
+        base_output_dir,
+        db_file,
+        start_date,
+        end_date,
+        num_workers,
         retries,
         timeout,
         max_timeout,

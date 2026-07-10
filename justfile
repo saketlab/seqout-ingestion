@@ -16,6 +16,8 @@ SRA_DB_FILE := env("SRA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/sra/db/ | 
 GEO_DB_FILE := env("GEO_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/geo/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/geo/db/$latest/geo_metadata_$latest.db\""))
 ENA_DB_FILE := env("ENA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ena/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/ena/db/$latest/ena_metadata_$latest.db\""))
 AE_DB_FILE := env("AE_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ae/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/ae/db/$latest/ae_metadata_$latest.db\""))
+GSA_DB_FILE := env("GSA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa/db/$latest/gsa_metadata_$latest.db\""))
+GSA_HUMAN_DB_FILE := env("GSA_HUMAN_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa_human/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa_human/db/$latest/gsa_human_metadata_$latest.db\""))
 
 UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_catalog/unified_catalog.db")
 UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified_metadata/unified_metadata.db")
@@ -42,6 +44,8 @@ default:
 _ingest_args := " --output-dir " + DATA_DIR + " --start-date " + START_DATE + " --end-date " + END_DATE + " --workers " + WORKERS + " --retries " + RETRIES
 [private]
 _all_db_args := "--sra-db-file " + SRA_DB_FILE + " --geo-db-file " + GEO_DB_FILE + " --ena-db-file " + ENA_DB_FILE + " --ae-db-file " + AE_DB_FILE + " "
+[private]
+_gsa_db_args := "--gsa-db-file " + GSA_DB_FILE + " --gsa-human-db-file " + GSA_HUMAN_DB_FILE + " "
 [private]
 _transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --read-batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
 [private]
@@ -71,6 +75,18 @@ ingest_ena *flags:
 [group("ingest")]
 ingest_ae *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest ae \
+        {{ _ingest_args }} \
+        {{ flags }}
+
+[group("ingest")]
+ingest_gsa *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest gsa \
+        {{ _ingest_args }} \
+        {{ flags }}
+
+[group("ingest")]
+ingest_gsa_human *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest gsa-human \
         {{ _ingest_args }} \
         {{ flags }}
 
@@ -114,6 +130,7 @@ unify_build_catalog *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} unify build-catalog \
         --output-dir {{ DATA_DIR }} \
         {{ _all_db_args }} \
+        {{ _gsa_db_args }} \
         {{ flags }}
 
 [group("unify")]
@@ -121,6 +138,7 @@ unify_build_metadata *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} unify build-metadata \
         --output-dir {{ DATA_DIR }} \
         {{ _all_db_args }} \
+        {{ _gsa_db_args }} \
         --unified-catalog-db-file {{ UNIFIED_CATALOG_DB_FILE }} \
         --pubmed-metadata-db-file {{ PUBMED_METADATA_DB_FILE }} \
         --assay-mapping-csv-file {{ ASSAY_MAPPING_FILE }} \
@@ -164,6 +182,7 @@ transfer_postgres *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer postgres \
         --pg-url "$PG_URL" \
         {{ _transfer_args }} \
+        {{ _gsa_db_args }} \
         {{ flags }}
 
 [group("transfer")]

@@ -1,6 +1,6 @@
 # seqout-ingestion
 
-Ingestion toolkit for the Seqout platform — ingests metadata from SRA, GEO, ENA, and ArrayExpress into SQLite, unifies it, enriches it, and transfers it to Postgres/Parquet.
+Ingestion toolkit for the Seqout platform — ingests metadata from SRA, GEO, ENA, ArrayExpress, and GSA (CNCB-NGDC, China) into SQLite, unifies it, enriches it, and transfers it to Postgres/Parquet.
 
 ## Pipeline
 
@@ -9,12 +9,17 @@ Ingestion toolkit for the Seqout platform — ingests metadata from SRA, GEO, EN
 SRA ───────────────┐ │  pm-ids     │
 GEO ───────────────┤ │  pm-meta    ├──► unify ──► sc_enrich ──► transfer ──► Postgres
 ENA ───────────────┤ │  download-  │    build-     classify     postgres      Parquet
-AE  ───────────────┘ │  links      │    catalog    counter      parquet
-                     └─────────────┘    build-                  embed
-                                        metadata
+AE  ───────────────┤ │  links      │    catalog    counter      parquet
+GSA ───────────────┤ └─────────────┘    build-                  embed
+GSA-Human ─────────┘                    metadata
                            │
                            └──► geocode
 ```
+
+GSA has two portals: open (`gsa`, CRA studies) and human (`gsa-human`, HRA studies
+from which only open-access studies are fetched; controlled-access ones keep a study row but no
+detail). Both are ENA-style: one metadata workbook downloaded per study to disk
+(resumable), then bulk-loaded into a per-source SQLite DB.
 
 Embed pipeline (requires CUDA tox env):
 ```
@@ -29,6 +34,8 @@ just ingest_sra --start-date 2026-06-01 --end-date 2026-06-30
 just ingest_geo --start-date 2026-06-01 --end-date 2026-06-30
 just ingest_ena --start-date 2026-06-01 --end-date 2026-06-30
 just ingest_ae  --start-date 2026-06-01 --end-date 2026-06-30
+just ingest_gsa                                    # open GSA (CRA); no dates = full archive
+just ingest_gsa_human                              # GSA-Human (HRA), open-access studies
 
 # Backfill supplementary data
 just backfill_pm_ids
