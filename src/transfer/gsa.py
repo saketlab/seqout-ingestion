@@ -93,6 +93,23 @@ _GSA_RUN_DOWNLOAD_COLS = [
     "fastq_bytes",
     "fastq_md5",
 ]
+_GSA_PROJECTS_COLS = [
+    "accession",
+    "title",
+    "summary",
+    "relevance",
+    "data_type",
+    "organism",
+    "sample_scope",
+    "pubmed_id",
+    "publications",
+    "funding",
+    "submitter",
+    "submitter_email",
+    "submitting_org",
+    "published_at",
+    "submitted_at",
+]
 _BYTES_IN_NAME_RE = re.compile(r"\((\d+)\s*bytes\)")
 
 
@@ -101,23 +118,60 @@ def gsa_transfer_tasks(
     gsa_db_file: Path | None,
     gsa_human_db_file: Path | None,
     batch_size: int,
+    gsa_bioproject_db_file: Path | None = None,
 ) -> list[tuple[str, Callable[..., None], tuple]]:
-    """Build the GSA transfer tasks, or an empty list if neither DB file exists."""
+    """Build the GSA transfer tasks, or an empty list if no DB file exists."""
     cra = gsa_db_file if gsa_db_file and gsa_db_file.exists() else None
     hra = (
         gsa_human_db_file if gsa_human_db_file and gsa_human_db_file.exists() else None
     )
-    if not cra and not hra:
+    bp = (
+        gsa_bioproject_db_file
+        if gsa_bioproject_db_file and gsa_bioproject_db_file.exists()
+        else None
+    )
+    if not cra and not hra and not bp:
         return []
 
     common = (pg_url, cra, hra, batch_size)
-    return [
-        ("gsa_studies", _transfer_gsa_studies, common),
-        ("gsa_studies_search", _transfer_gsa_studies_search, common),
-        ("gsa_experiments", _transfer_gsa_experiments, common),
-        ("gsa_samples", _transfer_gsa_samples, common),
-        ("gsa_run_downloads", _transfer_gsa_run_downloads, common),
-    ]
+    tasks: list[tuple[str, Callable[..., None], tuple]] = []
+    if cra or hra:
+        tasks += [
+            ("gsa_studies", _transfer_gsa_studies, common),
+            ("gsa_studies_search", _transfer_gsa_studies_search, common),
+            ("gsa_experiments", _transfer_gsa_experiments, common),
+            ("gsa_samples", _transfer_gsa_samples, common),
+            ("gsa_run_downloads", _transfer_gsa_run_downloads, common),
+        ]
+    if bp:
+        tasks.append(
+            ("gsa_projects", _transfer_gsa_projects, (pg_url, bp, batch_size)),
+        )
+    return tasks
+
+
+def _transfer_gsa_projects(
+    pg_url: str,
+    bioproject_db: Path,
+    batch_size: int,
+) -> None:
+    """Upsert scraped PRJCA project metadata; JSON text cols land in JSONB."""
+
+    def rows() -> Iterator[tuple]:
+        cols = ", ".join(_GSA_PROJECTS_COLS)
+        with sqlite_connect(bioproject_db) as c:
+            for r in c.execute(f"SELECT {cols} FROM gsa_projects"):  # noqa: S608
+                yield tuple(r)
+
+    _upsert(
+        pg_url,
+        "gsa_projects",
+        _GSA_PROJECTS_COLS,
+        rows(),
+        "accession",
+        batch_size,
+        "gsa_projects",
+    )
 
 
 def _upsert(

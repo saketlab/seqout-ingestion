@@ -44,6 +44,10 @@ ignore = [
     "TRY003", "TRY301",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# __main__ self-checks legitimately use bare asserts / print / magic values.
+"src/ingest/gsa_bioproject.py" = ["S101", "T201", "PLR2004", "PT018"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

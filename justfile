@@ -90,6 +90,13 @@ ingest_gsa_human *flags:
         {{ _ingest_args }} \
         {{ flags }}
 
+[group("ingest")]
+ingest_gsa_bioproject *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest gsa-bioproject \
+        --output-dir {{ DATA_DIR }} --workers {{ WORKERS }} --retries {{ RETRIES }} \
+        {{ _gsa_db_args }} \
+        {{ flags }}
+
 [group("backfill")]
 backfill_download_links *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill download-links \
