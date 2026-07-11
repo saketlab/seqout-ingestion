@@ -14,9 +14,17 @@ import pyreadr
 import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 
-from sc_enrich.counter.counter_common import FileType
+from sc_enrich.counter.counter_common import FileType, RdsReadError
 
 logger = logging.getLogger(__name__)
+
+_rds_state: dict[str, str] = {"class": ""}
+
+
+def last_rds_class() -> str:
+    """R class of the most recently rpy2-read .rds object ("" if none/plain)."""
+    return _rds_state["class"]
+
 
 MIN_DISK_SPACE_BYTES = 5 * 1024**3
 POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
@@ -152,6 +160,8 @@ def safe_process(
     def wrapper(path: Path, chunk_size: int, *args: Any, **kwargs: Any) -> int:
         try:
             return func(path, chunk_size, *args, **kwargs)
+        except RdsReadError:
+            raise  # let the caller log which accession was unreadable
         except Exception:
             logger.exception("failed to process %s", path)
             return -1
@@ -363,9 +373,19 @@ def _process_rds(path: Path, _: int) -> int:
 
 
 def _process_rds_rpy2(path: Path) -> int:
+    _rds_state["class"] = ""
     try:
         ro.r(f'obj <- readRDS("{path}")')
+    except Exception as exc:
+        # S4 class often undefined (e.g. monocle3 missing for a cell_data_set)
+        raise RdsReadError(str(path), f"readRDS failed: {exc}") from exc
 
+    try:
+        _rds_state["class"] = str(cast("Any", ro.r("class(obj)[1]"))[0])
+    except Exception:
+        _rds_state["class"] = ""
+
+    try:
         vec = cast(
             "Any",
             ro.r("""

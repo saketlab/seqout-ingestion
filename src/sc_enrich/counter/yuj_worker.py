@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
+"""
+yuj work item: count single-cell cells for ONE accession.
+"""
 
-import ast
-import csv
 import functools
 import json
 import logging
 import shutil
+import socket
 import sys
 from pathlib import Path
 from typing import Any
-
-from tqdm import tqdm
 
 from helpers import download_file_ftp
 from sc_enrich.counter._process import (
@@ -18,79 +18,96 @@ from sc_enrich.counter._process import (
     _check_disk_space,
     _get_sc_count,
     _resolve_file_type,
+    last_rds_class,
 )
-from sc_enrich.counter.counter_common import DownloadLink, FileType
+from sc_enrich.counter.counter_common import DownloadLink, FileType, RdsReadError
 
 logger = logging.getLogger(__name__)
+
+_FAILURES_LOG = "rds_read_failures.jsonl"
+
+
+def _record_rds_failure(
+    output_dir: Path, accession: str, url: str, reason: str
+) -> None:
+    """
+    Append an unreadable-RDS failure to results/rds_read_failures.jsonl.
+
+    One worker runs per host at a time, so the append is race-free; each host
+    keeps its own log, merged on ``yuj pull``.
+    """
+    rec = {
+        "host": socket.gethostname(),
+        "accession": accession,
+        "url": url,
+        "reason": reason,
+    }
+    with (output_dir / _FAILURES_LOG).open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec) + "\n")
+
 
 _CHUNK_SIZE = 10 * 1024 * 1024
 _RETRIES = 5
 _TIMEOUT = 30
 _MAX_TIMEOUT = 300
 
+_SIDECAR_DIR = Path("yuj_setup/accessions")
+_OUT_DIR = Path("results")
+
+_DEFAULT_SOCKS = "10.195.102.16:1080"
+
+
+def _read_proxy() -> str | None:
+    pf = Path("socks_proxy")
+    if not pf.exists():
+        return _DEFAULT_SOCKS
+    val = pf.read_text().strip()
+    return None if not val or val.lower() == "direct" else val
+
 
 def main() -> None:
-    csv_path = Path(sys.argv[1])
-    out_dir = Path("results")
-    out_dir.mkdir(parents=True, exist_ok=True)
+    accession = sys.argv[1]
+    _OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = _OUT_DIR / f"{accession}.json"
+    if out_path.exists():
+        return
 
-    with csv_path.open(newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
+    meta = json.loads((_SIDECAR_DIR / f"{accession}.json").read_text())
 
-    results: list[dict[str, Any]] = []
-    sc_found = 0
+    try:
+        result = process_accession(
+            accession=meta["accession"],
+            source=meta.get("source", ""),
+            aliases=meta.get("aliases", ""),
+            links=meta.get("links", []),
+            output_dir=_OUT_DIR,
+            chunk_size=_CHUNK_SIZE,
+            retries=_RETRIES,
+            timeout=_TIMEOUT,
+            max_timeout=_MAX_TIMEOUT,
+        )
+    except Exception:
+        logger.exception("failed accession %s", accession)
+        result = {"accession": accession, "error": True}
 
-    pbar = tqdm(total=len(rows), desc="processing accessions", unit="acc")
-    for row in rows:
-        try:
-            result = process_accession(
-                accession=row["accession"],
-                source=row.get("source", ""),
-                aliases=row.get("aliases", ""),
-                raw_links=row.get("supplementary_data", "[]"),
-                output_dir=out_dir,
-                chunk_size=_CHUNK_SIZE,
-                retries=_RETRIES,
-                timeout=_TIMEOUT,
-                max_timeout=_MAX_TIMEOUT,
-            )
-            if result.get("single_cell_count", 0) > 0:
-                sc_found += 1
-                pbar.set_description(
-                    f"SC: {sc_found}/{len(rows)}",
-                )
-        except Exception:
-            logger.exception("skipping accession %s", row["accession"])
-            result = {"accession": row["accession"], "error": True}
-        results.append(result)
-        pbar.update(1)
-
-    pbar.close()
-    logger.info(
-        "complete: %d / %d accessions have single-cell data",
-        sc_found,
-        len(rows),
-    )
-
-    out_path = out_dir / "seqout_sc_count_results.json"
-    with out_path.open("w") as f_out:
-        json.dump(results, f_out, indent=2)
+    tmp = out_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(result, indent=2))
+    tmp.replace(out_path)
 
 
 def process_accession(
     accession: str,
     source: str,
     aliases: str,
-    raw_links: str,
+    links: list[tuple[str, str]],
     output_dir: Path,
     chunk_size: int,
     retries: int,
     timeout: int,
     max_timeout: int,
 ) -> dict[str, Any]:
-    links = _parse_download_links(raw_links)
-    links.sort(key=lambda x: FILE_TYPE_PRIORITY.index(x.type))
+    dl_links = [DownloadLink(type=FileType(t), url=u) for t, u in links]
+    dl_links.sort(key=lambda x: FILE_TYPE_PRIORITY.index(x.type))
 
     acc_dir = output_dir / accession
     acc_dir.mkdir(parents=True, exist_ok=True)
@@ -102,12 +119,14 @@ def process_accession(
         timeout=timeout,
         max_wait=max_timeout,
         with_pbar=False,
+        socks_proxy=_read_proxy(),
     )
 
     max_count = 0
     best_type = ""
+    best_rds_class = ""
 
-    for link in links:
+    for link in dl_links:
         dest_path = acc_dir / link.extract_filename()
 
         if dest_path.exists():
@@ -127,6 +146,11 @@ def process_accession(
                 if single_cell_count > max_count:
                     max_count = single_cell_count
                     best_type = file_type.value
+                    best_rds_class = (
+                        last_rds_class() if file_type == FileType.Rds else ""
+                    )
+            except RdsReadError as exc:
+                _record_rds_failure(output_dir, accession, link.url, exc.reason)
             except Exception:
                 logger.exception("failed to process existing file %s", dest_path)
             finally:
@@ -165,6 +189,11 @@ def process_accession(
             if single_cell_count > max_count:
                 max_count = single_cell_count
                 best_type = file_type.value
+                best_rds_class = (
+                    last_rds_class() if file_type == FileType.Rds else ""
+                )
+        except RdsReadError as exc:
+            _record_rds_failure(output_dir, accession, link.url, exc.reason)
         except Exception:
             logger.exception("failed to process %s", link.url)
         finally:
@@ -172,23 +201,16 @@ def process_accession(
 
     shutil.rmtree(acc_dir, ignore_errors=True)
 
-    return {
+    out: dict[str, Any] = {
         "accession": accession,
         "source": source,
         "aliases": aliases,
         "single_cell_count": max_count,
         "single_cell_file_format": best_type,
     }
-
-
-def _parse_download_links(raw: str) -> list[DownloadLink]:
-    try:
-        items = ast.literal_eval(raw)
-    except (ValueError, SyntaxError):
-        logger.exception("failed to parse download links: %s", raw)
-        return []
-
-    return [DownloadLink(type=FileType(t), url=u) for t, u in items]
+    if best_rds_class:
+        out["rds_class"] = best_rds_class
+    return out
 
 
 if __name__ == "__main__":

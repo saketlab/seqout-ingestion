@@ -1,7 +1,5 @@
-import csv
 import json
 import logging
-import math
 from collections import defaultdict
 from pathlib import Path
 
@@ -12,21 +10,55 @@ from sc_enrich.counter.counter_common import DownloadLink, FileType
 logger = logging.getLogger(__name__)
 
 
+def _ro_connect(db_file: Path):  # noqa: ANN202
+    """Open a source DB read-only (read-only share, WAL mode)."""
+    return sqlite_connect(f"file:{db_file}?mode=ro&immutable=1", uri=True)
+
+
+def _load_universe(
+    conn,  # noqa: ANN001
+    batch_size: int,
+    *,
+    accession_list_file: Path | None,
+    check_all: bool,
+) -> list[tuple[str, str, str]]:
+    """Return (canonical_accession, source, aliases) rows for the universe."""
+    if accession_list_file is not None:
+        ids = [
+            line.strip()
+            for line in accession_list_file.read_text().splitlines()
+            if line.strip()
+        ]
+        logger.info("universe from %s: %d ids", accession_list_file, len(ids))
+        return batch_query_in(
+            conn,
+            "SELECT canonical_accession, source, aliases "
+            "FROM unified_metadata WHERE canonical_accession",
+            ids,
+            batch_size,
+        )
+    where = "" if check_all else "AND sc_count_last_checked IS NULL"
+    return conn.execute(
+        "SELECT canonical_accession, source, aliases "  # noqa: S608 (where is a literal)
+        f"FROM unified_metadata WHERE is_single_cell = '1' {where}",
+    ).fetchall()
+
+
 def yuj_setup(
     unified_metadata_db_file: Path,
     geo_db_file: Path,
     ae_db_file: Path,
     output_dir: Path,
-    machines_csv_file: Path,
     batch_size: int,
     *,
     check_all: bool = False,
+    accession_list_file: Path | None = None,
 ) -> None:
     output_dir.mkdir(exist_ok=True, parents=True)
 
-    conn = sqlite_connect(unified_metadata_db_file)
-    geo_conn = sqlite_connect(geo_db_file)
-    ae_conn = sqlite_connect(ae_db_file)
+    conn = _ro_connect(unified_metadata_db_file)
+    geo_conn = _ro_connect(geo_db_file)
+    ae_conn = _ro_connect(ae_db_file)
 
     def _db_flush() -> None:
         ae_conn.close()
@@ -40,25 +72,17 @@ def yuj_setup(
         list[DownloadLink],
     )
 
-    if check_all:
-        all_records = conn.execute(
-            "SELECT canonical_accession, source, aliases "
-            "FROM unified_metadata "
-            "WHERE is_single_cell = '1'",
-        ).fetchall()
-    else:
-        all_records = conn.execute(
-            "SELECT canonical_accession, source, aliases "
-            "FROM unified_metadata "
-            "WHERE is_single_cell = '1' "
-            "AND sc_count_last_checked IS NULL",
-        ).fetchall()
-
+    all_records = _load_universe(
+        conn,
+        batch_size,
+        accession_list_file=accession_list_file,
+        check_all=check_all,
+    )
     logger.info("found %d single-cell records to process", len(all_records))
 
     for accession, source, aliases_json in all_records:
         if source not in {"geo", "ae"}:
-            aliases: dict[str, str] = json.loads(aliases_json)
+            aliases: dict[str, str] = json.loads(aliases_json or "{}")
             geo_alias = aliases.get("geo")
             arrayexpress_alias = aliases.get("arrayexpress")
 
@@ -74,6 +98,14 @@ def yuj_setup(
             accessions_to_process.add(v)
         elif isinstance(v, tuple):
             accessions_to_process.add(v[1])
+
+    # download_links_mapping is keyed by the GEO/AE accession (the alias), but a
+    # record's canonical_accession may be an SRA/ENA id. Map canonical -> the
+    # key we actually stored links under, so the lookup below doesn't miss.
+    canonical_to_key = {
+        (v[0] if isinstance(v, tuple) else v): (v[1] if isinstance(v, tuple) else v)
+        for v in accessions
+    }
 
     gse_list = [acc for acc in accessions_to_process if acc.startswith("GSE")]
     rows = batch_query_in(
@@ -148,6 +180,8 @@ def yuj_setup(
         if len(download_links_mapping.get(accession, [])) > 0:
             continue
 
+        # Series-level supplementary: capture every countable file, not just
+        # tarballs (many studies put the matrix straight on the series).
         supl_data = json.loads(supl_data_json)
         for item in supl_data:
             url = item.get("#text")
@@ -155,11 +189,12 @@ def yuj_setup(
                 continue
 
             file_type = _classify_file(url)
-            if file_type == FileType.Tar:
-                download_links_mapping[accession].append(
-                    DownloadLink(type=file_type, url=url),
-                )
-                break
+            if file_type == FileType.Unknown:
+                continue
+
+            download_links_mapping[accession].append(
+                DownloadLink(type=file_type, url=url),
+            )
 
     for accession, processed_data_files_json in ae_rows:
         if not processed_data_files_json:
@@ -179,45 +214,47 @@ def yuj_setup(
                 DownloadLink(type=file_type, url=url),
             )
 
-    with Path.open(machines_csv_file, newline="") as f:
-        machines = [row[0].strip() for row in csv.reader(f) if row and row[0].strip()]
+    # One sidecar per id (its download links). accessions.txt lists ids with
+    # links (the scatter unit); ids with none go to no_link_accessions.txt.
+    acc_dir = output_dir / "accessions"
+    acc_dir.mkdir(parents=True, exist_ok=True)
+    master_path = output_dir / "accessions.txt"
+    nolink_path = output_dir / "no_link_accessions.txt"
 
-    if not machines:
-        logger.error("machines CSV is empty or not found at %s", machines_csv_file)
-        _db_flush()
-        return
+    n_with = 0
+    n_without = 0
+    with master_path.open("w") as mf, nolink_path.open("w") as nf:
+        for r in all_records:
+            accession = str(r[0])
+            source = str(r[1])
+            alias_values = list(dict(json.loads(r[2] or "{}")).values())
+            link_key = canonical_to_key.get(accession, accession)
+            dl_items = download_links_mapping.get(link_key) or []
+            download_links = [(str(i.type), i.url) for i in dl_items]
 
-    data: list[tuple[str, str, str, list[tuple[str, str]]]] = []
+            (acc_dir / f"{accession}.json").write_text(
+                json.dumps(
+                    {
+                        "accession": accession,
+                        "source": source,
+                        "aliases": "|".join(alias_values),
+                        "links": download_links,
+                    },
+                ),
+            )
+            if download_links:
+                mf.write(f"{accession}\n")
+                n_with += 1
+            else:
+                nf.write(f"{accession}\n")
+                n_without += 1
 
-    for r in all_records:
-        accession = str(r[0])
-        source = str(r[1])
-        aliases: list[str] = list(dict(json.loads(r[2])).values())
-        dl_items = download_links_mapping.get(r[0])
-        if not dl_items:
-            continue
-
-        download_links = [(str(i.type), i.url) for i in dl_items]
-        data.append((accession, source, "|".join(aliases), download_links))
-
-    logger.info("splitting %d accessions across %d machines", len(data), len(machines))
-
-    chunk_size = math.ceil(len(data) / len(machines))
-    master_path = output_dir / "yuj_setup_master.txt"
-    with Path.open(master_path, mode="w") as mf:
-        for i in range(len(machines)):
-            chunk = data[i * chunk_size : (i + 1) * chunk_size]
-            if not chunk:
-                break
-
-            csv_path = output_dir / f"yuj_setup_{i}.csv"
-            with Path.open(csv_path, mode="w", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(
-                    ["accession", "source", "aliases", "supplementary_data"],
-                )
-                writer.writerows(chunk)
-
-            mf.write(f"{csv_path}\n")
-
+    logger.info(
+        "emitted %d accessions: %d with links -> %s, %d without -> %s",
+        n_with + n_without,
+        n_with,
+        master_path,
+        n_without,
+        nolink_path,
+    )
     _db_flush()
