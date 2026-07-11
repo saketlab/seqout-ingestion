@@ -29,6 +29,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
+
 # Compound cell-line names ("HepG2/C3A", "Hep-G2") get parsed as a single
 # path-like lexeme, so a query for "hepg2" never matches. Normalize '/' and '-'
 # to spaces before to_tsvector so the parts become their own lexemes (recall).
@@ -145,6 +146,7 @@ BEGIN
 END $$;
 """
 
+
 # SRA/AE tsv are GENERATED ALWAYS. PG16 has no ALTER ... SET EXPRESSION, so the
 # column is dropped and re-added (which also drops/rebuilds its GIN index). The
 # base expression must match the live schema exactly, plus the sample_tsv tail.
@@ -256,7 +258,9 @@ def sample_tsv_transfer(pg_url: str) -> None:
             #     updated (translate-normalized) trigger never re-fired for them.
             #     Touch them so their study-text tsv is rebuilt too.
             logger.info("touching sample-less geo_series to rebuild tsv ...")
-            cur.execute("UPDATE geo_series SET sample_tsv = sample_tsv WHERE sample_tsv IS NULL")
+            cur.execute(
+                "UPDATE geo_series SET sample_tsv = sample_tsv WHERE sample_tsv IS NULL"
+            )
             logger.info("  %s rows touched", cur.rowcount)
             conn.commit()
 

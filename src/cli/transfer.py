@@ -55,6 +55,18 @@ def sample_tsv(
 
 
 @transfer_app.command()
+def age(
+    pg_url: str = typer.Option(...),
+    age_norm_db_file: Path = typer.Option(...),
+    read_batch_size: int = typer.Option(default=5000),
+) -> None:
+    """Annotate ontology_samples_v4 with normalized age columns (age_days, ...)."""
+    from transfer.age import age_transfer
+
+    age_transfer(pg_url, age_norm_db_file, read_batch_size)
+
+
+@transfer_app.command()
 def parquet(
     output_dir: Path = typer.Option(...),
     sra_db_file: Path = typer.Option(...),

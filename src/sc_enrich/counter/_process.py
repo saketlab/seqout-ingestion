@@ -14,10 +14,13 @@ import pyreadr
 import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 
+from helpers import open_http_range
 from sc_enrich.counter.counter_common import FileType, RdsReadError
 
 logger = logging.getLogger(__name__)
 
+# R class of the last .rds read via rpy2 (Seurat / SingleCellExperiment /
+# cell_data_set / ...). One worker per process, so a module holder is safe.
 _rds_state: dict[str, str] = {"class": ""}
 
 
@@ -29,19 +32,51 @@ def last_rds_class() -> str:
 MIN_DISK_SPACE_BYTES = 5 * 1024**3
 POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
 
+# cheapest and most reliable first (early-exit prefers these)
 FILE_TYPE_PRIORITY = [
+    FileType.Mtx,
     FileType.Barcodes,
     FileType.H5,
     FileType.H5ad,
-    FileType.Tar,
-    FileType.Txt,
-    FileType.Mtx,
     FileType.Tsv,
     FileType.Csv,
+    FileType.Txt,
     FileType.SpaceDelimited,
     FileType.SemicolonDelimited,
+    FileType.Tar,
     FileType.Rds,
 ]
+
+# counted from the first chunk, so stream only the head
+HEADER_STREAMABLE = frozenset(
+    {
+        FileType.Mtx,
+        FileType.Barcodes,
+        FileType.Txt,
+        FileType.Tsv,
+        FileType.Csv,
+        FileType.SpaceDelimited,
+        FileType.SemicolonDelimited,
+    },
+)
+
+# authoritative counts; the worker stops at the first positive one
+RELIABLE_TYPES = frozenset(
+    {FileType.Mtx, FileType.Barcodes, FileType.H5, FileType.H5ad, FileType.Rds},
+)
+
+# skip large non-matrix files
+SKIP_SUBSTRINGS = (
+    "fragments.tsv",
+    ".bam",
+    ".fastq",
+    ".fq.gz",
+    "_denovo_",
+    ".sra",
+    ".bigwig",
+    ".bw",
+    ".bedgraph",
+)
 
 
 def _classify_file(path: str) -> FileType:  # noqa: PLR0911
@@ -58,6 +93,8 @@ def _classify_file(path: str) -> FileType:  # noqa: PLR0911
     def _is_type(ext: str) -> bool:
         return ext in path and not _contains_any(path, ignore_words)
 
+    if _contains_any(path, list(SKIP_SUBSTRINGS)):
+        return FileType.Unknown
     if "barcodes.tsv" in path:
         return FileType.Barcodes
     if ".h5ad" in path:
@@ -267,39 +304,62 @@ def _process_barcodes(path: Path, chunk_size: int) -> int:
     return len(chunk[idx + 1 :].splitlines())
 
 
+def _h5_count(f: Any) -> int:
+    n_cells: int | None = None
+
+    def find_barcodes(name: str, obj: Any) -> None:
+        nonlocal n_cells
+        if n_cells is not None:
+            return
+        if obj is not None and name.endswith("/barcodes"):
+            n_cells = len(obj)
+
+    f.visititems(find_barcodes)
+    return n_cells if n_cells is not None and n_cells > 1 else 0
+
+
+def _h5ad_count(f: Any) -> int:
+    n_cells: int | None = None
+    if "obs/_index" in f:
+        n_cells = len(f["obs/_index"])
+    elif "X" in f:
+        x = f["X"]
+        if hasattr(x, "shape"):
+            n_cells = x.shape[0]
+        elif "shape" in x:
+            n_cells = x["shape"][0]
+    return n_cells if n_cells is not None and n_cells > 1 else 0
+
+
 @safe_process
 def _process_h5(path: Path, _: int) -> int:
-    n_cells = None
-
     with h5py.File(path, "r") as f:
-
-        def find_barcodes(name: str, obj: Any) -> None:
-            nonlocal n_cells
-            if n_cells is not None:
-                return
-            if obj is not None and name.endswith("/barcodes"):
-                n_cells = len(obj)
-
-        f.visititems(find_barcodes)
-
-    return n_cells if n_cells is not None and n_cells > 1 else 0
+        return _h5_count(f)
 
 
 @safe_process
 def _process_h5ad(path: Path, _: int) -> int:
-    n_cells = None
-
     with h5py.File(path, "r") as f:
-        if "obs/_index" in f:
-            n_cells = len(f["obs/_index"])
-        elif "X" in f:
-            x = f["X"]
-            if hasattr(x, "shape"):
-                n_cells = x.shape[0]
-            elif "shape" in x:
-                n_cells = x["shape"][0]
+        return _h5ad_count(f)
 
-    return n_cells if n_cells is not None and n_cells > 1 else 0
+
+def count_h5_via_http(url: str, file_type: FileType) -> int | None:
+    """
+    Read an .h5/.h5ad cell count over HTTP range reads, or None to fall back.
+
+    None means the server won't range-serve or the file can't be opened
+    remotely, so the caller does a full download instead.
+    """
+    reader = open_http_range(url.replace("ftp://", "https://", 1))
+    if reader is None:
+        return None
+    try:
+        with h5py.File(reader, "r") as f:
+            return _h5_count(f) if file_type == FileType.H5 else _h5ad_count(f)
+    except (OSError, ValueError, KeyError):
+        return None
+    finally:
+        reader.close()
 
 
 @safe_process
@@ -392,24 +452,9 @@ def _process_rds_rpy2(path: Path) -> int:
             n_cells <- 0
 
             if (inherits(obj, "Seurat")) {
-                counts <- tryCatch(
-                    Seurat::GetAssayData(obj, layer = "counts"),
-                    error = function(e) tryCatch(
-                        Seurat::GetAssayData(obj, slot = "counts"),
-                        error = function(e2) NULL
-                    )
-                )
-                if (!is.null(counts)) {
-                    n_cells <- ncol(counts)
-                }
+                n_cells <- nrow(obj@meta.data)
             } else if (inherits(obj, "SeuratObject")) {
-                counts <- tryCatch(
-                    SeuratObject::GetAssayData(obj, layer = "counts"),
-                    error = function(e) NULL
-                )
-                if (!is.null(counts)) {
-                    n_cells <- ncol(counts)
-                }
+                n_cells <- nrow(obj@meta.data)
             } else if (inherits(obj, "cell_data_set")) {
                 n_cells <- ncol(obj)
             } else if (inherits(obj, "SingleCellExperiment")) {

@@ -19,6 +19,9 @@ AE_DB_FILE := env("AE_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ae/db/ | sor
 GSA_DB_FILE := env("GSA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa/db/$latest/gsa_metadata_$latest.db\""))
 GSA_HUMAN_DB_FILE := env("GSA_HUMAN_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa_human/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa_human/db/$latest/gsa_human_metadata_$latest.db\""))
 
+AGE_SOURCE_DB_FILE := env("AGE_SOURCE_DB_FILE", "/data/share/saket_dump/enrichment/enriched_metadata_v4_combined.sqlite")
+AGE_NORM_DB_FILE := env("AGE_NORM_DB_FILE", DATA_DIR + "/age/age_norm.sqlite3")
+
 UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_catalog/unified_catalog.db")
 UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified_metadata/unified_metadata.db")
 DOWNLOAD_LINKS_DB_FILE := env("DOWNLOAD_LINKS_DB_FILE", DATA_DIR + "/download_links/download_links.db")
@@ -192,6 +195,21 @@ transfer_postgres *flags:
 transfer_parquet *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer parquet \
         {{ _transfer_args }} \
+        {{ flags }}
+
+[group("age")]
+age_normalize *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} age normalize \
+        --source-db-file {{ AGE_SOURCE_DB_FILE }} \
+        --output-dir {{ DATA_DIR }} \
+        --batch-size {{ BATCH_SIZE }} \
+        {{ flags }}
+
+[group("transfer")]
+transfer_age *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer age \
+        --pg-url "$PG_URL" \
+        --age-norm-db-file {{ AGE_NORM_DB_FILE }} \
         {{ flags }}
 
 [group("embed")]

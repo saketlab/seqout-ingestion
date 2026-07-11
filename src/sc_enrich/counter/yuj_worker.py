@@ -12,12 +12,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from helpers import download_file_ftp
+from helpers import FileTooLargeError, download_file_ftp, download_ftp_head
 from sc_enrich.counter._process import (
     FILE_TYPE_PRIORITY,
+    HEADER_STREAMABLE,
+    RELIABLE_TYPES,
     _check_disk_space,
     _get_sc_count,
     _resolve_file_type,
+    count_h5_via_http,
     last_rds_class,
 )
 from sc_enrich.counter.counter_common import DownloadLink, FileType, RdsReadError
@@ -51,9 +54,16 @@ _RETRIES = 5
 _TIMEOUT = 30
 _MAX_TIMEOUT = 300
 
+# bounds only the whole-file path
+_MAX_FILE_BYTES = 30 * 1024**3
+
+# mtx count is on the first line
+_MTX_HEAD_BYTES = 1 * 1024 * 1024
+
 _SIDECAR_DIR = Path("yuj_setup/accessions")
 _OUT_DIR = Path("results")
 
+# fallback when no per-host socks_proxy file
 _DEFAULT_SOCKS = "10.195.102.16:1080"
 
 
@@ -112,7 +122,7 @@ def process_accession(
     acc_dir = output_dir / accession
     acc_dir.mkdir(parents=True, exist_ok=True)
 
-    downloader = functools.partial(
+    full_download = functools.partial(
         download_file_ftp,
         chunk_size=chunk_size,
         num_retries=retries,
@@ -120,84 +130,76 @@ def process_accession(
         max_wait=max_timeout,
         with_pbar=False,
         socks_proxy=_read_proxy(),
+        max_bytes=_MAX_FILE_BYTES,
     )
 
-    max_count = 0
-    best_type = ""
-    best_rds_class = ""
+    def count_link(link: DownloadLink) -> tuple[int, str, str]:  # noqa: PLR0911
+        """Fetch and count ONE link. Returns (n_cells, file_format, rds_class)."""
+        ftp_url = link.url.replace("https://", "ftp://", 1)
 
-    for link in dl_links:
+        # range-read the h5 shape, no full download
+        if link.type in {FileType.H5, FileType.H5ad}:
+            n = count_h5_via_http(link.url, link.type)
+            if n is not None:
+                return (n, link.type.value, "") if n > 0 else (0, "", "")
+
         dest_path = acc_dir / link.extract_filename()
-
-        if dest_path.exists():
-            try:
-                result = _resolve_file_type(dest_path, link.type, chunk_size)
-                if result is None:
-                    logger.debug("unable to find file type for %s", dest_path)
-                    dest_path.unlink(missing_ok=True)
-                    continue
-
-                file_type, sniffed_path = result
-                single_cell_count = _get_sc_count(sniffed_path, file_type, chunk_size)
-
-                if sniffed_path != dest_path:
-                    sniffed_path.unlink(missing_ok=True)
-
-                if single_cell_count > max_count:
-                    max_count = single_cell_count
-                    best_type = file_type.value
-                    best_rds_class = (
-                        last_rds_class() if file_type == FileType.Rds else ""
-                    )
-            except RdsReadError as exc:
-                _record_rds_failure(output_dir, accession, link.url, exc.reason)
-            except Exception:
-                logger.exception("failed to process existing file %s", dest_path)
-            finally:
-                dest_path.unlink(missing_ok=True)
-            continue
-
-        if not _check_disk_space(output_dir):
-            logger.warning("skipping %s: insufficient disk space", link.url)
-            continue
-
         try:
-            dest_path = downloader(
-                url=link.url.replace("https://", "ftp://", 1),
-                dest_path=dest_path,
-            )
+            if link.type in HEADER_STREAMABLE:
+                # counted from the first chunk, so fetch only that
+                head = _MTX_HEAD_BYTES if link.type == FileType.Mtx else chunk_size
+                dest_path = download_ftp_head(
+                    ftp_url,
+                    dest_path,
+                    max_decompressed=head,
+                    num_retries=retries,
+                    timeout=timeout,
+                    max_wait=max_timeout,
+                    socks_proxy=_read_proxy(),
+                )
+            else:
+                if not _check_disk_space(output_dir):
+                    logger.warning("skipping %s: insufficient disk space", link.url)
+                    return (0, "", "")
+                dest_path = full_download(url=ftp_url, dest_path=dest_path)
+        except FileTooLargeError as exc:
+            logger.info("skipping oversized file: %s", exc)
+            return (0, "", "")
         except Exception:
             logger.exception("failed to download %s", link.url)
-            continue
+            return (0, "", "")
 
         try:
             result = _resolve_file_type(dest_path, link.type, chunk_size)
             if result is None:
                 logger.debug("unable to find file type for %s", dest_path)
-                dest_path.unlink(missing_ok=True)
-                decompressed = dest_path.with_suffix("")
-                if decompressed != dest_path:
-                    decompressed.unlink(missing_ok=True)
-                continue
-
+                return (0, "", "")
             file_type, sniffed_path = result
-            single_cell_count = _get_sc_count(sniffed_path, file_type, chunk_size)
-
+            n = _get_sc_count(sniffed_path, file_type, chunk_size)
             if sniffed_path != dest_path:
                 sniffed_path.unlink(missing_ok=True)
-
-            if single_cell_count > max_count:
-                max_count = single_cell_count
-                best_type = file_type.value
-                best_rds_class = (
-                    last_rds_class() if file_type == FileType.Rds else ""
-                )
+            rds = last_rds_class() if file_type == FileType.Rds else ""
+            return (n, file_type.value, rds) if n > 0 else (0, "", "")  # noqa: TRY300
         except RdsReadError as exc:
             _record_rds_failure(output_dir, accession, link.url, exc.reason)
+            return (0, "", "")
         except Exception:
             logger.exception("failed to process %s", link.url)
+            return (0, "", "")
         finally:
             dest_path.unlink(missing_ok=True)
+            dest_path.with_suffix("").unlink(missing_ok=True)
+
+    max_count = 0
+    best_type = ""
+    best_rds_class = ""
+    for link in dl_links:
+        n_cells, file_format, rds_class = count_link(link)
+        if n_cells > max_count:
+            max_count, best_type, best_rds_class = n_cells, file_format, rds_class
+        # only a reliable type ends the search
+        if n_cells > 0 and link.type in RELIABLE_TYPES:
+            break
 
     shutil.rmtree(acc_dir, ignore_errors=True)
 
