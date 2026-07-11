@@ -29,6 +29,15 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
+# Compound cell-line names ("HepG2/C3A", "Hep-G2") get parsed as a single
+# path-like lexeme, so a query for "hepg2" never matches. Normalize '/' and '-'
+# to spaces before to_tsvector so the parts become their own lexemes (recall).
+# The query side isn't translated, but the english config already splits
+# hyphenated query terms into their parts, so both sides still meet.
+def _norm(text_expr: str) -> str:
+    return f"translate({text_expr}, '/-', '  ')"
+
+
 # Accession-only titles carry no search value; drop them but keep description.
 # concat_ws skips NULLs, and string_agg(DISTINCT ...) collapses replicate samples
 # (identical title/description) so to_tsvector's position lists stay bounded.
@@ -37,9 +46,12 @@ logger = logging.getLogger(__name__)
 # ponytail: fixed 400 KB cap (~well under the 1 MB tsvector limit); still captures
 # a huge sample vocabulary for recall. Segment per-study only if a real tail is lost.
 _SAMPLE_TSV_EXPR = (
-    "setweight(to_tsvector('english',"
-    " left(coalesce(string_agg(DISTINCT concat_ws(' ', {title_expr}, {desc}), ' '), ''), 400000)"
-    "), 'D')"
+    "setweight(to_tsvector('english', "
+    + _norm(
+        "left(coalesce(string_agg(DISTINCT concat_ws(' ', {title_expr}, {desc}),"
+        " ' '), ''), 400000)"
+    )
+    + "), 'D')"
 )
 
 _GEO_POPULATE = """
@@ -56,7 +68,13 @@ WHERE g.accession = sub.accession
 """.format(
     expr=_SAMPLE_TSV_EXPR.format(
         title_expr="CASE WHEN btrim(s.title) = s.accession THEN NULL ELSE s.title END",
-        desc="s.description",
+        # channels[].Source holds the cell-line / source_name text (e.g.
+        # "... HepG2 cell line ...") that native GEO matches on; fold it in.
+        desc=(
+            "concat_ws(' ', s.description,"
+            " (SELECT string_agg(DISTINCT ch->>'Source', ' ')"
+            " FROM unnest(s.channels) ch))"
+        ),
     )
 )
 
@@ -108,9 +126,9 @@ CREATE OR REPLACE FUNCTION public.geo_series_tsv_update()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     NEW.tsv :=
-          setweight(to_tsvector('english', coalesce(NEW.title,'')), 'A')
-      ||  setweight(to_tsvector('english', coalesce(NEW.summary,'')), 'B')
-      ||  setweight(to_tsvector('english', coalesce(NEW.overall_design,'')), 'C')
+          setweight(to_tsvector('english', translate(coalesce(NEW.title,''), '/-', '  ')), 'A')
+      ||  setweight(to_tsvector('english', translate(coalesce(NEW.summary,''), '/-', '  ')), 'B')
+      ||  setweight(to_tsvector('english', translate(coalesce(NEW.overall_design,''), '/-', '  ')), 'C')
       ||  setweight(to_tsvector('english', coalesce(array_to_string(NEW.contributors,' '),'')), 'D')
       ||  setweight(to_tsvector('english', coalesce(array_to_string(NEW.departments,' '),'')), 'D')
       ||  setweight(to_tsvector('english', coalesce(array_to_string(NEW.organizations,' '),'')), 'D')
@@ -123,21 +141,33 @@ END $$;
 # SRA/AE tsv are GENERATED ALWAYS. PG16 has no ALTER ... SET EXPRESSION, so the
 # column is dropped and re-added (which also drops/rebuilds its GIN index). The
 # base expression must match the live schema exactly, plus the sample_tsv tail.
+def _weighted(col: str, weight: str) -> str:
+    """setweight(to_tsvector(normalized COALESCE(col)), weight) — a tsv term."""
+    col_expr = _norm("COALESCE(" + col + ", '')")
+    return "setweight(to_tsvector('english', " + col_expr + "), '" + weight + "')"
+
+
 _SRA_TSV_EXPR = (
     "((("
-    "setweight(to_tsvector('english', COALESCE(title, '')), 'A') || "
-    "setweight(to_tsvector('english', COALESCE(abstract, '')), 'B')) || "
-    "setweight(to_tsvector('english', COALESCE(center_project_name, '')), 'C')) || "
-    "setweight(to_tsvector('english', COALESCE(study_type, '')), 'D')) || "
-    "coalesce(sample_tsv, ''::tsvector)"
+    + _weighted("title", "A")
+    + " || "
+    + _weighted("abstract", "B")
+    + ") || "
+    + _weighted("center_project_name", "C")
+    + ") || "
+    + _weighted("study_type", "D")
+    + ") || coalesce(sample_tsv, ''::tsvector)"
 )
 _AE_TSV_EXPR = (
     "((("
-    "setweight(to_tsvector('english', COALESCE(title, '')), 'A') || "
-    "setweight(to_tsvector('english', COALESCE(description, '')), 'B')) || "
-    "setweight(to_tsvector('english', COALESCE(organizations_text, '')), 'C')) || "
-    "setweight(to_tsvector('english', COALESCE(authors_text, '')), 'D')) || "
-    "coalesce(sample_tsv, ''::tsvector)"
+    + _weighted("title", "A")
+    + " || "
+    + _weighted("description", "B")
+    + ") || "
+    + _weighted("organizations_text", "C")
+    + ") || "
+    + _weighted("authors_text", "D")
+    + ") || coalesce(sample_tsv, ''::tsvector)"
 )
 
 _STUDY_TABLES = ("geo_series", "sra_studies", "arrayexpress_experiments")
@@ -212,6 +242,14 @@ def sample_tsv_transfer(pg_url: str) -> None:
                 cur.execute(sql)
                 logger.info("  %s rows updated", cur.rowcount)
                 conn.commit()
+
+            # 3b) GEO series with no matching samples were skipped above, so the
+            #     updated (translate-normalized) trigger never re-fired for them.
+            #     Touch them so their study-text tsv is rebuilt too.
+            logger.info("touching sample-less geo_series to rebuild tsv ...")
+            cur.execute("UPDATE geo_series SET sample_tsv = sample_tsv WHERE sample_tsv IS NULL")
+            logger.info("  %s rows touched", cur.rowcount)
+            conn.commit()
 
             # 4) SRA/AE: fold sample_tsv into the generated tsv (guarded).
             _redefine_generated_tsv(
