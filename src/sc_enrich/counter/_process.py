@@ -5,6 +5,7 @@ import logging
 import shutil
 import tarfile
 import tempfile
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -14,7 +15,7 @@ import pyreadr
 import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 
-from helpers import open_http_range
+from helpers import ftp_data_stream, open_http_range
 from sc_enrich.counter.counter_common import FileType, RdsReadError
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,17 @@ RELIABLE_TYPES = frozenset(
     {FileType.Mtx, FileType.Barcodes, FileType.H5, FileType.H5ad, FileType.Rds},
 )
 
+# cell-by-gene matrices: cells are rows, so keep them despite a "gene" in the
+# name and count rows, not columns
+CELL_MAJOR_HINTS = (
+    "cell_by_gene",
+    "cellxgene",
+    "cell_x_gene",
+    "cells_x_genes",
+    "cellsxgenes",
+    "cell_by_feature",
+)
+
 # skip large non-matrix files
 SKIP_SUBSTRINGS = (
     "fragments.tsv",
@@ -91,7 +103,11 @@ def _classify_file(path: str) -> FileType:  # noqa: PLR0911
     ]
 
     def _is_type(ext: str) -> bool:
-        return ext in path and not _contains_any(path, ignore_words)
+        if ext not in path:
+            return False
+        if is_cell_major(path):
+            return True
+        return not _contains_any(path, ignore_words)
 
     if _contains_any(path, list(SKIP_SUBSTRINGS)):
         return FileType.Unknown
@@ -118,6 +134,11 @@ def _classify_file(path: str) -> FileType:  # noqa: PLR0911
 
 def _contains_any(s: str, substrings: list[str]) -> bool:
     return any(sub in s for sub in substrings)
+
+
+def is_cell_major(name: str) -> bool:
+    """Return True if name is a cell-by-gene matrix (cells as rows)."""
+    return _contains_any(name.lower(), list(CELL_MAJOR_HINTS))
 
 
 def _is_gzipped(path: Path) -> bool:
@@ -294,6 +315,78 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
         return max_count
 
 
+def _member_head(f: Any, name: str, max_bytes: int) -> bytes:
+    """Decompressed head of a tar member, gunzipping a .gz member on the fly."""
+    if name.lower().endswith(".gz"):
+        dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        out = bytearray()
+        while len(out) < max_bytes:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            out += dec.decompress(chunk)
+        return bytes(out[:max_bytes])
+    return f.read(max_bytes)
+
+
+def count_tar_via_stream(
+    url: str,
+    chunk_size: int,
+    *,
+    timeout: int,
+    socks_proxy: str | None,
+    tmp_dir: Path | None = None,
+) -> int | None:
+    """
+    Count a tar by streaming its members, stopping at the first reliable one.
+
+    None means the stream failed, so the caller does a full download.
+    """
+    ftp_url = url.replace("https://", "ftp://", 1)
+    extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+    max_count = 0
+    try:
+        with (
+            ftp_data_stream(
+                ftp_url, timeout=timeout, socks_proxy=socks_proxy
+            ) as stream,
+            tarfile.open(fileobj=stream, mode="r|*") as tar,
+        ):
+            for member in tar:
+                if not member.isfile():
+                    continue
+                file_type = _classify_file(member.name.lower())
+                if file_type == FileType.Unknown:
+                    continue
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
+                name = Path(member.name).name.removesuffix(".gz") or "member"
+                tmp_path = extract_dir / name
+                tmp_path.write_bytes(_member_head(f, member.name, chunk_size))
+                result = _resolve_file_type(tmp_path, file_type, chunk_size)
+                if result is None:
+                    tmp_path.unlink(missing_ok=True)
+                    continue
+                resolved, sniffed = result
+                count = _get_sc_count(
+                    sniffed, resolved, chunk_size, tmp_dir=extract_dir
+                )
+                if sniffed != tmp_path:
+                    sniffed.unlink(missing_ok=True)
+                tmp_path.unlink(missing_ok=True)
+                max_count = max(max_count, count)
+                if count > 0 and resolved in RELIABLE_TYPES:
+                    break
+    except Exception:
+        logger.debug("tar stream failed for %s, full download", url)
+        return None
+    else:
+        return max_count
+    finally:
+        shutil.rmtree(extract_dir, ignore_errors=True)
+
+
 @safe_process
 def _process_barcodes(path: Path, chunk_size: int) -> int:
     with path.open("rb") as f:
@@ -392,9 +485,19 @@ def _process_mtx(path: Path, chunk_size: int) -> int:
     return 0
 
 
+def _count_data_rows(path: Path) -> int:
+    """Count data rows (lines minus header)."""
+    with path.open("rb") as f:
+        n = sum(1 for _ in f)
+    return n - 1 if n - 1 > 1 else 0
+
+
 def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
     @safe_process
     def _wrapper(path: Path, chunk_size: int) -> int:
+        if is_cell_major(path.name):
+            return _count_data_rows(path)
+
         with path.open("rb") as f:
             chunk = f.read(chunk_size)
 
@@ -452,9 +555,24 @@ def _process_rds_rpy2(path: Path) -> int:
             n_cells <- 0
 
             if (inherits(obj, "Seurat")) {
-                n_cells <- nrow(obj@meta.data)
+                counts <- tryCatch(
+                    Seurat::GetAssayData(obj, layer = "counts"),
+                    error = function(e) tryCatch(
+                        Seurat::GetAssayData(obj, slot = "counts"),
+                        error = function(e2) NULL
+                    )
+                )
+                if (!is.null(counts)) {
+                    n_cells <- ncol(counts)
+                }
             } else if (inherits(obj, "SeuratObject")) {
-                n_cells <- nrow(obj@meta.data)
+                counts <- tryCatch(
+                    SeuratObject::GetAssayData(obj, layer = "counts"),
+                    error = function(e) NULL
+                )
+                if (!is.null(counts)) {
+                    n_cells <- ncol(counts)
+                }
             } else if (inherits(obj, "cell_data_set")) {
                 n_cells <- ncol(obj)
             } else if (inherits(obj, "SingleCellExperiment")) {

@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
 yuj work item: count single-cell cells for ONE accession.
+
+Invoked by yuj as ``python -m sc_enrich.counter <accession>`` with cwd at the
+deploy dir. Reads the accession's download links from
+``yuj_setup/accessions/<accession>.json`` (shipped as payload), downloads and
+sniffs the supplementary files, and writes ``results/<accession>.json``. yuj
+skips items whose output already exists, so this stays idempotent.
 """
 
 import functools
@@ -21,6 +27,8 @@ from sc_enrich.counter._process import (
     _get_sc_count,
     _resolve_file_type,
     count_h5_via_http,
+    count_tar_via_stream,
+    is_cell_major,
     last_rds_class,
 )
 from sc_enrich.counter.counter_common import DownloadLink, FileType, RdsReadError
@@ -100,6 +108,8 @@ def main() -> None:
         logger.exception("failed accession %s", accession)
         result = {"accession": accession, "error": True}
 
+    # Write via a temp file so a crash mid-write can't leave a half-written
+    # output that yuj's resume would treat as a completed item.
     tmp = out_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(result, indent=2))
     tmp.replace(out_path)
@@ -143,9 +153,17 @@ def process_accession(
             if n is not None:
                 return (n, link.type.value, "") if n > 0 else (0, "", "")
 
+        # stream tar members, stop at the first countable one
+        if link.type == FileType.Tar:
+            n = count_tar_via_stream(
+                link.url, chunk_size, timeout=timeout, socks_proxy=_read_proxy()
+            )
+            if n is not None:
+                return (n, link.type.value, "") if n > 0 else (0, "", "")
+
         dest_path = acc_dir / link.extract_filename()
         try:
-            if link.type in HEADER_STREAMABLE:
+            if link.type in HEADER_STREAMABLE and not is_cell_major(link.url):
                 # counted from the first chunk, so fetch only that
                 head = _MTX_HEAD_BYTES if link.type == FileType.Mtx else chunk_size
                 dest_path = download_ftp_head(

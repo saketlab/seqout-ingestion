@@ -1,14 +1,20 @@
+import contextlib
 import ftplib
 import http
+import io
 import logging
 import socket
 import sqlite3
 import time
-from collections.abc import Callable
+import zlib
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, LiteralString, cast
+from typing import TYPE_CHECKING, Any, LiteralString, cast
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from _typeshed import WriteableBuffer
 
 import httpx
 import psycopg
@@ -376,6 +382,10 @@ def _download_multipart(
         pbar.close()
 
 
+class FileTooLargeError(Exception):
+    """File exceeds max_bytes, skipped without downloading (not a matrix)."""
+
+
 def download_file_ftp(
     url: str,
     dest_path: Path,
@@ -385,6 +395,8 @@ def download_file_ftp(
     timeout: int,
     max_wait: int,
     with_pbar: bool = False,
+    socks_proxy: str | None = None,
+    max_bytes: int | None = None,
 ) -> Path:
     dest_path.parent.mkdir(exist_ok=True, parents=True)
 
@@ -393,8 +405,10 @@ def download_file_ftp(
         raise ValueError(f"invalid FTP URL: {url}")
 
     orig_socket = socket.socket
-    socks.set_default_proxy(socks.SOCKS5, "10.195.102.16", 1080)
-    socket.socket = socks.socksocket
+    if socks_proxy:
+        phost, _, pport = socks_proxy.partition(":")
+        socks.set_default_proxy(socks.SOCKS5, phost, int(pport or "1080"))
+        socket.socket = socks.socksocket
 
     try:
         for attempt in range(num_retries):
@@ -405,6 +419,10 @@ def download_file_ftp(
                 ftp.voidcmd("TYPE I")
 
                 total = ftp.size(parsed.path)
+                if max_bytes is not None and total is not None and total > max_bytes:
+                    ftp.quit()
+                    msg = f"{url} is {total} bytes (> {max_bytes} cap)"
+                    raise FileTooLargeError(msg)
                 pbar = (
                     tqdm(
                         total=total,
@@ -417,9 +435,16 @@ def download_file_ftp(
                 )
 
                 with dest_path.open("wb") as f:
+                    written = 0
 
                     def write_cb(data: bytes, pbar: tqdm | None = pbar) -> None:
+                        nonlocal written
                         f.write(data)
+                        written += len(data)
+                        # cap mid-stream too; some servers don't answer SIZE
+                        if max_bytes is not None and written > max_bytes:
+                            msg = f"{url} exceeds {max_bytes} cap mid-download"
+                            raise FileTooLargeError(msg)
                         if pbar:
                             pbar.update(len(data))
 
@@ -431,6 +456,10 @@ def download_file_ftp(
                     pbar.close()
 
                 ftp.quit()
+            except FileTooLargeError:
+                if dest_path.exists():
+                    dest_path.unlink()
+                raise
             except ftplib.error_perm:
                 if dest_path.exists():
                     dest_path.unlink()
@@ -456,6 +485,191 @@ def download_file_ftp(
         raise RuntimeError(f"failed after {num_retries} retries")
     finally:
         socket.socket = orig_socket
+
+
+class _HeadComplete(Exception):  # noqa: N818
+    """Internal: enough decompressed bytes read; abort the transfer."""
+
+
+@contextlib.contextmanager
+def ftp_data_stream(
+    url: str,
+    *,
+    timeout: int,
+    socks_proxy: str | None = None,
+) -> "Iterator[Any]":
+    """
+    Yield a readable binary stream of an FTP file's bytes.
+    """
+    parsed = urlparse(url)
+    if not parsed.hostname or not parsed.path:
+        raise ValueError(f"invalid FTP URL: {url}")
+    orig_socket = socket.socket
+    if socks_proxy:
+        phost, _, pport = socks_proxy.partition(":")
+        socks.set_default_proxy(socks.SOCKS5, phost, int(pport or "1080"))
+        socket.socket = socks.socksocket
+    ftp = None
+    try:
+        ftp = ftplib.FTP(parsed.hostname, timeout=timeout)  # noqa: S321
+        ftp.login("anonymous", "guest@")
+        ftp.voidcmd("TYPE I")
+        conn = ftp.transfercmd(f"RETR {parsed.path}")
+        stream = conn.makefile("rb")
+        try:
+            yield stream
+        finally:
+            with contextlib.suppress(Exception):
+                stream.close()
+            with contextlib.suppress(Exception):
+                conn.close()
+    finally:
+        socket.socket = orig_socket
+        if ftp is not None:
+            with contextlib.suppress(Exception):
+                ftp.close()
+
+
+def download_ftp_head(
+    url: str,
+    dest_path: Path,
+    *,
+    max_decompressed: int,
+    num_retries: int,
+    timeout: int,
+    max_wait: int,
+    socks_proxy: str | None = None,
+) -> Path:
+    """
+    Fetch only the first max_decompressed bytes of a file's content.
+    """
+    dest_path.parent.mkdir(exist_ok=True, parents=True)
+    parsed = urlparse(url)
+    if not parsed.hostname or not parsed.path:
+        raise ValueError(f"invalid FTP URL: {url}")
+
+    orig_socket = socket.socket
+    if socks_proxy:
+        phost, _, pport = socks_proxy.partition(":")
+        socks.set_default_proxy(socks.SOCKS5, phost, int(pport or "1080"))
+        socket.socket = socks.socksocket
+
+    try:
+        for attempt in range(num_retries):
+            state: dict[str, Any] = {"written": 0, "dec": None, "checked": False}
+            try:
+                ftp = ftplib.FTP(parsed.hostname, timeout=timeout)  # noqa: S321
+                ftp.login("anonymous", "guest@")
+                ftp.set_pasv(True)
+                ftp.voidcmd("TYPE I")
+
+                with dest_path.open("wb") as f:
+
+                    def sink(data: bytes, f: Any = f, state: Any = state) -> None:
+                        if not state["checked"]:
+                            state["checked"] = True
+                            if data[:2] == b"\x1f\x8b":  # gzip magic
+                                state["dec"] = zlib.decompressobj(zlib.MAX_WBITS | 16)
+                        out = state["dec"].decompress(data) if state["dec"] else data
+                        if out:
+                            f.write(out)
+                            state["written"] += len(out)
+                        if state["written"] >= max_decompressed:
+                            raise _HeadComplete
+
+                    with contextlib.suppress(_HeadComplete):
+                        ftp.retrbinary(f"RETR {parsed.path}", sink, blocksize=1 << 20)
+                with contextlib.suppress(Exception):
+                    ftp.close()
+            except ftplib.error_perm:
+                dest_path.unlink(missing_ok=True)
+                raise
+            except Exception as exc:
+                dest_path.unlink(missing_ok=True)
+                if attempt == num_retries - 1:
+                    raise
+                wait = min(2**attempt, max_wait)
+                logger.warning(
+                    "head fetch failed %s (attempt %d/%d): %s. retrying in %.0fs",
+                    url,
+                    attempt + 1,
+                    num_retries,
+                    exc,
+                    wait,
+                )
+                time.sleep(wait)
+            else:
+                return dest_path
+
+        raise RuntimeError(f"head fetch failed after {num_retries} retries")
+    finally:
+        socket.socket = orig_socket
+
+
+class HttpRangeReader(io.RawIOBase):
+    """
+    A seekable read-only file over HTTP range requests.
+
+    Lets h5py read an .h5/.h5ad shape while fetching only the byte ranges HDF5
+    touches, instead of downloading the whole file.
+    """
+
+    def __init__(self, client: httpx.Client, url: str, size: int) -> None:  # noqa: D107
+        self._client = client
+        self._url = url
+        self._size = size
+        self._pos = 0
+
+    def seekable(self) -> bool:  # noqa: D102
+        return True
+
+    def readable(self) -> bool:  # noqa: D102
+        return True
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:  # noqa: D102
+        if whence == io.SEEK_SET:
+            self._pos = offset
+        elif whence == io.SEEK_CUR:
+            self._pos += offset
+        elif whence == io.SEEK_END:
+            self._pos = self._size + offset
+        return self._pos
+
+    def tell(self) -> int:  # noqa: D102
+        return self._pos
+
+    def readinto(self, b: "WriteableBuffer") -> int:  # noqa: D102
+        # h5py's fileobj driver calls readinto, not read.
+        mv = memoryview(b).cast("B")
+        if self._pos >= self._size or len(mv) == 0:
+            return 0
+        end = min(self._pos + len(mv), self._size) - 1
+        resp = self._client.get(
+            self._url, headers={"Range": f"bytes={self._pos}-{end}"}
+        )
+        resp.raise_for_status()
+        data = resp.content
+        n = len(data)
+        mv[:n] = data
+        self._pos += n
+        return n
+
+
+def open_http_range(url: str, *, timeout: int = 30) -> HttpRangeReader | None:
+    """Open url for random access via HTTP range, or None if unsupported."""
+    client = httpx.Client(timeout=timeout, follow_redirects=True)
+    try:
+        head = client.head(url)
+        head.raise_for_status()
+        length = head.headers.get("Content-Length")
+        accepts = head.headers.get("Accept-Ranges", "")
+        if length is None or accepts.lower() == "none":
+            client.close()
+            return None
+        return HttpRangeReader(client, url, int(length))
+    except (httpx.HTTPError, ValueError):
+        client.close()
+        return None
 
 
 def sqlite_connect(
