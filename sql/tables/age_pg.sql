@@ -1,0 +1,4 @@
+ALTER TABLE ontology_samples_v4 ADD COLUMN IF NOT EXISTS age_days  DOUBLE PRECISION;
+ALTER TABLE ontology_samples_v4 ADD COLUMN IF NOT EXISTS age_group TEXT;
+ALTER TABLE ontology_samples_v4 ADD COLUMN IF NOT EXISTS prenatal  BOOLEAN;
+ALTER TABLE ontology_samples_v4 ADD COLUMN IF NOT EXISTS age_raw   TEXT;
