@@ -68,12 +68,19 @@ WHERE g.accession = sub.accession
 """.format(
     expr=_SAMPLE_TSV_EXPR.format(
         title_expr="CASE WHEN btrim(s.title) = s.accession THEN NULL ELSE s.title END",
-        # channels[].Source holds the cell-line / source_name text (e.g.
-        # "... HepG2 cell line ...") that native GEO matches on; fold it in.
+        # channels holds the sample's cell-line / annotation metadata that native
+        # GEO matches on: Source (source_name free text) plus the #text VALUES of
+        # each Characteristics entry (e.g. "HepG2" from {"@tag":"cell line",
+        # "#text":"HepG2"}). Tag names are skipped (ubiquitous labels, no signal).
+        # 'lax $[*]' tolerates Characteristics being an array, a lone object, or
+        # absent. Protocol fields (Growth/Treatment/Extract) are left out: they
+        # carry incidental mentions ("HepG2 conditioned media"), not the subject.
         desc=(
             "concat_ws(' ', s.description,"
-            " (SELECT string_agg(DISTINCT ch->>'Source', ' ')"
-            " FROM unnest(s.channels) ch))"
+            " (SELECT string_agg(DISTINCT concat_ws(' ', ch->>'Source',"
+            "     (SELECT string_agg(DISTINCT e->>'#text', ' ')"
+            "      FROM jsonb_path_query(ch->'Characteristics', 'lax $[*]') e)), ' ')"
+            "  FROM unnest(s.channels) ch))"
         ),
     )
 )
@@ -180,8 +187,10 @@ def _ensure_sample_tsv_columns(cur: psycopg.Cursor) -> None:
         )
 
 
-def _tsv_already_includes_samples(cur: psycopg.Cursor, table: str) -> bool:
-    """True once the generated tsv expression references sample_tsv."""
+def _tsv_up_to_date(cur: psycopg.Cursor, table: str) -> bool:
+    """True once the generated tsv expression folds in sample_tsv AND applies
+    the translate() normalization. Both markers must be present, so a table
+    left at an older definition (samples but no normalization) is redefined."""
     cur.execute(
         "SELECT generation_expression FROM information_schema.columns"
         " WHERE table_name = %s AND column_name = 'tsv'",
@@ -189,7 +198,7 @@ def _tsv_already_includes_samples(cur: psycopg.Cursor, table: str) -> bool:
     )
     row = cur.fetchone()
     expr = (row[0] or "") if row else ""
-    return "sample_tsv" in expr
+    return "sample_tsv" in expr and "translate" in expr
 
 
 def _redefine_generated_tsv(
@@ -198,8 +207,8 @@ def _redefine_generated_tsv(
     """Drop + re-add the GENERATED tsv column with the sample_tsv tail, then
     rebuild its GIN index. No-op if already done. Rewrites the study table
     (studies only — small — not the sample tables)."""
-    if _tsv_already_includes_samples(cur, table):
-        logger.info("%s.tsv already includes sample_tsv; skipping redefine", table)
+    if _tsv_up_to_date(cur, table):
+        logger.info("%s.tsv already up to date; skipping redefine", table)
         return
     logger.info("redefining %s.tsv to include sample_tsv (rewrites table)", table)
     # DROP COLUMN also drops the dependent GIN index; recreate it by name after.
