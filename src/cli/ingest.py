@@ -14,6 +14,7 @@ from ingest.ae import ingest_ae
 from ingest.ena import ingest_ena
 from ingest.geo import ingest_geo
 from ingest.gsa import ingest_gsa
+from ingest.gsa_bioproject import ingest_gsa_bioproject
 from ingest.gsa_human import ingest_gsa_human
 from ingest.sra import ingest_sra
 
@@ -198,4 +199,29 @@ def gsa_human(
         retries,
         timeout,
         max_timeout,
+    )
+
+
+@ingest_app.command()
+def gsa_bioproject(
+    base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
+    gsa_db_file: Path | None = typer.Option(None, "--gsa-db-file"),
+    gsa_human_db_file: Path | None = typer.Option(None, "--gsa-human-db-file"),
+    db_file: Path | None = _DB_FILE_FLAG,
+    num_workers: int = _NUM_WORKERS_FLAG,
+    retries: int = _RETRIES_FLAG,
+    timeout: int = _TIMEOUT_FLAG,
+    max_timeout: int = _MAX_TIMEOUT,
+    limit: int | None = typer.Option(None, "--limit"),
+) -> None:
+    ingest_gsa_bioproject(
+        base_output_dir,
+        gsa_db_file,
+        gsa_human_db_file,
+        db_file,
+        num_workers,
+        retries,
+        timeout,
+        max_timeout,
+        limit,
     )

@@ -77,6 +77,7 @@ def postgres_transfer(
     num_workers: int,
     gsa_db_file: Path | None = None,
     gsa_human_db_file: Path | None = None,
+    gsa_bioproject_db_file: Path | None = None,
 ) -> None:
     table_info = {
         "geo_series": _TableInfo(
@@ -279,6 +280,7 @@ def postgres_transfer(
             gsa_db_file,
             gsa_human_db_file,
             read_batch_size,
+            gsa_bioproject_db_file,
         ),
     )
 

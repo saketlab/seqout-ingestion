@@ -2,6 +2,15 @@ import dataclasses
 from enum import StrEnum
 
 
+class RdsReadError(Exception):
+    """readRDS couldn't reconstruct an object (e.g. a monocle3 cell_data_set)."""
+
+    def __init__(self, path: str, reason: str) -> None:  # noqa: D107
+        self.path = path
+        self.reason = reason
+        super().__init__(f"{path}: {reason}")
+
+
 class FileType(StrEnum):
     Barcodes = "barcodes"
     H5 = "h5"
