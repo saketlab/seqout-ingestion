@@ -1550,6 +1550,26 @@ def _transfer_study_publications(
             total=len(groups),
         )
 
+        # orphan cleanup: upserts leave rows for studies whose pmid was later
+        # removed/corrected at source. groups is every current (accession,
+        # source), so anything else in the table is stale.
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "CREATE TEMP TABLE _valid_pub_keys (accession text, source text) "
+                "ON COMMIT DROP",
+            )
+            with cur.copy(
+                "COPY _valid_pub_keys (accession, source) FROM STDIN",
+            ) as cp:
+                for acc, source in groups:
+                    cp.write_row((acc, source))
+            cur.execute(
+                "DELETE FROM study_publications sp WHERE NOT EXISTS ("
+                "SELECT 1 FROM _valid_pub_keys v "
+                "WHERE v.accession = sp.accession AND v.source = sp.source)",
+            )
+        pg_conn.commit()
+
 
 def _transfer_cross_refs(
     pg_url: str,

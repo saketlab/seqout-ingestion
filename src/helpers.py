@@ -404,6 +404,7 @@ def download_file_ftp(
     if not parsed.hostname or not parsed.path:
         raise ValueError(f"invalid FTP URL: {url}")
 
+    # tunnel FTP through SOCKS5 when set; None = direct
     orig_socket = socket.socket
     if socks_proxy:
         phost, _, pport = socks_proxy.partition(":")
@@ -491,6 +492,76 @@ class _HeadComplete(Exception):  # noqa: N818
     """Internal: enough decompressed bytes read; abort the transfer."""
 
 
+def _make_head_sink(
+    f: Any, state: dict[str, Any], max_decompressed: int
+) -> Callable[[bytes], None]:
+    """Gunzip a .gz stream and abort once max_decompressed bytes are written."""
+
+    def sink(data: bytes) -> None:
+        if not state["checked"]:
+            state["checked"] = True
+            if data[:2] == b"\x1f\x8b":  # gzip magic
+                state["dec"] = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        out = state["dec"].decompress(data) if state["dec"] else data
+        if out:
+            f.write(out)
+            state["written"] += len(out)
+        if state["written"] >= max_decompressed:
+            raise _HeadComplete
+
+    return sink
+
+
+def download_http_head(
+    url: str,
+    dest_path: Path,
+    *,
+    max_decompressed: int,
+    num_retries: int,
+    timeout: int,
+    max_wait: int,
+) -> Path:
+    """
+    HTTP twin of download_ftp_head: first max_decompressed bytes over HTTPS.
+
+    EBI/ArrayExpress serves supplementary files over HTTPS only.
+    """
+    dest_path.parent.mkdir(exist_ok=True, parents=True)
+    for attempt in range(num_retries):
+        state: dict[str, Any] = {"written": 0, "dec": None, "checked": False}
+        try:
+            with (
+                dest_path.open("wb") as f,
+                httpx.Client(timeout=timeout, follow_redirects=True) as client,
+                client.stream("GET", url) as resp,
+            ):
+                resp.raise_for_status()
+                sink = _make_head_sink(f, state, max_decompressed)
+                with contextlib.suppress(_HeadComplete):
+                    for chunk in resp.iter_bytes(1 << 20):
+                        sink(chunk)
+        except httpx.HTTPStatusError:
+            dest_path.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            dest_path.unlink(missing_ok=True)
+            if attempt == num_retries - 1:
+                raise
+            wait = min(2**attempt, max_wait)
+            logger.warning(
+                "http head fetch failed %s (attempt %d/%d): %s. retrying in %.0fs",
+                url,
+                attempt + 1,
+                num_retries,
+                exc,
+                wait,
+            )
+            time.sleep(wait)
+        else:
+            return dest_path
+    raise RuntimeError(f"http head fetch failed after {num_retries} retries")
+
+
 @contextlib.contextmanager
 def ftp_data_stream(
     url: str,
@@ -500,6 +571,8 @@ def ftp_data_stream(
 ) -> "Iterator[Any]":
     """
     Yield a readable binary stream of an FTP file's bytes.
+
+    Closing early aborts the transfer; reading a tar's first members pulls only those.
     """
     parsed = urlparse(url)
     if not parsed.hostname or not parsed.path:
@@ -542,6 +615,9 @@ def download_ftp_head(
 ) -> Path:
     """
     Fetch only the first max_decompressed bytes of a file's content.
+
+    Gunzips a .gz stream and aborts once enough is written; dest_path gets the
+    decompressed head, so the sniff/count path is unchanged.
     """
     dest_path.parent.mkdir(exist_ok=True, parents=True)
     parsed = urlparse(url)
@@ -564,19 +640,7 @@ def download_ftp_head(
                 ftp.voidcmd("TYPE I")
 
                 with dest_path.open("wb") as f:
-
-                    def sink(data: bytes, f: Any = f, state: Any = state) -> None:
-                        if not state["checked"]:
-                            state["checked"] = True
-                            if data[:2] == b"\x1f\x8b":  # gzip magic
-                                state["dec"] = zlib.decompressobj(zlib.MAX_WBITS | 16)
-                        out = state["dec"].decompress(data) if state["dec"] else data
-                        if out:
-                            f.write(out)
-                            state["written"] += len(out)
-                        if state["written"] >= max_decompressed:
-                            raise _HeadComplete
-
+                    sink = _make_head_sink(f, state, max_decompressed)
                     with contextlib.suppress(_HeadComplete):
                         ftp.retrbinary(f"RETR {parsed.path}", sink, blocksize=1 << 20)
                 with contextlib.suppress(Exception):

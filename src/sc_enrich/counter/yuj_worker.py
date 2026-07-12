@@ -18,7 +18,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from helpers import FileTooLargeError, download_file_ftp, download_ftp_head
+from helpers import (
+    FileTooLargeError,
+    download_file,
+    download_file_ftp,
+    download_ftp_head,
+    download_http_head,
+)
 from sc_enrich.counter._process import (
     FILE_TYPE_PRIORITY,
     HEADER_STREAMABLE,
@@ -145,6 +151,8 @@ def process_accession(
 
     def count_link(link: DownloadLink) -> tuple[int, str, str]:  # noqa: PLR0911
         """Fetch and count ONE link. Returns (n_cells, file_format, rds_class)."""
+        # EBI serves supplementary files over HTTPS only; ftp:// times out there
+        use_http = "ebi.ac.uk" in link.url
         ftp_url = link.url.replace("https://", "ftp://", 1)
 
         # range-read the h5 shape, no full download
@@ -153,8 +161,8 @@ def process_accession(
             if n is not None:
                 return (n, link.type.value, "") if n > 0 else (0, "", "")
 
-        # stream tar members, stop at the first countable one
-        if link.type == FileType.Tar:
+        # stream tar members over ftp; EBI tars fall through to a full http download
+        if link.type == FileType.Tar and not use_http:
             n = count_tar_via_stream(
                 link.url, chunk_size, timeout=timeout, socks_proxy=_read_proxy()
             )
@@ -166,20 +174,43 @@ def process_accession(
             if link.type in HEADER_STREAMABLE and not is_cell_major(link.url):
                 # counted from the first chunk, so fetch only that
                 head = _MTX_HEAD_BYTES if link.type == FileType.Mtx else chunk_size
-                dest_path = download_ftp_head(
-                    ftp_url,
-                    dest_path,
-                    max_decompressed=head,
-                    num_retries=retries,
-                    timeout=timeout,
-                    max_wait=max_timeout,
-                    socks_proxy=_read_proxy(),
-                )
+                if use_http:
+                    dest_path = download_http_head(
+                        link.url,
+                        dest_path,
+                        max_decompressed=head,
+                        num_retries=retries,
+                        timeout=timeout,
+                        max_wait=max_timeout,
+                    )
+                else:
+                    dest_path = download_ftp_head(
+                        ftp_url,
+                        dest_path,
+                        max_decompressed=head,
+                        num_retries=retries,
+                        timeout=timeout,
+                        max_wait=max_timeout,
+                        socks_proxy=_read_proxy(),
+                    )
             else:
                 if not _check_disk_space(output_dir):
                     logger.warning("skipping %s: insufficient disk space", link.url)
                     return (0, "", "")
-                dest_path = full_download(url=ftp_url, dest_path=dest_path)
+                if use_http:
+                    dest_path = download_file(
+                        link.url,
+                        dest_path,
+                        chunk_size=chunk_size,
+                        num_workers=1,
+                        num_retries=retries,
+                        timeout=timeout,
+                        max_wait=max_timeout,
+                        with_pbar=False,
+                        validate_content_length=False,
+                    )
+                else:
+                    dest_path = full_download(url=ftp_url, dest_path=dest_path)
         except FileTooLargeError as exc:
             logger.info("skipping oversized file: %s", exc)
             return (0, "", "")
