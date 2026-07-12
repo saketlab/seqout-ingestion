@@ -231,6 +231,12 @@ embed_cluster *flags:
         {{ flags }}
 
 [group("embed")]
+embed_cluster_leiden *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed cluster-leiden \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+[group("embed")]
 embed_neighbors *flags:
     {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed neighbors \
         --chroma-db-dir {{ CHROMA_DB_DIR }} \

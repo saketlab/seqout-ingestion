@@ -65,13 +65,20 @@ def _load_all_data(chroma_db_dir: Path) -> list[tuple[str, dict]]:
     return records
 
 
-def _detect_levels(sample_meta: dict) -> list[str]:
-    """Clustering keys ordered coarsest -> finest (cluster_id first)."""
+def _detect_levels(sample_meta: dict, prefix: str = "cluster_l") -> list[str]:
+    """Clustering keys for `prefix` ordered coarsest -> finest.
+
+    For EVoC (``cluster_l``) the flat ``cluster_id`` is prepended; other
+    clusterings (e.g. ``leiden_l``) expose hierarchical layers only.
+    """
     layer_keys = sorted(
-        (k for k in sample_meta if k.startswith("cluster_l")),
-        key=lambda k: int(k[len("cluster_l") :]),
+        (k for k in sample_meta if k.startswith(prefix)),
+        key=lambda k: int(k[len(prefix) :]),
     )
-    return ["cluster_id", *reversed(layer_keys)]
+    levels = list(reversed(layer_keys))
+    if prefix == "cluster_l":
+        levels = ["cluster_id", *levels]
+    return levels
 
 
 def _extract_keywords(docs: list[str], top_k: int = TOP_K_KEYWORDS) -> list[str]:
@@ -212,6 +219,8 @@ def generate_labels(
     labels_dir: Path,
     vllm_base_url: str = DEFAULT_VLLM_BASE,
     model: str = DEFAULT_MODEL,
+    prefix: str = "cluster_l",
+    skip_levels: list[str] | None = None,
 ) -> None:
     client = OpenAI(base_url=vllm_base_url, api_key="unused")
 
@@ -222,7 +231,10 @@ def generate_labels(
         logger.warning("no documents found; nothing to label")
         return
 
-    levels = _detect_levels(all_data[0][1])
+    levels = _detect_levels(all_data[0][1], prefix)
+    skip = set(skip_levels or ())
+    if skip:
+        levels = [lv for lv in levels if lv not in skip]
     logger.info("cluster levels (coarsest -> finest): %s", levels)
 
     labels_dir.mkdir(parents=True, exist_ok=True)

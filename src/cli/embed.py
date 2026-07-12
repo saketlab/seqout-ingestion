@@ -45,6 +45,15 @@ def cluster(
 
 
 @embed_app.command()
+def cluster_leiden(
+    chroma_db_dir: Path = typer.Option(...),
+) -> None:
+    from embed.cluster_leiden import compute_leiden_clusters
+
+    compute_leiden_clusters(chroma_db_dir)
+
+
+@embed_app.command()
 def neighbors(
     chroma_db_dir: Path = typer.Option(...),
     neighbors_db_file: Path = typer.Option(...),
@@ -62,7 +71,20 @@ def labels(
     labels_dir: Path = typer.Option(...),
     vllm_base_url: str = typer.Option("http://localhost:1729/v1"),
     model: str = typer.Option("unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q8_K_XL"),
+    prefix: str = typer.Option(
+        "cluster_l", help="Cluster metadata key prefix, e.g. cluster_l or leiden_l"
+    ),
+    skip_level: list[str] = typer.Option(
+        [], help="Level name(s) to skip, e.g. --skip-level leiden_l1 (repeatable)"
+    ),
 ) -> None:
     from embed.labels import generate_labels
 
-    generate_labels(chroma_db_dir, labels_dir, vllm_base_url, model)
+    generate_labels(
+        chroma_db_dir,
+        labels_dir,
+        vllm_base_url,
+        model,
+        prefix=prefix,
+        skip_levels=skip_level,
+    )
