@@ -1,9 +1,10 @@
+import contextlib
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
-import pandas as pd
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
@@ -18,6 +19,10 @@ DATASOURCE_TABLE_MAPPING: dict[Datasource, str] = {
     Datasource.Geo: "geo_series",
     Datasource.ArrayExpress: "arrayexpress_experiments",
     Datasource.Ena: "ena_studies",
+    Datasource.Dra: "dra_studies",
+    Datasource.Gea: "gea_experiments",
+    Datasource.Gsa: "gsa_studies",
+    Datasource.GsaHuman: "gsa_human_studies",
 }
 
 DATASOURCE_COLUMN_MAPPING: dict[Datasource, str] = {
@@ -25,6 +30,10 @@ DATASOURCE_COLUMN_MAPPING: dict[Datasource, str] = {
     Datasource.Geo: "accession",
     Datasource.ArrayExpress: "accession",
     Datasource.Ena: "study_accession",
+    Datasource.Dra: "accession",
+    Datasource.Gea: "accession",
+    Datasource.Gsa: "accession",
+    Datasource.GsaHuman: "accession",
 }
 
 MISSING_QUERIES: dict[Datasource, str] = {
@@ -48,6 +57,29 @@ MISSING_QUERIES: dict[Datasource, str] = {
         "SELECT study_accession FROM ena_studies"
         " WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
     ),
+    # DDBJ-exclusive only. The SRA/ENA twin of a mirrored DRP is canonical and already
+    # carries the pmid; the DDBJ copy would cost ~17k NCBI calls nothing reads.
+    Datasource.Dra: (
+        "SELECT accession FROM dra_studies"
+        " WHERE is_only_ddbj = 1"
+        " AND (links IS NULL OR NOT json_valid(links)"
+        " OR json_extract(links, '$.XREF_LINK.DB') != 'pubmed')"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
+    Datasource.Gea: (
+        "SELECT accession FROM gea_experiments"
+        " WHERE (pubmed_id IS NULL OR pubmed_id = '')"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
+    Datasource.Gsa: (
+        "SELECT accession FROM gsa_studies"
+        " WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]')"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
+    Datasource.GsaHuman: (
+        "SELECT accession FROM gsa_human_studies"
+        " WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+    ),
 }
 
 HAS_ORIGINAL_PMID_QUERIES: dict[Datasource, str] = {
@@ -66,6 +98,17 @@ HAS_ORIGINAL_PMID_QUERIES: dict[Datasource, str] = {
         " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
     ),
     Datasource.Ena: "SELECT 0",
+    Datasource.Dra: "SELECT 0",
+    Datasource.Gea: (
+        "SELECT COUNT(*) FROM gea_experiments"
+        " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
+    ),
+    # CRA study pages declare their publications; HRA workbooks carry none
+    Datasource.Gsa: (
+        "SELECT COUNT(*) FROM gsa_studies"
+        " WHERE pubmed_id IS NOT NULL AND pubmed_id != '' AND pubmed_id != '[]'"
+    ),
+    Datasource.GsaHuman: "SELECT 0",
 }
 
 BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
@@ -85,6 +128,40 @@ BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
         "SELECT COUNT(*) FROM ena_studies"
         " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
     ),
+    Datasource.Dra: (
+        "SELECT COUNT(*) FROM dra_studies"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+    Datasource.Gea: (
+        "SELECT COUNT(*) FROM gea_experiments"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+    Datasource.Gsa: (
+        "SELECT COUNT(*) FROM gsa_studies"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+    Datasource.GsaHuman: (
+        "SELECT COUNT(*) FROM gsa_human_studies"
+        " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+    ),
+}
+
+# datasource -> (SRAweb method, accession column in its dataframe).
+# CRA/HRA/E-GEAD have no NCBI record to elink. ae_to_pmid: literature search, smallest
+# pmid (the originating paper). DRA resolves by BioProject.
+SRAWEB_RESOLVERS: dict[Datasource, tuple[str, str]] = {
+    Datasource.Sra: ("sra_to_pmid", "srp_accession"),
+    Datasource.Ena: ("sra_to_pmid", "srp_accession"),
+    Datasource.Geo: ("gse_to_pmid", "gse_accession"),
+    Datasource.ArrayExpress: ("gse_to_pmid", "gse_accession"),
+    Datasource.Gea: ("ae_to_pmid", "ae_accession"),
+    Datasource.Gsa: ("ae_to_pmid", "ae_accession"),
+    Datasource.GsaHuman: ("ae_to_pmid", "ae_accession"),
+}
+
+PMID_RESOLVERS: dict[Datasource, str] = {
+    **{k: v[0] for k, v in SRAWEB_RESOLVERS.items()},
+    Datasource.Dra: "_resolve_dra",
 }
 
 
@@ -93,6 +170,10 @@ def backfill_pubmed_ids(
     sra_db_file: Path | None,
     ena_db_file: Path | None,
     ae_db_file: Path | None,
+    dra_db_file: Path | None,
+    gea_db_file: Path | None,
+    gsa_db_file: Path | None,
+    gsa_human_db_file: Path | None,
     ncbi_keys_file: Path,
     num_workers: int,
     batch_size: int,
@@ -101,15 +182,22 @@ def backfill_pubmed_ids(
     timeout: int,
     process_all: bool = False,  # noqa:  FBT002
 ) -> None:
-    if (
-        (not geo_db_file)
-        and (not sra_db_file)
-        and (not ena_db_file)
-        and (not ae_db_file)
+    if not any(
+        (
+            geo_db_file,
+            sra_db_file,
+            ena_db_file,
+            ae_db_file,
+            dra_db_file,
+            gea_db_file,
+            gsa_db_file,
+            gsa_human_db_file,
+        ),
     ):
         msg = (
-            "expected at least one of --geo-db-file, --sra-db-file,"
-            " --ena-db-file or --ae-db-file. recieved none of them"
+            "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file,"
+            " --ae-db-file, --dra-db-file, --gea-db-file, --gsa-db-file or"
+            " --gsa-human-db-file. recieved none of them"
         )
         raise ValueError(msg)
 
@@ -118,6 +206,10 @@ def backfill_pubmed_ids(
         Datasource.Sra: sra_db_file,
         Datasource.Ena: ena_db_file,
         Datasource.ArrayExpress: ae_db_file,
+        Datasource.Dra: dra_db_file,
+        Datasource.Gea: gea_db_file,
+        Datasource.Gsa: gsa_db_file,
+        Datasource.GsaHuman: gsa_human_db_file,
     }
     mapping: dict[Datasource, Path] = {
         k: v for k, v in raw_mapping.items() if v is not None
@@ -210,6 +302,73 @@ def backfill_pubmed_ids(
         pbar.close()
 
 
+def _resolve_via_sraweb(
+    sra: SRAweb,
+    datasource: Datasource,
+    batch: list[str],
+) -> list[tuple[str, str]]:
+    method, col_name = SRAWEB_RESOLVERS[datasource]
+    try:
+        pm_df = getattr(sra, method)(batch)
+    except KeyError:
+        return []
+
+    updates: list[tuple[str, str]] = []
+    for _, row in pm_df.iterrows():
+        acc = row.get(col_name)
+        pmid = _parse_pmid(row.get("pmid"))
+        if acc and pmid:
+            updates.append((pmid, str(acc)))
+    return updates
+
+
+def _dra_bioprojects(db_file: Path) -> dict[str, str]:
+    """DRP -> its PRJDB, from the external_id json ingest wrote."""
+    with sqlite_connect(db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, external_id FROM dra_studies "
+            "WHERE external_id IS NOT NULL",
+        ).fetchall()
+
+    out: dict[str, str] = {}
+    for acc, external_id in rows:
+        with contextlib.suppress(json.JSONDecodeError, TypeError, AttributeError):
+            bioproject = json.loads(external_id).get("BioProject")
+            if bioproject:
+                out[acc] = bioproject
+    return out
+
+
+def _resolve_dra(
+    sra: SRAweb,
+    batch: list[str],
+    bioprojects: dict[str, str],
+) -> list[tuple[str, str]]:
+    """
+    DRP -> pmid via its BioProject; DRA studies carry no pubmed link of their own.
+
+    Must go through fetch_bioproject_pmids, which resolves to an NCBI UID first:
+    efetch by accession reads only the digits, so PRJDB13786 returns PRJNA13786.
+    """
+    wanted = {acc: bioprojects[acc] for acc in batch if acc in bioprojects}
+    if not wanted:
+        return []
+
+    try:
+        found = sra.fetch_bioproject_pmids(sorted(set(wanted.values())))
+    except Exception:
+        logger.exception("fetch_bioproject_pmids failed for a dra batch")
+        return []
+
+    updates: list[tuple[str, str]] = []
+    for acc, bioproject in wanted.items():
+        pmids = found.get(bioproject) or []
+        pmid = _parse_pmid(pmids[0]) if pmids else None
+        if pmid:
+            updates.append((pmid, acc))
+    return updates
+
+
 def _worker(
     api_key: str,
     datasource: Datasource,
@@ -221,24 +380,15 @@ def _worker(
     timeout: int,
 ) -> None:
     sra = SRAweb(api_key, retries=retries, timeout=timeout, verbose=False)
-    is_sra_related = datasource in (Datasource.Sra, Datasource.Ena)
-    col_name = "srp_accession" if is_sra_related else "gse_accession"
 
     now = datetime.now(UTC).strftime("%Y-%m-%d")
+    bioprojects = _dra_bioprojects(db_file) if datasource is Datasource.Dra else {}
 
     for batch in _chunked(data, batch_size):
-        try:
-            pm_df = sra.sra_to_pmid(batch) if is_sra_related else sra.gse_to_pmid(batch)
-        except KeyError:
-            pm_df = pd.DataFrame()
-
-        pmid_updates = []
-
-        for _, row in pm_df.iterrows():
-            acc = row.get(col_name)
-            pmid = _parse_pmid(row.get("pmid"))
-            if acc and pmid:
-                pmid_updates.append((pmid, acc))
+        if datasource is Datasource.Dra:
+            pmid_updates = _resolve_dra(sra, batch, bioprojects)
+        else:
+            pmid_updates = _resolve_via_sraweb(sra, datasource, batch)
 
         with sqlite_connect(db_file) as conn:
             table = DATASOURCE_TABLE_MAPPING[datasource]

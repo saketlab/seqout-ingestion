@@ -73,6 +73,40 @@ PMID_EXTRACT_QUERIES = {
             " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
         ),
     ],
+    "dra": [
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM dra_studies"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
+    ],
+    "gea": [
+        (
+            "SELECT DISTINCT pubmed_id FROM gea_experiments"
+            " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
+        ),
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM gea_experiments"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
+    ],
+    "gsa": [
+        (
+            "SELECT DISTINCT value"
+            " FROM gsa_studies, json_each(gsa_studies.pubmed_id)"
+            " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
+            " AND pubmed_id != '[]' AND json_valid(pubmed_id)"
+        ),
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM gsa_studies"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
+    ],
+    "gsa_human": [
+        (
+            "SELECT DISTINCT pubmed_id_pysradb FROM gsa_human_studies"
+            " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
+        ),
+    ],
 }
 
 UPSERT_SQL = """
@@ -124,6 +158,10 @@ def backfill_pubmed_metadata(
     sra_db_file: Path | None,
     ena_db_file: Path | None,
     ae_db_file: Path | None,
+    dra_db_file: Path | None,
+    gea_db_file: Path | None,
+    gsa_db_file: Path | None,
+    gsa_human_db_file: Path | None,
     db_file: Path | None,
     ncbi_keys_file: Path,
     openalex_keys_file: Path,
@@ -138,15 +176,22 @@ def backfill_pubmed_metadata(
     timeout: int,
     is_dry_run: bool,
 ) -> None:
-    if (
-        (not geo_db_file)
-        and (not sra_db_file)
-        and (not ena_db_file)
-        and (not ae_db_file)
+    if not any(
+        (
+            geo_db_file,
+            sra_db_file,
+            ena_db_file,
+            ae_db_file,
+            dra_db_file,
+            gea_db_file,
+            gsa_db_file,
+            gsa_human_db_file,
+        ),
     ):
         msg = (
-            "expected at least one of --geo-db-file, --sra-db-file,"
-            " --ena-db-file or --ae-db-file. recieved none of them"
+            "expected at least one of --geo-db-file, --sra-db-file, --ena-db-file,"
+            " --ae-db-file, --dra-db-file, --gea-db-file, --gsa-db-file or"
+            " --gsa-human-db-file. recieved none of them"
         )
         raise ValueError(msg)
 
@@ -159,6 +204,10 @@ def backfill_pubmed_metadata(
         Datasource.Sra: sra_db_file,
         Datasource.Ena: ena_db_file,
         Datasource.ArrayExpress: ae_db_file,
+        Datasource.Dra: dra_db_file,
+        Datasource.Gea: gea_db_file,
+        Datasource.Gsa: gsa_db_file,
+        Datasource.GsaHuman: gsa_human_db_file,
     }
     mapping: dict[Datasource, Path] = {
         k: v for k, v in raw_mapping.items() if v is not None

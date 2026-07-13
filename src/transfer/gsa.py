@@ -16,6 +16,7 @@ import psycopg
 from tqdm import tqdm
 
 from helpers import sqlite_connect
+from ingest.gsa_common import GSA_DOWNLOAD_URL
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -27,6 +28,10 @@ GSA_COUNTRY = "China"
 GSA_HUMAN_ORGANISM = "Homo sapiens"
 
 # Column lists must match the setup_gsa.sh DDL.
+# GSA names most studies after their own accession ("CRA_10", "HRA_123") rather than
+# after the science; the submitter's real title is on the parent BioProject.
+_PLACEHOLDER_TITLE_RE = re.compile(r"(?:CRA|HRA)_\d+")
+
 _GSA_STUDIES_COLS = [
     "study_accession",
     "study_title",
@@ -134,11 +139,12 @@ def gsa_transfer_tasks(
         return []
 
     common = (pg_url, cra, hra, batch_size)
+    titled = (pg_url, cra, hra, batch_size, bp)
     tasks: list[tuple[str, Callable[..., None], tuple]] = []
     if cra or hra:
         tasks += [
-            ("gsa_studies", _transfer_gsa_studies, common),
-            ("gsa_studies_search", _transfer_gsa_studies_search, common),
+            ("gsa_studies", _transfer_gsa_studies, titled),
+            ("gsa_studies_search", _transfer_gsa_studies_search, titled),
             ("gsa_experiments", _transfer_gsa_experiments, common),
             ("gsa_samples", _transfer_gsa_samples, common),
             ("gsa_run_downloads", _transfer_gsa_run_downloads, common),
@@ -222,12 +228,44 @@ def _iso_date(value: Any) -> str | None:
         return None
 
 
+def _project_titles(bp: Path | None) -> dict[str, str]:
+    """PRJCA -> project title, used to replace GSA's placeholder study titles."""
+    if not bp:
+        return {}
+    with sqlite_connect(bp) as c:
+        return dict(
+            c.execute(
+                "SELECT accession, title FROM gsa_projects WHERE title IS NOT NULL",
+            ),
+        )
+
+
+def _study_title(
+    title: str | None,
+    project: str | None,
+    project_titles: dict[str, str],
+) -> str | None:
+    """
+    Resolve a study's display title.
+
+    GSA titles most CRA/HRA studies after their own accession ("CRA_10"), which
+    carries no information. The submitter's real title lives on the parent BioProject,
+    so prefer that whenever the study title is one of these placeholders.
+    """
+    if title and not _PLACEHOLDER_TITLE_RE.fullmatch(title):
+        return title
+    return project_titles.get(project or "") or title
+
+
 def _transfer_gsa_studies(
     pg_url: str,
     cra: Path | None,
     hra: Path | None,
     batch_size: int,
+    bp: Path | None = None,
 ) -> None:
+    project_titles = _project_titles(bp)
+
     def rows() -> Iterator[tuple]:
         if cra:
             with sqlite_connect(cra) as c:
@@ -240,7 +278,7 @@ def _transfer_gsa_studies(
                     fp = _iso_date(rel)
                     yield (
                         acc,
-                        title,
+                        _study_title(title, proj, project_titles),
                         None,
                         alias,
                         proj,
@@ -263,7 +301,7 @@ def _transfer_gsa_studies(
                     fp = _iso_date(rel)
                     yield (
                         acc,
-                        title,
+                        _study_title(title, proj, project_titles),
                         disease,
                         None,
                         proj,
@@ -291,7 +329,10 @@ def _transfer_gsa_studies_search(
     cra: Path | None,
     hra: Path | None,
     batch_size: int,
+    bp: Path | None = None,
 ) -> None:
+    project_titles = _project_titles(bp)
+
     def rows() -> Iterator[tuple]:
         if cra:
             with sqlite_connect(cra) as c:
@@ -300,7 +341,8 @@ def _transfer_gsa_studies_search(
                         project_accession, release_time FROM gsa_studies""",
                 ):
                     fp = _iso_date(rel)
-                    yield (acc, title, None, alias, org, proj, fp, fp)
+                    t = _study_title(title, proj, project_titles)
+                    yield (acc, t, None, alias, org, proj, fp, fp)
         if hra:
             with sqlite_connect(hra) as c:
                 for acc, title, disease, org, proj, rel in c.execute(
@@ -310,7 +352,8 @@ def _transfer_gsa_studies_search(
                         WHERE access = 'Open'""",
                 ):
                     fp = _iso_date(rel)
-                    yield (acc, title, disease, None, org, proj, fp, fp)
+                    t = _study_title(title, proj, project_titles)
+                    yield (acc, t, disease, None, org, proj, fp, fp)
 
     _upsert(
         pg_url,
@@ -457,6 +500,19 @@ def _join_or_none(parts: tuple[str | None, ...]) -> str | None:
     return joined if joined.strip(";") else None
 
 
+_LEGACY_HOST_RE = re.compile(r"^ftp://download\.big\.ac\.cn/")
+
+
+def _https_url(url: str) -> str:
+    """
+    Rewrite the legacy ftp:// host CNCB still emits in CRA workbooks and HRA manifests.
+
+    Browsers dropped ftp:// support, and big.ac.cn only 301s to download.cncb.ac.cn
+    (its cert covers *.cncb.ac.cn alone), so point there directly.
+    """
+    return _LEGACY_HOST_RE.sub(f"{GSA_DOWNLOAD_URL}/", url)
+
+
 def _download_row(
     run: str,
     study: str,
@@ -469,7 +525,7 @@ def _download_row(
     if not kept:
         return None
     urls, md5s, byts = zip(*kept, strict=True)
-    fastq_ftp = ";".join(urls)
+    fastq_ftp = ";".join(_https_url(u) for u in urls)
     fastq_bytes, fastq_md5 = _join_or_none(byts), _join_or_none(md5s)
     return (run, study, exp, layout, fastq_ftp, fastq_bytes, fastq_md5)
 

@@ -44,8 +44,7 @@ def _norm(text_expr: str) -> str:
 # (identical title/description) so to_tsvector's position lists stay bounded.
 # left(...) caps the aggregated text: a few studies have tens of thousands of
 # unique samples whose combined text builds a tsvector past the hard 1 MB limit.
-# ponytail: fixed 400 KB cap (~well under the 1 MB tsvector limit); still captures
-# a huge sample vocabulary for recall. Segment per-study only if a real tail is lost.
+# fixed 400 KB cap, well under the 1 MB tsvector limit.
 _SAMPLE_TSV_EXPR = (
     "setweight(to_tsvector('english', "
     + _norm(

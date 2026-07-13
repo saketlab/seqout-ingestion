@@ -48,6 +48,9 @@ ignore = [
 # __main__ self-checks legitimately use bare asserts / print / magic values.
 "src/ingest/gsa_bioproject.py" = ["S101", "T201", "PLR2004", "PT018"]
 "src/age/parser.py" = ["S101", "T201", "PLR2004", "FBT003", "PLR0911", "PT018"]
+# tests assert (S101), are not a package (INP001), and paste real archive
+# records verbatim as fixtures -- which are long lines (E501) with magic values.
+"tests/*" = ["S101", "INP001", "E501", "PLR2004", "PT017", "FLY002", "D", "ANN"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -61,11 +64,16 @@ environments = ["sys_platform == 'linux'"]
 pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
 yuj = { path = "./vendor/yuj" }
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [dependency-groups]
 dev = [
     "lxml-stubs>=0.5.1",
     "ruff>=0.11.8",
     "pre-commit>=4.2.0",
+    "pytest>=8.0.0",
     "tox",
     "tox-uv"
 ]

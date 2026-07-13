@@ -53,8 +53,7 @@ def _ensure_columns(conn: psycopg.Connection) -> None:
                 f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS clusters jsonb",
             )
             cur.execute(
-                f"ALTER TABLE {table} "
-                "ADD COLUMN IF NOT EXISTS leiden_clusters jsonb",
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS leiden_clusters jsonb",
             )
             cur.execute(
                 f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS neighbors jsonb[]",

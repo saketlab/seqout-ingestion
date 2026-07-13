@@ -21,13 +21,13 @@ from embed.common import load_combined_matrix, open_chroma, scatter_write
 
 logger = logging.getLogger(__name__)
 
-N_COMPONENTS = 400   # PCA target dim (~80% of variance)
-K = 15               # neighbors per node in the kNN graph
-RESOLUTION = 1.0     # Leiden resolution (RBConfiguration ~ modularity at 1.0)
-N_ITER = 5           # Leiden iterations per split
+N_COMPONENTS = 400  # PCA target dim (~80% of variance)
+K = 15  # neighbors per node in the kNN graph
+RESOLUTION = 1.0  # Leiden resolution (RBConfiguration ~ modularity at 1.0)
+N_ITER = 5  # Leiden iterations per split
 SEED = 42
 MIN_SPLIT_SIZE = 25  # don't try to split communities smaller than this
-MAX_DEPTH = 12       # hard cap on hierarchy depth
+MAX_DEPTH = 12  # hard cap on hierarchy depth
 
 
 def _pca_normalize(x: np.ndarray) -> np.ndarray:
@@ -44,7 +44,12 @@ def _pca_normalize(x: np.ndarray) -> np.ndarray:
     out = cp.asnumpy(xr).astype(np.float32)
     del xg, xr
     cp.get_default_memory_pool().free_all_blocks()
-    logger.info("  PCA %.1fs | %d comps = %.1f%% variance", time.time() - t0, N_COMPONENTS, evr * 100)
+    logger.info(
+        "  PCA %.1fs | %d comps = %.1f%% variance",
+        time.time() - t0,
+        N_COMPONENTS,
+        evr * 100,
+    )
     return out
 
 
@@ -66,7 +71,9 @@ def _knn_edges(xr: np.ndarray) -> np.ndarray:
     b = np.maximum(src, dst)
     key = np.unique(a * n + b)  # dedup undirected
     edges = np.stack([key // n, key % n], axis=1)
-    logger.info("  kNN %.1fs | %d nodes, %d undirected edges", time.time() - t0, n, len(edges))
+    logger.info(
+        "  kNN %.1fs | %d nodes, %d undirected edges", time.time() - t0, n, len(edges)
+    )
     return edges
 
 
@@ -84,15 +91,19 @@ def _hierarchical_leiden(n: int, edges: np.ndarray) -> list[np.ndarray]:
     def recurse(global_idx: np.ndarray, sub: ig.Graph, depth: int) -> int:
         ensure(depth)
         part = la.find_partition(
-            sub, la.RBConfigurationVertexPartition,
-            resolution_parameter=RESOLUTION, n_iterations=N_ITER, seed=SEED,
+            sub,
+            la.RBConfigurationVertexPartition,
+            resolution_parameter=RESOLUTION,
+            n_iterations=N_ITER,
+            seed=SEED,
         )
         membership = np.asarray(part.membership)
         deepest = depth
         for comm in range(len(part)):
             local = np.where(membership == comm)[0]
             gidx = global_idx[local]
-            uid = counter[0]; counter[0] += 1
+            uid = counter[0]
+            counter[0] += 1
             levels[depth][gidx] = uid
             if len(gidx) >= MIN_SPLIT_SIZE and depth + 1 < MAX_DEPTH and len(part) > 1:
                 child = sub.induced_subgraph(local.tolist())
@@ -104,7 +115,9 @@ def _hierarchical_leiden(n: int, edges: np.ndarray) -> list[np.ndarray]:
     logger.info("running recursive hierarchical Leiden")
     t0 = time.time()
     recurse(np.arange(n, dtype=np.int64), g, 0)
-    logger.info("  Leiden %.1f min, %d raw levels", (time.time() - t0) / 60, len(levels))
+    logger.info(
+        "  Leiden %.1f min, %d raw levels", (time.time() - t0) / 60, len(levels)
+    )
 
     # forward-fill trailing -1 (a leaf keeps its label at finer levels)
     m = np.vstack(levels)
@@ -113,7 +126,10 @@ def _hierarchical_leiden(n: int, edges: np.ndarray) -> list[np.ndarray]:
         m[d][mask] = m[d - 1][mask]
 
     # relabel each level to contiguous ids, then reverse so index 0 = finest
-    out = [np.unique(m[d], return_inverse=True)[1].astype(np.int64) for d in range(m.shape[0])]
+    out = [
+        np.unique(m[d], return_inverse=True)[1].astype(np.int64)
+        for d in range(m.shape[0])
+    ]
     out.reverse()
     return out
 
