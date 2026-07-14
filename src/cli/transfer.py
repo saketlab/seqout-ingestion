@@ -45,6 +45,18 @@ def postgres(
 
 
 @transfer_app.command()
+def leiden_swap(
+    pg_url: str = typer.Option(...),
+    chroma_db_dir: Path = typer.Option(...),
+    labels_dir: Path = typer.Option(...),
+) -> None:
+    """Overwrite EVoC with Leiden in Postgres (remap leiden_l* -> cluster_l*)."""
+    from transfer.leiden_swap import leiden_swap as run
+
+    run(pg_url, chroma_db_dir, labels_dir)
+
+
+@transfer_app.command()
 def sample_tsv(
     pg_url: str = typer.Option(...),
 ) -> None:
