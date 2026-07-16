@@ -4,9 +4,10 @@ from typing import Literal
 import typer
 
 from backfill.download_links import backfill_download_links
+from backfill.dra_download_links import backfill_dra_download_links
 from backfill.pubmed_ids import backfill_pubmed_ids
 from backfill.pubmed_meta import backfill_pubmed_metadata
-from cli.utils import _parse_timespan
+from cli.utils import _parse_chunk_size, _parse_timespan
 
 backfill_app = typer.Typer()
 
@@ -20,6 +21,10 @@ def pm_ids(
     sra_db_file: Path | None = typer.Option(None),
     ena_db_file: Path | None = typer.Option(None),
     ae_db_file: Path | None = typer.Option(None),
+    dra_db_file: Path | None = typer.Option(None),
+    gea_db_file: Path | None = typer.Option(None),
+    gsa_db_file: Path | None = typer.Option(None),
+    gsa_human_db_file: Path | None = typer.Option(None),
     ncbi_keys_file: Path = typer.Option(...),
     num_workers: int = _NUM_WORKERS_FLAG,
     batch_size: int = _BATCH_SIZE_FLAG,
@@ -33,6 +38,10 @@ def pm_ids(
         sra_db_file,
         ena_db_file,
         ae_db_file,
+        dra_db_file,
+        gea_db_file,
+        gsa_db_file,
+        gsa_human_db_file,
         ncbi_keys_file,
         num_workers,
         batch_size,
@@ -50,6 +59,10 @@ def pm_meta(
     sra_db_file: Path | None = typer.Option(None),
     ena_db_file: Path | None = typer.Option(None),
     ae_db_file: Path | None = typer.Option(None),
+    dra_db_file: Path | None = typer.Option(None),
+    gea_db_file: Path | None = typer.Option(None),
+    gsa_db_file: Path | None = typer.Option(None),
+    gsa_human_db_file: Path | None = typer.Option(None),
     db_file: Path | None = typer.Option(None),
     ncbi_keys_file: Path = typer.Option(...),
     openalex_keys_file: Path = typer.Option(...),
@@ -70,6 +83,10 @@ def pm_meta(
         sra_db_file,
         ena_db_file,
         ae_db_file,
+        dra_db_file,
+        gea_db_file,
+        gsa_db_file,
+        gsa_human_db_file,
         db_file,
         ncbi_keys_file,
         openalex_keys_file,
@@ -92,6 +109,7 @@ def download_links(
     source: Literal["ncbi", "ena", "both"] = typer.Option(...),
     sra_db_file: Path | None = typer.Option(None),
     ena_db_file: Path | None = typer.Option(None),
+    dra_db_file: Path | None = typer.Option(None),
     ncbi_keys_file: Path | None = typer.Option(None),
     num_workers: int = _NUM_WORKERS_FLAG,
     is_dry_run: bool = typer.Option(default=False),
@@ -104,6 +122,7 @@ def download_links(
         base_output_dir,
         sra_db_file,
         ena_db_file,
+        dra_db_file,
         ncbi_keys_file,
         num_workers,
         is_dry_run,
@@ -112,4 +131,28 @@ def download_links(
         retries,
         timeout,
         limit,
+    )
+
+
+@backfill_app.command()
+def dra_download_links(
+    base_output_dir: Path = typer.Option(..., "--output-dir"),
+    dra_db_file: Path = typer.Option(..., "--dra-db-file"),
+    download_links_db_file: Path = typer.Option(..., "--download-links-db-file"),
+    num_workers: int = _NUM_WORKERS_FLAG,
+    chunk_size: int = typer.Option("20 MB", parser=_parse_chunk_size),
+    retries: int = typer.Option(20),
+    timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
+    max_timeout: int = typer.Option("2 mins", parser=_parse_timespan),
+) -> None:
+    """FASTQ links for DRA runs, from DDBJ's fastqlist manifest."""
+    backfill_dra_download_links(
+        base_output_dir,
+        dra_db_file,
+        download_links_db_file,
+        num_workers,
+        chunk_size,
+        retries,
+        timeout,
+        max_timeout,
     )

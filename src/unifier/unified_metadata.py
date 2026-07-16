@@ -39,6 +39,8 @@ def build_unified_metadata(
     ae_db_file: Path,
     gsa_db_file: Path,
     gsa_human_db_file: Path,
+    dra_db_file: Path,
+    gea_db_file: Path,
     unified_catalog_db_file: Path,
     pubmed_metadata_db_file: Path,
     assay_mapping_csv_file: Path,
@@ -56,13 +58,15 @@ def build_unified_metadata(
     taxonomy = _load_taxonomy_mapping(taxonomy_mapping_csv_file)
 
     source_data: dict[str, SourceMap] = {}
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=7) as pool:
         futures = {
             pool.submit(_scan_geo, geo_db_file): "geo",
             pool.submit(_scan_sra, sra_db_file): "sra",
             pool.submit(_scan_ae, ae_db_file): "ae",
             pool.submit(_scan_ena, ena_db_file): "ena",
             pool.submit(_scan_gsa, gsa_db_file, gsa_human_db_file): "gsa",
+            pool.submit(_scan_dra, dra_db_file): "dra",
+            pool.submit(_scan_gea, gea_db_file): "gea",
         }
 
         for f in tqdm(
@@ -74,10 +78,9 @@ def build_unified_metadata(
             label = futures[f]
             source_data[label] = f.result()
 
-    geo, sra, ae, ena, gsa = (
-        source_data[k] for k in ("geo", "sra", "ae", "ena", "gsa")
+    sources = tuple(
+        source_data[k] for k in ("geo", "sra", "ae", "ena", "gsa", "dra", "gea")
     )
-    sources = (geo, sra, ae, ena, gsa)
     pmid_map = _merge_pmid_map(sources)
     published_map = _merge_published_map(sources)
 
@@ -390,6 +393,15 @@ def _scan_geo(db_file: Path) -> SourceMap:
 
 
 def _scan_sra(db_file: Path) -> SourceMap:
+    return _scan_insdc(db_file, "sra")
+
+
+def _scan_dra(db_file: Path) -> SourceMap:
+    return _scan_insdc(db_file, "dra")
+
+
+def _scan_insdc(db_file: Path, prefix: str) -> SourceMap:
+    """Scan an INSDC-shaped source (sra_* or dra_*), keyed by table prefix."""
     m = SourceMap()
     conn = sqlite_connect(db_file)
 
@@ -402,11 +414,11 @@ def _scan_sra(db_file: Path) -> SourceMap:
     pmids: dict[str, set[str]] = defaultdict(set)
     sub_center: dict[str, str] = {}
 
-    # scanning sra_samples
+    # scanning <prefix>_samples
     rows = conn.execute(
-        """SELECT submission, scientific_name
-            FROM sra_samples
-            WHERE submission IS NOT NULL""",
+        f"""SELECT submission, scientific_name
+            FROM {prefix}_samples
+            WHERE submission IS NOT NULL""",  # noqa: S608 -- prefix is a literal
     ).fetchall()
 
     for submission, sc_name_val in rows:
@@ -422,9 +434,10 @@ def _scan_sra(db_file: Path) -> SourceMap:
         len(submission_sample_count),
     )
 
-    # scanning sra_experiments
+    # scanning <prefix>_experiments
     rows = conn.execute(
-        "SELECT study, library_strategy FROM sra_experiments WHERE study IS NOT NULL",
+        f"SELECT study, library_strategy FROM {prefix}_experiments "  # noqa: S608
+        "WHERE study IS NOT NULL",
     ).fetchall()
 
     for study, strategy_val in rows:
@@ -441,11 +454,11 @@ def _scan_sra(db_file: Path) -> SourceMap:
         len(study_experiment_count),
     )
 
-    # scanning sra_studies
+    # scanning <prefix>_studies
     rows = conn.execute(
-        """SELECT accession, submission, links, published_at,
+        f"""SELECT accession, submission, links, published_at,
             pubmed_id_pysradb, center_name
-        FROM sra_studies""",
+        FROM {prefix}_studies""",  # noqa: S608 -- prefix is a literal
     ).fetchall()
 
     for (
@@ -506,11 +519,11 @@ def _scan_sra(db_file: Path) -> SourceMap:
 
     m.pmids = dict(pmids)
 
-    # scanning sra_submissions for center (fallback to study center_name)
+    # scanning <prefix>_submissions for center (fallback to study center_name)
     cursor = conn.execute(
-        """SELECT accession, center_name
-        FROM sra_submissions
-        WHERE center_name IS NOT NULL AND center_name != ''""",
+        f"""SELECT accession, center_name
+        FROM {prefix}_submissions
+        WHERE center_name IS NOT NULL AND center_name != ''""",  # noqa: S608
     )
     for sub_acc, center_name in cursor:
         sub_center[sub_acc] = center_name.strip()
@@ -634,6 +647,83 @@ def _scan_ae(db_file: Path) -> SourceMap:
     m.library = {k: dict(v) for k, v in experiment_library_count.items()}
     m.num_experiments = dict(experiment_sample_count)
     m.num_samples = dict(experiment_sample_count)
+    m.pmids = dict(pmids)
+
+    conn.close()
+    return m
+
+
+def _scan_gea(db_file: Path) -> SourceMap:
+    """
+    DDBJ GEA (expression).
+
+    A GEA accession *is* one experiment, so num_experiments counts the distinct
+    raw DRA experiments backing it rather than reusing the sample count as _scan_ae
+    does.
+    """
+    m = SourceMap()
+    conn = sqlite_connect(db_file)
+
+    organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
+    library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
+    sample_count: Counter[str] = Counter()
+    dra_experiments: dict[str, set[str]] = defaultdict(set)
+    pmids: dict[str, set[str]] = defaultdict(set)
+
+    rows = conn.execute(
+        """SELECT experiment_accession, organism, library_strategy, dra_experiment
+        FROM gea_samples""",
+    ).fetchall()
+
+    for accession, org_val, lib_val, dra_exp in rows:
+        sample_count[accession] += 1
+
+        organism = str(org_val).strip() if org_val else ""
+        if organism:
+            organism_count[accession][organism] += 1
+
+        library_strategy = str(lib_val).strip() if lib_val else ""
+        if library_strategy:
+            library_count[accession][library_strategy] += 1
+
+        if dra_exp:
+            dra_experiments[accession].add(str(dra_exp).strip())
+
+    rows = conn.execute(
+        """SELECT accession, study_type, pubmed_id, pubmed_id_pysradb,
+            release_date, contact_affiliation
+        FROM gea_experiments""",
+    ).fetchall()
+
+    for (
+        accession,
+        study_type_val,
+        pubmed_id,
+        pubmed_id_pysradb,
+        release_date,
+        contact_aff,
+    ) in rows:
+        if contact_aff and contact_aff.strip():
+            m.center[accession] = [contact_aff.strip()]
+
+        # microarray samples carry no library_strategy; study_type is their only
+        # assay signal
+        study_type = str(study_type_val).strip() if study_type_val else ""
+        if study_type and not library_count.get(accession):
+            library_count[accession][study_type] += 1
+
+        if release_date:
+            m.published[accession] = release_date
+
+        for pid in (pubmed_id, pubmed_id_pysradb):
+            s = str(pid).strip() if pid else ""
+            if s:
+                pmids[accession].add(s)
+
+    m.organism = {k: dict(v) for k, v in organism_count.items()}
+    m.library = {k: dict(v) for k, v in library_count.items()}
+    m.num_samples = dict(sample_count)
+    m.num_experiments = {k: len(v) for k, v in dra_experiments.items() if v}
     m.pmids = dict(pmids)
 
     conn.close()

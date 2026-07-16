@@ -11,7 +11,9 @@ from cli.utils import (
     _validate_date_range,
 )
 from ingest.ae import ingest_ae
+from ingest.dra import ingest_dra
 from ingest.ena import ingest_ena
+from ingest.gea import ingest_gea
 from ingest.geo import ingest_geo
 from ingest.gsa import ingest_gsa
 from ingest.gsa_bioproject import ingest_gsa_bioproject
@@ -58,6 +60,91 @@ def sra(
         chunk_size,
         write_batch_size,
         accessions_ttl,
+        retries,
+        timeout,
+        max_timeout,
+    )
+
+
+@ingest_app.command()
+@_validate_date_range
+def dra(
+    base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
+    start_date: datetime.date = _DATE_FLAG,
+    end_date: datetime.date = _DATE_FLAG,
+    num_workers: int = _NUM_WORKERS_FLAG,
+    chunk_size: int = _CHUNK_SIZE_FLAG,
+    retries: int = _RETRIES_FLAG,
+    timeout: int = _TIMEOUT_FLAG,
+    max_timeout: int = _MAX_TIMEOUT,
+    livelist_ttl: int = typer.Option("2 days", parser=_parse_timespan),
+    novelty_filter: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--novelty-filter/--no-novelty-filter",
+        help=(
+            "default: ingest ALL of public DRA, stamping is_only_ddbj=1 on the "
+            "studies SRA/ENA have no mirror of. --novelty-filter instead skips "
+            "the mirrored ones entirely and ingests only the DDBJ-exclusive set."
+        ),
+    ),
+    sra_db_file: Path | None = typer.Option(None, "--sra-db-file"),
+    ena_db_file: Path | None = typer.Option(None, "--ena-db-file"),
+    pg_url: str | None = typer.Option(
+        None,
+        "--pg-url",
+        help="check novelty against postgres instead of the sqlite dumps",
+    ),
+    dry_run: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--dry-run",
+        help="report how many new studies would be ingested, then stop",
+    ),
+) -> None:
+    """Ingest DDBJ DRA (raw reads)."""
+    ingest_dra(
+        base_output_dir=base_output_dir,
+        db_file=db_file,
+        start_date=start_date,
+        end_date=end_date,
+        num_workers=num_workers,
+        retries=retries,
+        timeout=timeout,
+        max_timeout=max_timeout,
+        chunk_size=chunk_size,
+        sra_db_file=sra_db_file,
+        ena_db_file=ena_db_file,
+        pg_url=pg_url,
+        novelty_filter=novelty_filter,
+        livelist_ttl=livelist_ttl,
+        dry_run=dry_run,
+    )
+
+
+@ingest_app.command()
+@_validate_date_range
+def gea(
+    base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
+    start_date: datetime.date = _DATE_FLAG,
+    end_date: datetime.date = _DATE_FLAG,
+    num_workers: int = _NUM_WORKERS_FLAG,
+    retries: int = _RETRIES_FLAG,
+    timeout: int = _TIMEOUT_FLAG,
+    max_timeout: int = _MAX_TIMEOUT,
+) -> None:
+    """
+    Ingest DDBJ GEA (expression).
+
+    No novelty filter: unlike DRA, no GEA experiment is mirrored into GEO or
+    ArrayExpress, so everything public is ingested.
+    """
+    ingest_gea(
+        base_output_dir,
+        db_file,
+        start_date,
+        end_date,
+        num_workers,
         retries,
         timeout,
         max_timeout,

@@ -1,10 +1,8 @@
 import csv
 import ctypes
 import datetime
-import enum
 import functools
 import io
-import json
 import logging
 import pickle
 import queue
@@ -14,30 +12,29 @@ import subprocess
 import tarfile
 import threading
 import time
-from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import isqrt
 from pathlib import Path
-from typing import IO
 
 import httpx
 import humanfriendly
-import lxml.etree as ET  # noqa: N812
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 from helpers import download_file, exec_query_from_file, sqlite_connect
+from ingest.insdc_xml import (
+    DateResolver,
+    FileType,
+    convert_file_name_to_type,
+    process_experiments,
+    process_runs,
+    process_samples,
+    process_studies,
+    process_submission,
+    sra_id_extractor,
+)
 
 logger = logging.getLogger(__name__)
-
-
-class FileType(enum.StrEnum):
-    Submission = "submission"
-    Sample = "sample"
-    Study = "study"
-    Experiment = "experiment"
-    Run = "run"
-
 
 SRA_OUTPUT_DIR = "sra"
 SRA_FTP_BASE_URL = "https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata"
@@ -376,263 +373,6 @@ def _build_accessions_dict(
     return accessions
 
 
-def _process_submission(
-    submission_accession: str,
-    content: IO[bytes],
-    accessions: dict[str, str],
-) -> Iterator[tuple]:
-    ctx = ET.iterparse(content, events=("end",))
-    attrs: dict[str, str] = {}
-
-    try:
-        for _, elem in ctx:
-            if elem.tag != "SUBMISSION":
-                continue
-
-            attrs = dict(elem.attrib)
-            elem.clear()
-            break
-    except ET.ParseError:
-        return
-
-    accession = attrs.get("accession", submission_accession)
-    if not accession:
-        return
-
-    dates_str = accessions.get(accession)
-    if not dates_str:
-        return
-    updated_at, published_at = dates_str.split("|")
-
-    yield (
-        accession,
-        attrs.get("alias"),
-        attrs.get("center_name"),
-        attrs.get("lab_name"),
-        attrs.get("broker_name"),
-        updated_at,
-        published_at,
-    )
-
-
-def _process_studies(
-    submission_accession: str,
-    content: IO[bytes],
-    accessions: dict[str, str],
-) -> Iterator[tuple]:
-    ctx = ET.iterparse(content, events=("end",))
-
-    try:
-        for _, elem in ctx:
-            if elem.tag != "STUDY_SET":
-                continue
-
-            for study in elem.findall("STUDY"):
-                accession = study.get("accession")
-                descriptor = study.find("DESCRIPTOR")
-
-                identifiers = study.find("IDENTIFIERS")
-                external_ids = (
-                    identifiers.findall("EXTERNAL_ID")
-                    if identifiers is not None
-                    else []
-                )
-                attrs = study.findall("STUDY_ATTRIBUTES/STUDY_ATTRIBUTE")
-                links = study.findall("STUDY_LINKS/STUDY_LINK")
-
-                dates_str = accessions.get(accession)
-                if not dates_str:
-                    continue
-                updated_at, published_at = dates_str.split("|")
-
-                study_type_elem = (
-                    descriptor.find("STUDY_TYPE") if descriptor is not None else None
-                )
-                study_type = (
-                    study_type_elem.get("existing_study_type")
-                    if study_type_elem is not None
-                    else None
-                )
-
-                yield (
-                    accession,
-                    study.get("alias"),
-                    study.get("center_name"),
-                    descriptor.findtext("STUDY_ABSTRACT")
-                    if descriptor is not None
-                    else None,
-                    descriptor.findtext("STUDY_TITLE")
-                    if descriptor is not None
-                    else None,
-                    _parse_external_ids(external_ids),
-                    study_type,
-                    _parse_attributes(attrs),
-                    _parse_links(links),
-                    descriptor.findtext("CENTER_PROJECT_NAME")
-                    if descriptor is not None
-                    else None,
-                    submission_accession,
-                    published_at,
-                    updated_at,
-                )
-
-                study.clear()
-            elem.clear()
-            break
-    except ET.ParseError:
-        return
-
-
-def _process_samples(submission_accession: str, content: IO[bytes]) -> Iterator[tuple]:
-    ctx = ET.iterparse(content, events=("end",))
-
-    try:
-        for _, elem in ctx:
-            if elem.tag != "SAMPLE":
-                continue
-
-            accession = elem.get("accession")
-            identifiers = elem.find("IDENTIFIERS")
-            external_ids = (
-                identifiers.findall("EXTERNAL_ID") if identifiers is not None else []
-            )
-
-            attrs = elem.findall("SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
-            links = elem.findall("SAMPLE_LINKS/SAMPLE_LINK")
-
-            yield (
-                accession,
-                elem.get("alias"),
-                elem.findtext("DESCRIPTION"),
-                elem.findtext("TITLE"),
-                elem.findtext("SAMPLE_NAME/SCIENTIFIC_NAME"),
-                elem.findtext("SAMPLE_NAME/TAXON_ID"),
-                _parse_external_ids(external_ids),
-                _parse_attributes(attrs),
-                submission_accession,
-                _parse_links(links),
-            )
-
-            elem.clear()
-    except ET.ParseError:
-        return
-
-
-def _process_experiments(
-    submission_accession: str,
-    content: IO[bytes],
-) -> Iterator[tuple]:
-    ctx = ET.iterparse(content, events=("end",))
-
-    try:
-        for _, elem in ctx:
-            if elem.tag != "EXPERIMENT_SET":
-                continue
-
-            for experiment in elem.findall("EXPERIMENT"):
-                experiment_accession = experiment.get("accession")
-
-                design_elem = experiment.find("DESIGN")
-
-                design_description = None
-                library_layout = None
-                library_name = None
-                library_selection = None
-                library_source = None
-                library_strategy = None
-
-                if design_elem is not None:
-                    design_description = design_elem.findtext("DESIGN_DESCRIPTION")
-                    lib_desc = design_elem.find("LIBRARY_DESCRIPTOR")
-                    if lib_desc is not None:
-                        library_name = lib_desc.findtext("LIBRARY_NAME")
-                        library_selection = lib_desc.findtext("LIBRARY_SELECTION")
-                        library_source = lib_desc.findtext("LIBRARY_SOURCE")
-                        library_strategy = lib_desc.findtext("LIBRARY_STRATEGY")
-                        layout_elem = lib_desc.find("LIBRARY_LAYOUT")
-                        if layout_elem is not None:
-                            first_child = next(iter(layout_elem), None)
-                            library_layout = (
-                                str(first_child.tag)
-                                if first_child is not None
-                                else None
-                            )
-
-                samples = []
-                if design_elem is not None:
-                    for sample in design_elem.findall("SAMPLE_DESCRIPTOR"):
-                        sample_accession = sample.get("accession")
-                        if sample_accession:
-                            samples.append(sample_accession)
-
-                platform_elem = experiment.find("PLATFORM")
-                platform = None
-                instrument_model = None
-                if platform_elem is not None:
-                    first_child = next(iter(platform_elem), None)
-                    if first_child is not None:
-                        platform = str(first_child.tag)
-                        instrument_model = first_child.findtext("INSTRUMENT_MODEL")
-
-                study_ref_elem = experiment.find("STUDY_REF")
-                study_ref = (
-                    study_ref_elem.get("accession")
-                    if study_ref_elem is not None
-                    else None
-                )
-
-                title = experiment.findtext("TITLE")
-
-                yield (
-                    experiment_accession,
-                    design_description,
-                    library_layout,
-                    library_name,
-                    library_selection,
-                    library_source,
-                    library_strategy,
-                    json.dumps(samples),
-                    platform,
-                    instrument_model,
-                    study_ref,
-                    title,
-                    submission_accession,
-                )
-
-                experiment.clear()
-            elem.clear()
-            break
-    except ET.ParseError:
-        return
-
-
-def _process_runs(submission_accession: str, content: IO[bytes]) -> Iterator[tuple]:
-    ctx = ET.iterparse(content, events=("end",))
-
-    try:
-        for _, elem in ctx:
-            if elem.tag != "RUN_SET":
-                continue
-
-            items = elem.findall("RUN")
-
-            for run in items:
-                experiment_ref_elem = run.find("EXPERIMENT_REF")
-                experiment_ref = (
-                    experiment_ref_elem.get("accession")
-                    if experiment_ref_elem is not None
-                    else None
-                )
-
-                yield (run.get("accession"), experiment_ref, submission_accession)
-
-                run.clear()
-            elem.clear()
-            break
-    except ET.ParseError:
-        return
-
-
 def _extract_worker(
     tarball: Path,
     file_queue: queue.Queue,
@@ -649,7 +389,7 @@ def _extract_worker(
                 if not submission_accession:
                     continue
 
-                file_type = _convert_file_name_to_type(name)
+                file_type = convert_file_name_to_type(name)
                 if not file_type:
                     continue
 
@@ -672,6 +412,24 @@ def _extract_worker(
         raise
 
 
+def _sra_dates(accessions: dict[str, str]) -> DateResolver:
+    """
+    SRA XML carries no dates; they come from SRA_Accessions.tab.
+
+    Values in `accessions` are "updated|published". A miss drops the row, which
+    is the pre-existing behaviour.
+    """
+
+    def resolve(accession: str) -> tuple[str, str] | None:
+        dates_str = accessions.get(accession)
+        if not dates_str:
+            return None
+        updated_at, published_at = dates_str.split("|")
+        return (updated_at, published_at)
+
+    return resolve
+
+
 def _parse_worker(
     file_queue: queue.Queue,
     write_queue: queue.Queue,
@@ -680,6 +438,7 @@ def _parse_worker(
     extract_done: threading.Event,
 ) -> None:
     buffer: dict[FileType, list] = {}
+    dates = _sra_dates(accessions)
 
     def _flush(file_type: FileType) -> None:
         rows = buffer.get(file_type)
@@ -712,15 +471,20 @@ def _parse_worker(
 
         try:
             if file_type == FileType.Submission:
-                processor = _process_submission(submission_accession, bio, accessions)
+                processor = process_submission(submission_accession, bio, dates)
             elif file_type == FileType.Study:
-                processor = _process_studies(submission_accession, bio, accessions)
+                processor = process_studies(
+                    submission_accession,
+                    bio,
+                    dates,
+                    sra_id_extractor,
+                )
             elif file_type == FileType.Sample:
-                processor = _process_samples(submission_accession, bio)
+                processor = process_samples(submission_accession, bio, sra_id_extractor)
             elif file_type == FileType.Experiment:
-                processor = _process_experiments(submission_accession, bio)
+                processor = process_experiments(submission_accession, bio)
             elif file_type == FileType.Run:
-                processor = _process_runs(submission_accession, bio)
+                processor = process_runs(submission_accession, bio)
             else:
                 continue
 
@@ -861,48 +625,3 @@ def _process_tarballs(
         parse_done.set()
 
         write_future.result()
-
-
-def _parse_external_ids(external_ids: list) -> str | None:
-    if not external_ids:
-        return None
-    return json.dumps({el.get("namespace"): el.text for el in external_ids})
-
-
-def _parse_attributes(sample_attrs: list) -> str | None:
-    if not sample_attrs:
-        return None
-    return json.dumps(
-        {attr.findtext("TAG"): attr.findtext("VALUE") for attr in sample_attrs},
-    )
-
-
-def _parse_links(sample_links: list) -> str | None:
-    if not sample_links:
-        return None
-    results = {}
-
-    for link in sample_links:
-        url = link.find("URL_LINK")
-        if url is not None:
-            label = url.findtext("LABEL")
-            results[label] = url.findtext("URL")
-        else:
-            for child in link:
-                results[str(child.tag)] = {str(el.tag): el.text for el in child}
-
-    return json.dumps(results)
-
-
-def _convert_file_name_to_type(file_name: str) -> FileType | None:
-    if file_name.endswith(".submission.xml"):
-        return FileType.Submission
-    if file_name.endswith(".sample.xml"):
-        return FileType.Sample
-    if file_name.endswith(".study.xml"):
-        return FileType.Study
-    if file_name.endswith(".experiment.xml"):
-        return FileType.Experiment
-    if file_name.endswith(".run.xml"):
-        return FileType.Run
-    return None

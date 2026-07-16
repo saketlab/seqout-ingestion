@@ -43,20 +43,22 @@ CREATE TABLE IF NOT EXISTS sra_runs (
     submission TEXT
 );
 
+-- Ordered to match the live database. pubmed_id_pysradb / pubmed_last_checked
+-- are written by `backfill pm-ids`, not by ingest.
 CREATE TABLE IF NOT EXISTS sra_studies (
     accession           TEXT PRIMARY KEY,
     alias               TEXT,
-    title               TEXT,
+    center_name         TEXT,
     abstract            TEXT,
-    submission          TEXT,
-    study_type          TEXT,
-    published_at        DATE,
-    updated_at          DATE
+    title               TEXT,
     external_id         TEXT CHECK (json_valid(external_id)),
+    study_type          TEXT,
     attributes_json     TEXT CHECK (json_valid(attributes_json)),
     links               TEXT CHECK (json_valid(links)),
     center_project_name TEXT,
-    center_name         TEXT,
+    submission          TEXT,
+    published_at        TEXT,
     pubmed_id_pysradb   TEXT,
-    pubmed_last_checked DATE
+    pubmed_last_checked DATE,
+    updated_at          TEXT
 );

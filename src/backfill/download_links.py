@@ -95,6 +95,7 @@ ON CONFLICT (study_accession) DO UPDATE SET
 STUDY_QUERIES: dict[Datasource, str] = {
     Datasource.Sra: "SELECT accession FROM sra_studies ORDER BY accession",
     Datasource.Ena: "SELECT study_accession FROM ena_studies ORDER BY study_accession",
+    Datasource.Dra: "SELECT accession FROM dra_studies ORDER BY accession",
 }
 
 
@@ -102,6 +103,7 @@ def backfill_download_links(
     base_output_dir: Path,
     sra_db_file: Path | None,
     ena_db_file: Path | None,
+    dra_db_file: Path | None,
     ncbi_keys_file: Path | None,
     num_workers: int,
     is_dry_run: bool,
@@ -111,8 +113,8 @@ def backfill_download_links(
     timeout: int,
     limit: int | None = None,
 ) -> None:
-    if not sra_db_file and not ena_db_file:
-        msg = "expected at least one of --sra-db-file or --ena-db-file"
+    if not sra_db_file and not ena_db_file and not dra_db_file:
+        msg = "expected at least one of --sra-db-file, --ena-db-file or --dra-db-file"
         raise ValueError(msg)
 
     output_dir = base_output_dir / "download_links"
@@ -130,6 +132,9 @@ def backfill_download_links(
     raw_mapping: dict[Datasource, Path | None] = {
         Datasource.Sra: sra_db_file,
         Datasource.Ena: ena_db_file,
+        # only resolves for DRPs ena/ncbi also hold; the ddbj-exclusive ones get
+        # their fastqs from backfill.dra_download_links.
+        Datasource.Dra: dra_db_file,
     }
     mapping: dict[Datasource, Path] = {
         k: v for k, v in raw_mapping.items() if v is not None

@@ -67,6 +67,26 @@ def sample_tsv(
 
 
 @transfer_app.command()
+def ddbj(
+    pg_url: str = typer.Option(...),
+    dra_db_file: Path | None = typer.Option(None),
+    gea_db_file: Path | None = typer.Option(None),
+    download_links_db_file: Path | None = typer.Option(None),
+    read_batch_size: int = typer.Option(default=500),
+) -> None:
+    """Upsert DDBJ DRA and GEA into the dra_* / gea_* Postgres tables."""
+    from transfer.ddbj import ddbj_transfer
+
+    ddbj_transfer(
+        pg_url,
+        dra_db_file,
+        gea_db_file,
+        read_batch_size,
+        download_links_db_file=download_links_db_file,
+    )
+
+
+@transfer_app.command()
 def age(
     pg_url: str = typer.Option(...),
     age_norm_db_file: Path = typer.Option(...),
