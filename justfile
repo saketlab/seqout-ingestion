@@ -32,6 +32,7 @@ PUBMED_METADATA_DB_FILE := env("PUBMED_METADATA_DB_FILE", DATA_DIR + "/pubmed_me
 CHROMA_DB_DIR := env("CHROMA_DB_DIR", DATA_DIR + "/embed/chroma_db")
 NEIGHBORS_DB_FILE := env("NEIGHBORS_DB_FILE", DATA_DIR + "/embed/neighbors.sqlite3")
 LABELS_DIR := env("LABELS_DIR", DATA_DIR + "/embed/labels")
+KEYWORDS_DIR := env("KEYWORDS_DIR", DATA_DIR + "/embed/keywords")
 
 NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/keys/ncbi.txt")
 OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/keys/openalex.txt")
@@ -314,11 +315,43 @@ embed_labels *flags:
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
 
+# Add levels coarser than the Leiden root (agglomerates it; nests over existing levels)
+[group("embed")]
+embed_cluster_leiden_coarse *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed cluster-leiden-coarse \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+# Phase 1 of labelling (run once): cache TF-IDF keywords. Reads chroma; the slow part.
+[group("embed")]
+embed_precompute_keywords *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed precompute-keywords \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --keywords-dir {{ KEYWORDS_DIR }} \
+        {{ flags }}
+
+# Phase 2 of labelling (repeatable): LLM-label from the cache. No chroma, resumes cleanly.
+[group("embed")]
+embed_label_from_keywords *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed label-from-keywords \
+        --keywords-dir {{ KEYWORDS_DIR }} \
+        --labels-dir {{ LABELS_DIR }} \
+        {{ flags }}
+
 [group("transfer")]
 transfer_embed *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer embed \
         --pg-url "$PG_URL" \
         --chroma-db-dir {{ CHROMA_DB_DIR }} \
         --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        --labels-dir {{ LABELS_DIR }} \
+        {{ flags }}
+
+# Overwrite EVoC with Leiden in Postgres so the apps adopt it (needs $PG_URL tunnel)
+[group("transfer")]
+transfer_leiden_swap *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer leiden-swap \
+        --pg-url "$PG_URL" \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}

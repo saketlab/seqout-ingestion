@@ -4,9 +4,8 @@ Push embedding-derived columns from chroma/sqlite into Postgres.
 Per accession (geo_series / sra_studies / arrayexpress_experiments):
   coords_2d  double precision[]   -- [x, y]         from chroma umap_2d_*
   coords_3d  double precision[]   -- [x, y, z]      from chroma umap_3d_*
-  clusters   jsonb                -- {"cluster_lN": id, ...} EVoC, noise (-1) dropped,
+  clusters   jsonb                -- {"cluster_lN": id, ...}, noise (-1) dropped,
                                      cluster_id deliberately excluded (layers only)
-  leiden_clusters jsonb           -- {"leiden_lN": id, ...} Leiden (no noise)
   neighbors  jsonb[]              -- [{x_3d, y_3d, z_3d, source, accession}, ...]
                                      accession lists from neighbors.sqlite3
 
@@ -72,11 +71,6 @@ def _cluster_map(meta: dict) -> dict[str, int]:
     return {
         k: int(v) for k, v in meta.items() if k.startswith("cluster_l") and int(v) != -1
     }
-
-
-def _leiden_map(meta: dict) -> dict[str, int]:
-    """Leiden layer memberships: {leiden_lN: id}. Leiden assigns all -> no noise."""
-    return {k: int(v) for k, v in meta.items() if k.startswith("leiden_l")}
 
 
 def _load_coords(db: chromadb.ClientAPI) -> dict[str, tuple]:
@@ -158,12 +152,10 @@ def _transfer_coords2d_clusters(
         coll = db.get_collection(source)
         total = coll.count()
         sql = (
-            f"INSERT INTO {table} "  # noqa: S608
-            "(accession, coords_2d, clusters, leiden_clusters) "
-            "VALUES (%s, %s, %s, %s) "
+            f"INSERT INTO {table} (accession, coords_2d, clusters) "  # noqa: S608
+            "VALUES (%s, %s, %s) "
             "ON CONFLICT (accession) DO UPDATE "
-            "SET coords_2d = EXCLUDED.coords_2d, clusters = EXCLUDED.clusters, "
-            "leiden_clusters = EXCLUDED.leiden_clusters"
+            "SET coords_2d = EXCLUDED.coords_2d, clusters = EXCLUDED.clusters"
         )
         batch = []
         for off in tqdm(
@@ -172,9 +164,7 @@ def _transfer_coords2d_clusters(
             d = coll.get(limit=FETCH_BATCH, offset=off, include=["metadatas"])
             for acc, m in zip(d["ids"], d["metadatas"], strict=True):
                 coords = [round(m["umap_2d_x"], 4), round(m["umap_2d_y"], 4)]
-                batch.append(
-                    (acc, coords, Jsonb(_cluster_map(m)), Jsonb(_leiden_map(m))),
-                )
+                batch.append((acc, coords, Jsonb(_cluster_map(m))))
                 if len(batch) >= WRITE_BATCH:
                     cur.executemany(sql, batch)
                     conn.commit()
@@ -185,11 +175,7 @@ def _transfer_coords2d_clusters(
 
 
 def transfer_labels(conn: psycopg.Connection, labels_dir: Path) -> None:
-    """(Re)load cluster_labels from labels_cluster_l*.csv and labels_leiden_l*.csv.
-
-    Rows are keyed by (level, cluster_id), so EVoC (``cluster_lN``) and Leiden
-    (``leiden_lN``) labels coexist without collision.
-    """
+    """(Re)load the cluster_labels table from labels_cluster_l*.csv."""
     cur = conn.cursor()
     sql = (
         "INSERT INTO cluster_labels "
@@ -199,10 +185,7 @@ def transfer_labels(conn: psycopg.Connection, labels_dir: Path) -> None:
         "label = EXCLUDED.label, size = EXCLUDED.size, "
         "centroid_x = EXCLUDED.centroid_x, centroid_y = EXCLUDED.centroid_y"
     )
-    paths = sorted(labels_dir.glob("labels_cluster_l*.csv")) + sorted(
-        labels_dir.glob("labels_leiden_l*.csv"),
-    )
-    for path in paths:
+    for path in sorted(labels_dir.glob("labels_cluster_l*.csv")):
         level = path.stem[len("labels_") :]
         rows = []
         skipped = 0
