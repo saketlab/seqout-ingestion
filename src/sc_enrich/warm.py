@@ -1,3 +1,5 @@
+"""v0 warm counter: whole-study cell counts to unified_metadata; see sc_enrich.deep."""
+
 import contextlib
 import csv
 import dataclasses

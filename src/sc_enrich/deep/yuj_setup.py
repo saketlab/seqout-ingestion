@@ -4,14 +4,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from helpers import batch_query_in, sqlite_connect
-from sc_enrich.counter._process import _classify_file
-from sc_enrich.counter.counter_common import DownloadLink, FileType
+from sc_enrich.deep._process import _classify_file
+from sc_enrich.deep.counter_common import DownloadLink, FileType
 
 logger = logging.getLogger(__name__)
 
 
 def _ro_connect(db_file: Path):  # noqa: ANN202
-    """Open a source DB read-only (read-only share, WAL mode)."""
     return sqlite_connect(f"file:{db_file}?mode=ro&immutable=1", uri=True)
 
 
@@ -22,7 +21,6 @@ def _load_universe(
     accession_list_file: Path | None,
     check_all: bool,
 ) -> list[tuple[str, str, str]]:
-    """Return (canonical_accession, source, aliases) rows for the universe."""
     if accession_list_file is not None:
         ids = [
             line.strip()
@@ -99,9 +97,8 @@ def yuj_setup(
         elif isinstance(v, tuple):
             accessions_to_process.add(v[1])
 
-    # download_links_mapping is keyed by the GEO/AE accession (the alias), but a
-    # record's canonical_accession may be an SRA/ENA id. Map canonical -> the
-    # key we actually stored links under, so the lookup below doesn't miss.
+    # links are keyed by the GEO/AE alias, but canonical_accession may be an SRA/ENA
+    # id; map canonical -> that key so the lookup below doesn't miss
     canonical_to_key = {
         (v[0] if isinstance(v, tuple) else v): (v[1] if isinstance(v, tuple) else v)
         for v in accessions
@@ -180,8 +177,8 @@ def yuj_setup(
         if len(download_links_mapping.get(accession, [])) > 0:
             continue
 
-        # Series-level supplementary: capture every countable file, not just
-        # tarballs (many studies put the matrix straight on the series).
+        # series-level supplementary: capture every countable file, not just
+        # tarballs (many studies put the matrix straight on the series)
         supl_data = json.loads(supl_data_json)
         for item in supl_data:
             url = item.get("#text")
@@ -214,8 +211,8 @@ def yuj_setup(
                 DownloadLink(type=file_type, url=url),
             )
 
-    # One sidecar per id (its download links). accessions.txt lists ids with
-    # links (the scatter unit); ids with none go to no_link_accessions.txt.
+    # one sidecar per id; accessions.txt lists ids with links (the scatter unit),
+    # ids with none go to no_link_accessions.txt
     acc_dir = output_dir / "accessions"
     acc_dir.mkdir(parents=True, exist_ok=True)
     master_path = output_dir / "accessions.txt"
