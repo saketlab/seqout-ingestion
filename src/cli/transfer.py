@@ -45,6 +45,18 @@ def postgres(
 
 
 @transfer_app.command()
+def leiden_swap(
+    pg_url: str = typer.Option(...),
+    chroma_db_dir: Path = typer.Option(...),
+    labels_dir: Path = typer.Option(...),
+) -> None:
+    """Overwrite EVoC with Leiden in Postgres (remap leiden_l* -> cluster_l*)."""
+    from transfer.leiden_swap import leiden_swap as run
+
+    run(pg_url, chroma_db_dir, labels_dir)
+
+
+@transfer_app.command()
 def sample_tsv(
     pg_url: str = typer.Option(...),
 ) -> None:
@@ -52,6 +64,38 @@ def sample_tsv(
     from transfer.sample_tsv import sample_tsv_transfer
 
     sample_tsv_transfer(pg_url)
+
+
+@transfer_app.command()
+def ddbj(
+    pg_url: str = typer.Option(...),
+    dra_db_file: Path | None = typer.Option(None),
+    gea_db_file: Path | None = typer.Option(None),
+    download_links_db_file: Path | None = typer.Option(None),
+    read_batch_size: int = typer.Option(default=500),
+) -> None:
+    """Upsert DDBJ DRA and GEA into the dra_* / gea_* Postgres tables."""
+    from transfer.ddbj import ddbj_transfer
+
+    ddbj_transfer(
+        pg_url,
+        dra_db_file,
+        gea_db_file,
+        read_batch_size,
+        download_links_db_file=download_links_db_file,
+    )
+
+
+@transfer_app.command()
+def age(
+    pg_url: str = typer.Option(...),
+    age_norm_db_file: Path = typer.Option(...),
+    read_batch_size: int = typer.Option(default=5000),
+) -> None:
+    """Annotate ontology_samples_v4 with normalized age columns (age_days, ...)."""
+    from transfer.age import age_transfer
+
+    age_transfer(pg_url, age_norm_db_file, read_batch_size)
 
 
 @transfer_app.command()

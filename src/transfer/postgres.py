@@ -1550,6 +1550,38 @@ def _transfer_study_publications(
             total=len(groups),
         )
 
+        # orphan cleanup: upserts leave rows for studies whose pmid was later
+        # removed/corrected at source. groups is every current (accession,
+        # source), so anything else in the table is stale.
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                "CREATE TEMP TABLE _valid_pub_keys (accession text, source text) "
+                "ON COMMIT DROP",
+            )
+            with cur.copy(
+                "COPY _valid_pub_keys (accession, source) FROM STDIN",
+            ) as cp:
+                for acc, source in groups:
+                    cp.write_row((acc, source))
+            cur.execute(
+                "DELETE FROM study_publications sp WHERE NOT EXISTS ("
+                "SELECT 1 FROM _valid_pub_keys v "
+                "WHERE v.accession = sp.accession AND v.source = sp.source)",
+            )
+        pg_conn.commit()
+
+
+# source -> its cross_ref table. doubles as the allow-list: a source absent here
+# contributes no cross-refs.
+_CROSS_REF_TABLES = {
+    "ae": "cross_ref_ae",
+    "ena": "cross_ref_ena",
+    "geo": "cross_ref_geo",
+    "sra": "cross_ref_sra",
+    "dra": "cross_ref_dra",
+    "gea": "cross_ref_gea",
+}
+
 
 def _transfer_cross_refs(
     pg_url: str,
@@ -1561,10 +1593,26 @@ def _transfer_cross_refs(
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
+            # provision every table: the loop below writes whatever source
+            # unified_metadata carries, including sra/dra/gea
+            tables = [
+                (name, f"{source}_accession, target_accession, link_type")
+                for source, name in sorted(_CROSS_REF_TABLES.items())
+            ]
+            for table, cols in tables:
+                cur.execute(
+                    cast(
+                        "LiteralString",
+                        f"""CREATE TABLE IF NOT EXISTS {table} (
+                            {cols.split(",")[0].strip()} TEXT,
+                            target_accession TEXT,
+                            link_type TEXT
+                        )""",
+                    ),
+                )
+
             for table, cols in [
-                ("cross_ref_ae", "ae_accession, target_accession, link_type"),
-                ("cross_ref_ena", "ena_accession, target_accession, link_type"),
-                ("cross_ref_geo", "geo_accession, target_accession, link_type"),
+                *tables,
                 ("cross_ref_pubmed", "accession, pubmed_id, source"),
             ]:
                 cur.execute(
@@ -1575,12 +1623,11 @@ def _transfer_cross_refs(
                     ),
                 )
 
-        sources = ["ae", "ena", "geo", "sra"]
         rows = um_conn.execute(
             "SELECT canonical_accession, source, aliases, pmid FROM unified_metadata",
         ).fetchall()
 
-        ref_groups: dict[str, list[tuple]] = {}
+        ref_groups: defaultdict[str, list[tuple]] = defaultdict(list)
         pmid_groups: list[tuple[str, str, str]] = []
 
         for acc, source, aliases_json, pmid_str_val in rows:
@@ -1588,12 +1635,11 @@ def _transfer_cross_refs(
                 continue
             with contextlib.suppress(json.JSONDecodeError):
                 aliases = json.loads(aliases_json)
-                if source not in sources:
-                    continue
-                for target_source, target_acc in aliases.items():
-                    ref_groups[source].append(
-                        (str(acc), str(target_acc), str(target_source)),
-                    )
+                if source in _CROSS_REF_TABLES:
+                    for target_source, target_acc in aliases.items():
+                        ref_groups[source].append(
+                            (str(acc), str(target_acc), str(target_source)),
+                        )
 
             if pmid_str_val:
                 pmid_str = str(pmid_str_val).strip()
@@ -1612,7 +1658,8 @@ def _transfer_cross_refs(
             cols_str = ", ".join(pmid_cols)
             ph = ", ".join(["%s"] * len(pmid_cols))
             insert_q = f"""INSERT INTO cross_ref_pubmed ({cols_str})
-                VALUES ({ph}) ON CONFLICT (accession, pubmed_id, source) DO UPDATE"""  # noqa: S608
+                VALUES ({ph})
+                ON CONFLICT (accession, pubmed_id, source) DO NOTHING"""  # noqa: S608
             _execute_batch_inserts(
                 pg_conn,
                 insert_q,
@@ -1622,17 +1669,14 @@ def _transfer_cross_refs(
                 total=len(pmid_groups),
             )
 
-        for table_name, groups in ref_groups.items():
-            if table_name == "cross_ref_ae":
-                ref_cols = ["ae_accession", "target_accession", "link_type"]
-            elif table_name == "cross_ref_ena":
-                ref_cols = ["ena_accession", "target_accession", "link_type"]
-            else:
-                ref_cols = ["geo_accession", "target_accession", "link_type"]
+        for source, groups in ref_groups.items():
+            table_name = _CROSS_REF_TABLES[source]
+            ref_cols = [f"{source}_accession", "target_accession", "link_type"]
             cols_str = ", ".join(ref_cols)
             ph = ", ".join(["%s"] * len(ref_cols))
             insert_q = f"""INSERT INTO {table_name} ({cols_str})
-                VALUES ({ph}) ON CONFLICT ({", ".join(ref_cols)}) DO UPDATE"""  # noqa: S608
+                VALUES ({ph})
+                ON CONFLICT ({cols_str}) DO NOTHING"""  # noqa: S608
             _execute_batch_inserts(
                 pg_conn,
                 insert_q,

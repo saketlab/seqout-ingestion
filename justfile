@@ -18,6 +18,12 @@ ENA_DB_FILE := env("ENA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ena/db/ | 
 AE_DB_FILE := env("AE_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ae/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/ae/db/$latest/ae_metadata_$latest.db\""))
 GSA_DB_FILE := env("GSA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa/db/$latest/gsa_metadata_$latest.db\""))
 GSA_HUMAN_DB_FILE := env("GSA_HUMAN_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa_human/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa_human/db/$latest/gsa_human_metadata_$latest.db\""))
+# tolerant of a missing dir: these do not exist until the first ingest
+DRA_DB_FILE := env("DRA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/dra/db/ 2>/dev/null | sort -r | head -1); if [ -n \"$latest\" ]; then echo \"" + DATA_DIR + "/dra/db/$latest/dra_metadata_$latest.db\"; fi"))
+GEA_DB_FILE := env("GEA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gea/db/ 2>/dev/null | sort -r | head -1); if [ -n \"$latest\" ]; then echo \"" + DATA_DIR + "/gea/db/$latest/gea_metadata_$latest.db\"; fi"))
+
+AGE_SOURCE_DB_FILE := env("AGE_SOURCE_DB_FILE", "/data/share/saket_dump/enrichment/enriched_metadata_v4_combined.sqlite")
+AGE_NORM_DB_FILE := env("AGE_NORM_DB_FILE", DATA_DIR + "/age/age_norm.sqlite3")
 
 UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_catalog/unified_catalog.db")
 UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified_metadata/unified_metadata.db")
@@ -26,6 +32,7 @@ PUBMED_METADATA_DB_FILE := env("PUBMED_METADATA_DB_FILE", DATA_DIR + "/pubmed_me
 CHROMA_DB_DIR := env("CHROMA_DB_DIR", DATA_DIR + "/embed/chroma_db")
 NEIGHBORS_DB_FILE := env("NEIGHBORS_DB_FILE", DATA_DIR + "/embed/neighbors.sqlite3")
 LABELS_DIR := env("LABELS_DIR", DATA_DIR + "/embed/labels")
+KEYWORDS_DIR := env("KEYWORDS_DIR", DATA_DIR + "/embed/keywords")
 
 NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/keys/ncbi.txt")
 OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/keys/openalex.txt")
@@ -47,6 +54,8 @@ _all_db_args := "--sra-db-file " + SRA_DB_FILE + " --geo-db-file " + GEO_DB_FILE
 [private]
 _gsa_db_args := "--gsa-db-file " + GSA_DB_FILE + " --gsa-human-db-file " + GSA_HUMAN_DB_FILE + " "
 [private]
+_ddbj_db_args := "--dra-db-file " + DRA_DB_FILE + " --gea-db-file " + GEA_DB_FILE + " "
+[private]
 _transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --read-batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
 [private]
 _embed_db_args := "--geo-db-file " + GEO_DB_FILE + " --sra-db-file " + SRA_DB_FILE + " --ae-db-file " + AE_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --chroma-db-dir " + CHROMA_DB_DIR + " "
@@ -58,6 +67,36 @@ ingest_sra *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest sra \
         {{ _ingest_args }} \
         --write-batch-size {{ BATCH_SIZE }} \
+        {{ flags }}
+
+# DDBJ DRA. Ingests every public study in the window and stamps is_only_ddbj=1 on those
+# SRA/ENA hold no mirror of (checked against the sqlite dumps; --pg-url uses postgres).
+#   just ingest_dra --novelty-filter   # ingest only the DDBJ-exclusive set
+#   just ingest_dra --dry-run          # show the split, download nothing
+ingest_dra *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest dra \
+        {{ _ingest_args }} \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        {{ flags }}
+
+# Full DDBJ DRA history -- every public study ever released (~18.8k). Long-running.
+ingest_dra_all *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest dra \
+        --output-dir {{ DATA_DIR }} \
+        --start-date 2007-01-01 \
+        --end-date $(date -u +%F) \
+        --workers {{ WORKERS }} \
+        --retries {{ RETRIES }} \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        --ena-db-file {{ ENA_DB_FILE }} \
+        {{ flags }}
+
+# DDBJ GEA (expression). No novelty filter -- nothing in GEA is mirrored into
+# GEO or ArrayExpress, so all ~735 public experiments are ingested.
+ingest_gea *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest gea \
+        {{ _ingest_args }} \
         {{ flags }}
 
 [group("ingest")]
@@ -110,10 +149,35 @@ backfill_download_links *flags:
         --timeout {{ TIMEOUT }} \
         {{ flags }}
 
+# fastq links for the novel DRA runs, from DDBJ's own fastqlist manifest
+# (ena has never seen them, so backfill_download_links cannot find their fastqs)
+[group("backfill")]
+backfill_dra_download_links *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} backfill dra-download-links \
+        --output-dir {{ DATA_DIR }} \
+        --dra-db-file {{ DRA_DB_FILE }} \
+        --download-links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --workers {{ WORKERS }} \
+        --retries {{ RETRIES }} \
+        --timeout {{ TIMEOUT }} \
+        {{ flags }}
+
+# Everything DDBJ needs between ingest and transfer, in order:
+#   1. pm-ids              -- DRP -> pmid, via the bioproject (no SRA/ENA mirror to elink)
+#   2. pm-meta             -- those pmids -> pubmed_metadata + citation counts
+#   3. dra-download-links  -- fastq urls from DDBJ's own manifest
+[group("backfill")]
+backfill_ddbj *flags:
+    just backfill_pm_ids {{ flags }}
+    just backfill_pm_meta --fill-metrics {{ flags }}
+    just backfill_dra_download_links {{ flags }}
+
 [group("backfill")]
 backfill_pm_ids *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-ids \
         {{ _all_db_args }} \
+        {{ _ddbj_db_args }} \
+        {{ _gsa_db_args }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --batch-size {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
@@ -125,6 +189,8 @@ backfill_pm_meta *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-meta \
         --output-dir {{ DATA_DIR }} \
         {{ _all_db_args }} \
+        {{ _ddbj_db_args }} \
+        {{ _gsa_db_args }} \
         --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
         --openalex-keys-file {{ OPENALEX_KEYS_FILE }} \
         --batch-size {{ BATCH_SIZE }} \
@@ -138,6 +204,7 @@ unify_build_catalog *flags:
         --output-dir {{ DATA_DIR }} \
         {{ _all_db_args }} \
         {{ _gsa_db_args }} \
+        {{ _ddbj_db_args }} \
         {{ flags }}
 
 [group("unify")]
@@ -146,6 +213,7 @@ unify_build_metadata *flags:
         --output-dir {{ DATA_DIR }} \
         {{ _all_db_args }} \
         {{ _gsa_db_args }} \
+        {{ _ddbj_db_args }} \
         --unified-catalog-db-file {{ UNIFIED_CATALOG_DB_FILE }} \
         --pubmed-metadata-db-file {{ PUBMED_METADATA_DB_FILE }} \
         --assay-mapping-csv-file {{ ASSAY_MAPPING_FILE }} \
@@ -194,6 +262,21 @@ transfer_parquet *flags:
         {{ _transfer_args }} \
         {{ flags }}
 
+[group("age")]
+age_normalize *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} age normalize \
+        --source-db-file {{ AGE_SOURCE_DB_FILE }} \
+        --output-dir {{ DATA_DIR }} \
+        --batch-size {{ BATCH_SIZE }} \
+        {{ flags }}
+
+[group("transfer")]
+transfer_age *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer age \
+        --pg-url "$PG_URL" \
+        --age-norm-db-file {{ AGE_NORM_DB_FILE }} \
+        {{ flags }}
+
 [group("embed")]
 embed_run *flags:
     {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed run \
@@ -213,6 +296,12 @@ embed_cluster *flags:
         {{ flags }}
 
 [group("embed")]
+embed_cluster_leiden *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed cluster-leiden \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+[group("embed")]
 embed_neighbors *flags:
     {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed neighbors \
         --chroma-db-dir {{ CHROMA_DB_DIR }} \
@@ -226,11 +315,43 @@ embed_labels *flags:
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
 
+# Add levels coarser than the Leiden root (agglomerates it; nests over existing levels)
+[group("embed")]
+embed_cluster_leiden_coarse *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed cluster-leiden-coarse \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        {{ flags }}
+
+# Phase 1 of labelling (run once): cache TF-IDF keywords. Reads chroma; the slow part.
+[group("embed")]
+embed_precompute_keywords *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed precompute-keywords \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --keywords-dir {{ KEYWORDS_DIR }} \
+        {{ flags }}
+
+# Phase 2 of labelling (repeatable): LLM-label from the cache. No chroma, resumes cleanly.
+[group("embed")]
+embed_label_from_keywords *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} embed label-from-keywords \
+        --keywords-dir {{ KEYWORDS_DIR }} \
+        --labels-dir {{ LABELS_DIR }} \
+        {{ flags }}
+
 [group("transfer")]
 transfer_embed *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer embed \
         --pg-url "$PG_URL" \
         --chroma-db-dir {{ CHROMA_DB_DIR }} \
         --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        --labels-dir {{ LABELS_DIR }} \
+        {{ flags }}
+
+# Overwrite EVoC with Leiden in Postgres so the apps adopt it (needs $PG_URL tunnel)
+[group("transfer")]
+transfer_leiden_swap *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer leiden-swap \
+        --pg-url "$PG_URL" \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}

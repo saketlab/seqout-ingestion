@@ -204,6 +204,15 @@ Identify and quantify single-cell studies.
 | `sc_enrich classify` | Classify studies as single-cell by title/description/assay | `--is-dry-run` |
 | `sc_enrich counter` | Download files and count cells per study | `--check` (dry-run mode) |
 
+### `age`
+
+Normalize free-text sample `age` into a numeric `age_days` (+ `age_group`, `prenatal`, `age_raw`) for Beacon age-range filters. Runs `age normalize` (source SQLite → `age_norm.sqlite3`) then `transfer age` (upsert into `ontology_samples_v4`).
+
+| Command | Description | Key args |
+|---|---|---|
+| `age normalize` | Parse raw ages → `age_norm.sqlite3` | `--source-db-file`, `--output-dir` |
+| `transfer age` | Annotate `ontology_samples_v4` with age columns | `--age-norm-db-file` |
+
 ### `embed`
 
 Requires the CUDA tox environment. Embed accessions, compute coordinates/clusters/neighbors, and generate labels.

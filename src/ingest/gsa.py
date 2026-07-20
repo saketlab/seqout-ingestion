@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import datetime
 import functools
+import json
 import logging
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
 import humanfriendly
@@ -27,7 +29,6 @@ from ingest.gsa_common import (
     make_client,
     map_row,
     parse_workbook,
-    to_int,
 )
 
 if TYPE_CHECKING:
@@ -40,8 +41,10 @@ GSA_OUTPUT_DIR = "gsa"
 GSA_STORAGE_ROOTS = ["gsa", "gsa2", "gsa3", "gsa4", "gsa5"]
 GSA_EXPORT_URL = f"{GSA_BASE_URL}/gsa/file/exportExcelFile"
 GSA_BROWSE_URL = f"{GSA_BASE_URL}/gsa/browse/"
+GSA_SEARCH_URL = f"{GSA_BASE_URL}/gsa/search?searchTerm="
 _CRA_RE = re.compile(r"CRA\d+")
-_BROWSE_PAGE_SIZE = 100
+# The page renders Chinese or English by client. parse_study_page reads both label sets.
+_ENGLISH_HEADERS = {"Accept-Language": "en-US,en;q=0.9"}
 
 # sheet header -> db column maps, matched by name
 
@@ -145,6 +148,7 @@ STUDY_COLUMNS = [
     "n_experiments",
     "n_runs",
     "release_time",
+    "pubmed_id",
 ]
 FETCH_LOG_COLUMNS = [
     "study_accession",
@@ -169,6 +173,8 @@ def ingest_gsa(
     output_dir = base_output_dir / GSA_OUTPUT_DIR
     data_dir = output_dir / "data" / "studies"
     data_dir.mkdir(parents=True, exist_ok=True)
+    meta_dir = output_dir / "data" / "study_meta"
+    meta_dir.mkdir(parents=True, exist_ok=True)
 
     date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
     db_dir = output_dir / "db" / date_str
@@ -188,32 +194,36 @@ def ingest_gsa(
         raise ValueError(msg)
     logger.info("enumerated %d CRA studies", len(studies))
 
-    study_meta, scrape_complete = _scrape_browse_meta(retries, timeout, max_timeout)
+    study_meta = _scrape_all_study_meta(
+        studies,
+        meta_dir,
+        num_workers,
+        retries,
+        timeout,
+        max_timeout,
+    )
+    scraped = len(study_meta)
+    logger.info("scraped study metadata for %d/%d studies", scraped, len(studies))
+    if not study_meta:
+        msg = "study-page scrape returned nothing; refusing to ingest null studies"
+        raise ValueError(msg)
+
     if date_filter_active(start_date, end_date):
-        # only trust the date filter if the scrape was exhaustive; a partial scrape
-        # would wrongly drop in-range studies it never saw.
-        if scrape_complete:
-            studies = [
-                acc
-                for acc in studies
-                if in_range(
-                    study_meta.get(acc, {}).get("release_time"),
-                    start_date,
-                    end_date,
-                )
-            ]
-            logger.info(
-                "date filter %s..%s -> %d studies",
+        studies = [
+            acc
+            for acc in studies
+            if in_range(
+                study_meta.get(acc, {}).get("release_time"),
                 start_date,
                 end_date,
-                len(studies),
             )
-        else:
-            logger.warning(
-                "browse scrape incomplete; ignoring --start-date/--end-date and "
-                "ingesting all %d studies",
-                len(studies),
-            )
+        ]
+        logger.info(
+            "date filter %s..%s -> %d studies",
+            start_date,
+            end_date,
+            len(studies),
+        )
 
     fetch = functools.partial(
         _fetch_study_xlsx,
@@ -280,68 +290,222 @@ def _fetch_study_xlsx(
         return r.content
 
 
-def _scrape_browse_meta(
+_STUDY_FIELDS = {
+    "title": ("标题", "Title"),
+    "release_time": ("发布日期", "Release date"),
+    "organization": ("单位", "Organization"),
+}
+# Values run to the next label ("单位: X 提交日期: Y"). Multi-word labels are spelled
+# out; a one-token terminator would split "Submitted date:" at "date:".
+_NEXT_LABEL = (
+    r"(?=\s*(?:Release date|Submission date|Submitted date|File size|\S{1,12})"
+    r"\s*[:：]|$)"  # noqa: RUF001
+)
+# Titles carry their own "<token>:" ("...3g/kg and 12g/kg: a comparative analysis").
+# Only a known label ends a title.
+_PAGE_LABELS = (
+    "Release date|Submission date|Submitted date|Organization|Submitter"
+    "|BioProject|Platform|Status|Files|File size"
+    "|标题|发布日期|提交日期|项目编号|文件个数|文件大小|单位|提交者"
+)
+_NEXT_KNOWN_LABEL = rf"(?=\s*(?:{_PAGE_LABELS})\s*[:：]|$)"  # noqa: RUF001
+_STRICT_FIELDS = frozenset({"title"})
+# the study page's 出版信息 / publication block lists the submitter-declared papers
+_PUBMED_RE = re.compile(r"(?:PubMed ID|PubMed)\s*[:：]?\s*(\d{6,9})")  # noqa: RUF001
+
+# A <th>label</th><td>value</td> table. Declares no publications; pmids come from
+# `backfill pm-ids`, as they do for HRA.
+_SEARCH_FIELDS = {
+    "title": ("Title", "标题"),
+    "release_time": ("Release date", "发布日期"),
+    "organization": ("Organization", "单位"),
+}
+
+
+def _scrape_all_study_meta(
+    studies: list[str],
+    meta_dir: Path,
+    num_workers: int,
     retries: int,
     timeout: int,
     max_timeout: int,
-) -> tuple[dict[str, dict], bool]:
-    """Page the browse listing per CRA; complete=False if paging stopped early."""
+) -> dict[str, dict]:
+    """
+    Scrape every study's page. Studies whose page fails are simply absent.
+
+    Each page is cached to disk. CNCB throttles a crawl this size (18k pages) down
+    to 503s and dropped connections, so a run that dies partway must resume rather
+    than pay for the whole scrape again.
+    """
     meta: dict[str, dict] = {}
+    todo: list[str] = []
+    for acc in studies:
+        cached = _cached_study_meta(meta_dir / f"{acc}.json")
+        if cached is None:
+            todo.append(acc)
+        else:
+            meta[acc] = cached
+
+    if meta:
+        logger.info("study meta: %d/%d already cached", len(meta), len(studies))
+    if not todo:
+        return meta
+
+    use_search = not _browse_is_up(todo[0], timeout, max_timeout)
+    if use_search:
+        logger.warning("gsa /browse/ is down -- falling back to /search (no pmids)")
+
+    with (
+        ThreadPoolExecutor(num_workers) as pool,
+        tqdm(total=len(todo), unit="study", desc="scraping gsa study pages") as pbar,
+    ):
+        futures = {
+            pool.submit(
+                _scrape_study_meta,
+                acc,
+                meta_dir / f"{acc}.json",
+                retries,
+                timeout,
+                max_timeout,
+                use_search=use_search,
+            ): acc
+            for acc in todo
+        }
+        for f in as_completed(futures):
+            acc = futures[f]
+            got = f.result()
+            if got:
+                meta[acc] = got
+            pbar.update(1)
+
+    return meta
+
+
+def _cached_study_meta(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        path.unlink(missing_ok=True)
+        return None
+
+
+def _scrape_study_meta(
+    accession: str,
+    cache_path: Path,
+    retries: int,
+    timeout: int,
+    max_timeout: int,
+    *,
+    use_search: bool = False,
+) -> dict | None:
+    """
+    Study metadata: title / organization / release_time, which live nowhere else.
+
+    The bulk listing stopped returning CRA rows, so per-study is the only source.
+    /browse/ and /search serve the same fields and CNCB drops them independently;
+    /browse/ is preferred because it alone declares the submitter's publications.
+    """
+    base = GSA_SEARCH_URL if use_search else GSA_BROWSE_URL
+    url = f"{base}{accession}"
     try:
         with make_client(timeout) as client:
-            page = 1
-            while True:
-                r = send_req(
-                    "POST",
-                    GSA_BROWSE_URL,
-                    data={"pageNo": str(page), "pageSize": str(_BROWSE_PAGE_SIZE)},
-                    num_retries=retries,
-                    timeout=timeout,
-                    max_wait=max_timeout,
-                    client=client,
-                )
-                found = _parse_browse_page(r.text, meta)
-                if not found:
-                    break
-                page += 1
+            r = send_req(
+                "GET",
+                url,
+                headers=_ENGLISH_HEADERS,
+                num_retries=retries,
+                timeout=timeout,
+                max_wait=max_timeout,
+                client=client,
+            )
+        meta = (
+            parse_search_page(r.text, accession)
+            if use_search
+            else parse_study_page(r.text)
+        )
     except Exception:
-        logger.warning("browse scrape failed after %d studies; continuing", len(meta))
-        logger.debug("browse scrape error", exc_info=True)
-        return meta, False
-    else:
-        logger.info("scraped browse metadata for %d studies", len(meta))
-        return meta, True
+        logger.debug("study meta scrape failed for %s", accession, exc_info=True)
+        return None
+
+    if meta:
+        cache_path.write_text(json.dumps(meta))
+    return meta
 
 
-def _parse_browse_page(html: str, meta: dict[str, dict]) -> int:
-    """Parse one browse page into ``meta``; return the number of new rows found."""
-    soup = BeautifulSoup(html, "html.parser")
-    added = 0
-    for table in soup.find_all("table"):
-        if "CRA" not in table.get_text():
-            continue
-        for row in table.find_all("tr"):
-            cells = [c.get_text(strip=True) for c in row.find_all("td")]
-            if not cells:
+######################################################################
+def _browse_is_up(accession: str, timeout: int, max_timeout: int) -> bool:
+    """One probe per run: browse and search are both throttled, so don't try both."""
+    try:
+        with make_client(timeout) as client:
+            send_req(
+                "GET",
+                f"{GSA_BROWSE_URL}{accession}",
+                headers=_ENGLISH_HEADERS,
+                num_retries=1,
+                timeout=timeout,
+                max_wait=max_timeout,
+                client=client,
+            )
+    except Exception:
+        return False
+    return True
+
+
+def _pubmed_json(pmids: list[str] | None) -> str | None:
+    return json.dumps(pmids) if pmids else None
+
+
+def parse_study_page(html: str) -> dict:
+    """Per-study page -> {title, organization, release_time, pubmed_ids}."""
+    text = " ".join(BeautifulSoup(html, "html.parser").get_text(" ").split())
+
+    meta: dict = {}
+    for key, labels in _STUDY_FIELDS.items():
+        terminator = _NEXT_KNOWN_LABEL if key in _STRICT_FIELDS else _NEXT_LABEL
+        for label in labels:
+            m = re.search(
+                rf"{re.escape(label)}\s*[:：]\s*(.*?){terminator}",  # noqa: RUF001
+                text,
+            )
+            if not m:
                 continue
-            match = _CRA_RE.search(" ".join(cells))
-            if not match:
-                continue
-            acc = match.group(0)
-            if acc in meta:
-                continue
-            # cell order: accession, alias, project/sample/exp/run counts, release
-            padded = cells + [""] * (7 - len(cells))
-            meta[acc] = {
-                "alias": coerce(padded[1]),
-                "n_projects": to_int(padded[2]),
-                "n_samples": to_int(padded[3]),
-                "n_experiments": to_int(padded[4]),
-                "n_runs": to_int(padded[5]),
-                "release_time": coerce(padded[6]),
-            }
-            added += 1
-    return added
+            value = m.group(1).strip()
+            if value:
+                meta[key] = value
+                break
+
+    pmids = list(dict.fromkeys(_PUBMED_RE.findall(text)))
+    if pmids:
+        meta["pubmed_ids"] = pmids
+
+    return meta
+
+
+######################################################################
+def parse_search_page(html: str, accession: str) -> dict:
+    """Search result -> {title, organization, release_time}. No publications."""
+    cells: dict[str, str] = {}
+    for row in BeautifulSoup(html, "html.parser").find_all("tr"):
+        th, td = row.find("th"), row.find("td")
+        if th and td:
+            label = " ".join(th.get_text(" ").split())
+            cells[label] = " ".join(td.get_text(" ").split())
+
+    # a miss renders a result list -- never attribute another study's title
+    if not any(v.upper() == accession.upper() for v in cells.values()):
+        return {}
+
+    meta: dict = {}
+    for key, labels in _SEARCH_FIELDS.items():
+        for label in labels:
+            value = cells.get(label)
+            if value:
+                meta[key] = value
+                break
+
+    return meta
 
 
 def _ingest(
@@ -422,6 +586,7 @@ def _ingest(
                 experiments,
                 "BioProject accession",
             )
+            projects = {p for p in _column(samples, "Project accession") if p}
             study_rows.append(
                 (
                     acc,
@@ -430,11 +595,12 @@ def _ingest(
                     meta.get("organization"),
                     project,
                     _most_common(samples, "Organism"),
-                    meta.get("n_projects"),
-                    meta.get("n_samples"),
-                    meta.get("n_experiments"),
-                    meta.get("n_runs"),
+                    len(projects) or None,
+                    len(samples) or None,
+                    len(experiments) or None,
+                    len(runs) or None,
                     meta.get("release_time"),
+                    _pubmed_json(meta.get("pubmed_ids")),
                 ),
             )
             fetch_log_rows.append(
@@ -451,6 +617,10 @@ def _ingest(
         )
         bulk_upsert(conn, "gsa_fetch_log", FETCH_LOG_COLUMNS, fetch_log_rows)
         conn.commit()
+
+
+def _column(rows: list[dict], key: str) -> list:
+    return [r.get(key) for r in rows]
 
 
 def _first(records: list[dict], header: str) -> str | None:

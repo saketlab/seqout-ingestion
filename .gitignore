@@ -8,3 +8,6 @@ data/
 scripts/
 .env
 .DS_Store
+
+docs/
+.env.bak

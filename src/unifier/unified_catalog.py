@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 UNIFIED_CATALOG_DIR = "unified_catalog"
 
+# allow-list, not PRJ\w\w: an unrecognised prefix is likelier a parse error than
+# a new archive.
+BIOPROJECT_RE = re.compile(r"^PRJ(?:NA|NB|NC|ND|NE|EB|EA|DB|DA|CA)\d+$")
+
 
 def build_unified_catalog(
     base_output_dir: Path,
@@ -21,6 +25,8 @@ def build_unified_catalog(
     ae_db_file: Path,
     gsa_db_file: Path,
     gsa_human_db_file: Path,
+    dra_db_file: Path,
+    gea_db_file: Path,
     db_file: Path | None,
     dump_parquet: bool,
 ) -> None:
@@ -35,7 +41,16 @@ def build_unified_catalog(
     ae_dict = _load_ae(ae_db_file)
     gsa_dict = _load_gsa(gsa_db_file)
     gsa_human_dict = _load_gsa_human(gsa_human_db_file)
-    catalog = _build_catalog_tuples(geo_dict, sra_dict, ena_dict, ae_dict)
+    dra_dict = _load_dra(dra_db_file)
+    gea_dict = _load_gea(gea_db_file)
+    catalog = _build_catalog_tuples(
+        geo_dict,
+        sra_dict,
+        ena_dict,
+        ae_dict,
+        dra_dict,
+        gea_dict,
+    )
     catalog.extend(_build_gsa_tuples(gsa_dict, gsa_human_dict))
 
     with sqlite_connect(db_file) as conn:
@@ -69,21 +84,64 @@ def _load_geo(geo_db_file: Path) -> dict[str, tuple[str, str]]:
     return result
 
 
-def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str]]:
+def _bioproject_of(external_id_json: str | None) -> str | None:
+    """external_id JSON -> its BioProject, if any."""
+    if not external_id_json:
+        return None
+    with contextlib.suppress(json.JSONDecodeError, TypeError, AttributeError):
+        return json.loads(external_id_json).get("BioProject")
+    return None
+
+
+def _load_sra(sra_db_file: Path) -> dict[str, tuple[str, str, str, str | None]]:
+    """SRP -> (alias, title, abstract, bioproject)."""
     with sqlite_connect(sra_db_file) as conn:
         rows = conn.execute(
-            "SELECT accession, alias, title, abstract FROM sra_studies",
+            "SELECT accession, alias, title, abstract, external_id FROM sra_studies",
         ).fetchall()
 
     result = {}
-    for acc, alias, title, abstract in rows:
+    for acc, alias, title, abstract, external_id in rows:
         result[acc] = (
             _clean_string(alias),
             _clean_string(title),
             _clean_string(abstract),
+            _bioproject_of(external_id),
         )
 
     return result
+
+
+def _load_dra(dra_db_file: Path) -> dict[str, tuple[str, str, str, str | None]]:
+    """DRP -> (alias, title, abstract, bioproject). Same shape as _load_sra."""
+    with sqlite_connect(dra_db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, alias, title, abstract, external_id FROM dra_studies",
+        ).fetchall()
+
+    result = {}
+    for acc, alias, title, abstract, external_id in rows:
+        result[acc] = (
+            _clean_string(alias),
+            _clean_string(title),
+            _clean_string(abstract),
+            _bioproject_of(external_id),
+        )
+
+    return result
+
+
+def _load_gea(gea_db_file: Path) -> dict[str, tuple[str, str, str | None]]:
+    """E-GEAD -> (title, description, bioproject)."""
+    with sqlite_connect(gea_db_file) as conn:
+        rows = conn.execute(
+            "SELECT accession, title, description, bioproject FROM gea_experiments",
+        ).fetchall()
+
+    return {
+        acc: (_clean_string(title), _clean_string(desc), bioproject)
+        for acc, title, desc, bioproject in rows
+    }
 
 
 def _load_ena(ena_db_file: Path) -> dict[str, tuple[str, str, str, str]]:
@@ -220,12 +278,14 @@ def _build_catalog_tuples(
     sra_dict: dict,
     ena_dict: dict,
     ae_dict: dict,
+    dra_dict: dict,
+    gea_dict: dict,
 ) -> list[tuple[str, str, str, str, str]]:
     # sra alias -> sra accession(s) (reverse: given a gse or prjna, find srps)
     # multiple srps can map to the same alias (e.g. two srps for one gse)
     alias_to_srps: dict[str, list[str]] = {}
     srp_to_alias: dict[str, str] = {}
-    for srp, (alias, _, _) in sra_dict.items():
+    for srp, (alias, _, _, _) in sra_dict.items():
         if alias:
             alias_to_srps.setdefault(alias, []).append(srp)
             srp_to_alias[srp] = alias
@@ -267,6 +327,30 @@ def _build_catalog_tuples(
     claimed: set[str] = set()
     catalog: list[tuple[str, str, str, str, str]] = []
 
+    # sra and dra share one bioproject namespace: a PRJDB may be held by an SRP
+    # (mirrored) or a DRP.
+    bioproject_to_studies: dict[str, list[str]] = {}
+    for raw_dict in (sra_dict, dra_dict):
+        for study_acc, (_, _, _, bioproject) in raw_dict.items():
+            if bioproject:
+                bioproject_to_studies.setdefault(bioproject, []).append(study_acc)
+
+    # gea holds the curated expression layer, the matching raw study only the runs;
+    # let gea claim it first. same rule as ae_preclaim below.
+    gea_preclaim: set[str] = set()
+    gea_to_raw: dict[str, list[str]] = {}
+    for gea_acc, (_, _, bioproject) in gea_dict.items():
+        if not bioproject:
+            continue
+        raw_studies = bioproject_to_studies.get(bioproject, [])
+        if raw_studies:
+            gea_to_raw[gea_acc] = raw_studies
+            gea_preclaim.update(raw_studies)
+
+    claimed.update(gea_preclaim)
+    if gea_preclaim:
+        logger.info("pre-claimed %d raw studies for gea", len(gea_preclaim))
+
     # pre-claiming ae-linked sra entries
     # ae external_links contain erp accessions that also exist in sra.
     # since ae has richer metadata for these european studies, pre-claim
@@ -292,7 +376,7 @@ def _build_catalog_tuples(
                         ae_preclaim.add(sec)
 
     # also find sra entries whose alias is an ae accession
-    for srp, (alias, _, _) in sra_dict.items():
+    for srp, (alias, _, _, _) in sra_dict.items():
         if alias and alias in ae_dict and not alias.startswith("E-GEOD-"):
             ae_preclaim.add(srp)
 
@@ -314,7 +398,7 @@ def _build_catalog_tuples(
             # sra entry alias may be a bioproject (prjna), geo (gse), or garbage
             bp_alias = srp_to_alias.get(srp, "")
             if bp_alias not in (srp, gse):
-                if re.match(r"^PRJN[AEBDC]\d+$", bp_alias):
+                if BIOPROJECT_RE.match(bp_alias):
                     aliases.setdefault("bioproject", bp_alias)
                 elif re.match(r"^GSE\d+$", bp_alias):
                     aliases.setdefault("geo", bp_alias)
@@ -347,11 +431,52 @@ def _build_catalog_tuples(
 
     logger.info("\tgeo: %d canonical", len([r for r in catalog if r[1] == "geo"]))
 
-    # 2. processing sra
+    # 2. processing gea (gea_preclaim already took its raw studies out of reach)
+    logger.info("processing gea...")
+    gea_count = 0
+    for gea_acc, (title, desc, bioproject) in gea_dict.items():
+        if gea_acc in claimed:
+            continue
+
+        aliases = {}
+        if bioproject:
+            aliases["bioproject"] = bioproject
+        raw_studies = gea_to_raw.get(gea_acc, [])
+        if raw_studies:
+            aliases["sra"] = raw_studies[0]
+
+        # the pre-claimed raw study never runs its own pass, so inherit the ena claims
+        # it would have made, or the mirror escapes as a second canonical row.
+        if bioproject and bioproject in ena_dict:
+            aliases.setdefault("ena", bioproject)
+            claimed.add(bioproject)
+        for raw_acc in raw_studies:
+            ena_prj = srp_to_ena.get(raw_acc)
+            if ena_prj:
+                aliases.setdefault("ena", ena_prj)
+                claimed.add(ena_prj)
+
+        # blank text falls back to the accession rather than dropping the row, as
+        # in _build_gsa_tuples
+        catalog.append(
+            (
+                gea_acc,
+                "gea",
+                title or gea_acc,
+                desc,
+                json.dumps(aliases, separators=(",", ":")),
+            ),
+        )
+        gea_count += 1
+        claimed.add(gea_acc)
+
+    logger.info("\tgea: %d canonical", gea_count)
+
+    # 3. processing sra
     # skip gse-aliased, those are already claimed by geo
     logger.info("processing sra...")
     sra_count = 0
-    for srp, (alias, title, abstract) in sra_dict.items():
+    for srp, (alias, title, abstract, _bioproject) in sra_dict.items():
         if srp in claimed:
             continue
 
@@ -360,7 +485,7 @@ def _build_catalog_tuples(
         # sra alias may be a bioproject (prjna), geo (gse), or garbage
         # skip self-aliases (drp/erp entries where alias == accession)
         if alias and alias != srp:
-            if re.match(r"^PRJN[AEBDC]\d+$", alias):
+            if BIOPROJECT_RE.match(alias):
                 aliases["bioproject"] = alias
             elif re.match(r"^GSE\d+$", alias):
                 aliases["geo"] = alias
@@ -399,7 +524,7 @@ def _build_catalog_tuples(
 
     logger.info("\tsra: %d canonical", sra_count)
 
-    # 3. processing arrayexpress
+    # 4. processing arrayexpress
     # note: ae external_links contain ena accessions (erp*). these erp*
     # accessions may also exist as study_accession in ena db (as prjeb*)
     # and as accessions in the sra db. we must claim all of them.
@@ -446,7 +571,7 @@ def _build_catalog_tuples(
 
     logger.info("\tae: %d canonical", ae_count)
 
-    # 4. processing ena
+    # 5. processing ena
     logger.info("processing ena...")
     ena_count = 0
     for prj, (secondary, geo_acc, title, desc) in ena_dict.items():
@@ -476,6 +601,36 @@ def _build_catalog_tuples(
         claimed.add(prj)
 
     logger.info("\tena: %d canonical", ena_count)
+
+    # 6. processing dra (lowest priority: only DRPs nobody else holds)
+    logger.info("processing dra...")
+    dra_count = 0
+    for drp, (alias, title, abstract, bioproject) in dra_dict.items():
+        if drp in claimed:
+            continue
+
+        aliases = {}
+        if bioproject:
+            aliases["bioproject"] = bioproject
+        if alias and alias != drp and BIOPROJECT_RE.match(alias):
+            aliases.setdefault("bioproject", alias)
+
+        combined_text = f"{title}. {abstract}".strip(". ")
+        if combined_text:
+            catalog.append(
+                (
+                    drp,
+                    "dra",
+                    title,
+                    abstract,
+                    json.dumps(aliases, separators=(",", ":")),
+                ),
+            )
+            dra_count += 1
+
+        claimed.add(drp)
+
+    logger.info("\tdra: %d canonical", dra_count)
     return catalog
 
 

@@ -7,4 +7,7 @@ class Datasource(enum.StrEnum):
     Ena = "ena"
     ArrayExpress = "ae"
     Gsa = "gsa"
+    GsaHuman = "gsa_human"
+    Dra = "dra"
+    Gea = "gea"
     _None = "none"

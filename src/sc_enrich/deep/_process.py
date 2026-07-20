@@ -5,6 +5,7 @@ import logging
 import shutil
 import tarfile
 import tempfile
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -14,34 +15,93 @@ import pyreadr
 import rpy2.robjects as ro
 from pyreadr.custom_errors import LibrdataError
 
-from sc_enrich.counter.counter_common import FileType, RdsReadError
+from helpers import ftp_data_stream, open_http_range
+from sc_enrich.deep.counter_common import FileType, RdsReadError
 
 logger = logging.getLogger(__name__)
 
+# last rpy2-read .rds class; one worker per process, so a module holder is safe
 _rds_state: dict[str, str] = {"class": ""}
+
+# gene axis (nrow) of the last pyreadr-read .rds; -1 when unknown (rpy2 path skips it)
+_rds_genes: dict[str, int] = {"genes": -1}
+
+# nnz of the last .mtx counted; -1 when unknown, used to spot raw/unfiltered
+# matrices (nnz/cell far below real gene density)
+_mtx_nnz: dict[str, int] = {"nnz": -1}
 
 
 def last_rds_class() -> str:
-    """R class of the most recently rpy2-read .rds object ("" if none/plain)."""
     return _rds_state["class"]
+
+
+def last_mtx_nnz() -> int:
+    return _mtx_nnz["nnz"]
+
+
+def last_rds_genes() -> int:
+    return _rds_genes["genes"]
 
 
 MIN_DISK_SPACE_BYTES = 5 * 1024**3
 POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
 
+# cheapest and most reliable first (early-exit prefers these)
 FILE_TYPE_PRIORITY = [
+    FileType.Mtx,
     FileType.Barcodes,
     FileType.H5,
     FileType.H5ad,
-    FileType.Tar,
-    FileType.Txt,
-    FileType.Mtx,
     FileType.Tsv,
     FileType.Csv,
+    FileType.Txt,
     FileType.SpaceDelimited,
     FileType.SemicolonDelimited,
+    FileType.Tar,
     FileType.Rds,
 ]
+
+# counted from the first chunk, so stream only the head
+HEADER_STREAMABLE = frozenset(
+    {
+        FileType.Mtx,
+        FileType.Barcodes,
+        FileType.Txt,
+        FileType.Tsv,
+        FileType.Csv,
+        FileType.SpaceDelimited,
+        FileType.SemicolonDelimited,
+    },
+)
+
+# authoritative counts; the worker stops at the first positive one
+RELIABLE_TYPES = frozenset(
+    {FileType.Mtx, FileType.Barcodes, FileType.H5, FileType.H5ad, FileType.Rds},
+)
+
+# cell-by-gene matrices: cells are rows, so keep them despite a "gene" in the
+# name and count rows, not columns
+CELL_MAJOR_HINTS = (
+    "cell_by_gene",
+    "cellxgene",
+    "cell_x_gene",
+    "cells_x_genes",
+    "cellsxgenes",
+    "cell_by_feature",
+)
+
+# skip large non-matrix files
+SKIP_SUBSTRINGS = (
+    "fragments.tsv",
+    ".bam",
+    ".fastq",
+    ".fq.gz",
+    "_denovo_",
+    ".sra",
+    ".bigwig",
+    ".bw",
+    ".bedgraph",
+)
 
 
 def _classify_file(path: str) -> FileType:  # noqa: PLR0911
@@ -56,8 +116,14 @@ def _classify_file(path: str) -> FileType:  # noqa: PLR0911
     ]
 
     def _is_type(ext: str) -> bool:
-        return ext in path and not _contains_any(path, ignore_words)
+        if ext not in path:
+            return False
+        if is_cell_major(path):
+            return True
+        return not _contains_any(path, ignore_words)
 
+    if _contains_any(path, list(SKIP_SUBSTRINGS)):
+        return FileType.Unknown
     if "barcodes.tsv" in path:
         return FileType.Barcodes
     if ".h5ad" in path:
@@ -81,6 +147,10 @@ def _classify_file(path: str) -> FileType:  # noqa: PLR0911
 
 def _contains_any(s: str, substrings: list[str]) -> bool:
     return any(sub in s for sub in substrings)
+
+
+def is_cell_major(name: str) -> bool:
+    return _contains_any(name.lower(), list(CELL_MAJOR_HINTS))
 
 
 def _is_gzipped(path: Path) -> bool:
@@ -257,49 +327,317 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
         return max_count
 
 
+def _member_head(f: Any, name: str, max_bytes: int) -> bytes:
+    """Decompressed head of a tar member, gunzipping a .gz member on the fly."""
+    if name.lower().endswith(".gz"):
+        dec = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        out = bytearray()
+        while len(out) < max_bytes:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            out += dec.decompress(chunk)
+        return bytes(out[:max_bytes])
+    return f.read(max_bytes)
+
+
+def count_tar_via_stream(
+    url: str,
+    chunk_size: int,
+    *,
+    timeout: int,
+    socks_proxy: str | None,
+    tmp_dir: Path | None = None,
+) -> int | None:
+    """Stream a tar, stopping at the first reliable member; None = full download."""
+    ftp_url = url.replace("https://", "ftp://", 1)
+    extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+    max_count = 0
+    try:
+        with (
+            ftp_data_stream(
+                ftp_url, timeout=timeout, socks_proxy=socks_proxy
+            ) as stream,
+            tarfile.open(fileobj=stream, mode="r|*") as tar,
+        ):
+            for member in tar:
+                if not member.isfile():
+                    continue
+                file_type = _classify_file(member.name.lower())
+                if file_type == FileType.Unknown:
+                    continue
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
+                name = Path(member.name).name.removesuffix(".gz") or "member"
+                tmp_path = extract_dir / name
+                tmp_path.write_bytes(_member_head(f, member.name, chunk_size))
+                result = _resolve_file_type(tmp_path, file_type, chunk_size)
+                if result is None:
+                    tmp_path.unlink(missing_ok=True)
+                    continue
+                resolved, sniffed = result
+                count = _get_sc_count(
+                    sniffed, resolved, chunk_size, tmp_dir=extract_dir
+                )
+                if sniffed != tmp_path:
+                    sniffed.unlink(missing_ok=True)
+                tmp_path.unlink(missing_ok=True)
+                max_count = max(max_count, count)
+                if count > 0 and resolved in RELIABLE_TYPES:
+                    break
+    except Exception:
+        logger.debug("tar stream failed for %s, full download", url)
+        return None
+    else:
+        return max_count
+    finally:
+        shutil.rmtree(extract_dir, ignore_errors=True)
+
+
+def count_tar_members_via_stream(
+    url: str,
+    chunk_size: int,
+    *,
+    timeout: int,
+    socks_proxy: str | None,
+    max_members: int = 4000,
+    tmp_dir: Path | None = None,
+) -> list[tuple[str, int, int, str, int]] | None:
+    """
+    Count every matrix member of a streamed tar (no early exit).
+
+    Returns [(name, cells, genes, format, nnz)] so per-GSM RAW tars map cells to
+    samples instead of one study-level max. None = stream failed.
+    """
+    ftp_url = url.replace("https://", "ftp://", 1)
+    extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+    out: list[tuple[str, int, int, str, int]] = []
+    seen = 0
+    try:
+        with (
+            ftp_data_stream(
+                ftp_url, timeout=timeout, socks_proxy=socks_proxy
+            ) as stream,
+            tarfile.open(fileobj=stream, mode="r|*") as tar,
+        ):
+            for member in tar:
+                if seen >= max_members:
+                    break
+                if not member.isfile():
+                    continue
+                file_type = _classify_file(member.name.lower())
+                if file_type == FileType.Unknown:
+                    continue
+                seen += 1
+                f = tar.extractfile(member)
+                if f is None:
+                    continue
+                name = Path(member.name).name.removesuffix(".gz") or "member"
+                tmp_path = extract_dir / name
+                tmp_path.write_bytes(_member_head(f, member.name, chunk_size))
+                result = _resolve_file_type(tmp_path, file_type, chunk_size)
+                if result is None:
+                    tmp_path.unlink(missing_ok=True)
+                    continue
+                resolved, sniffed = result
+                count = _get_sc_count(
+                    sniffed, resolved, chunk_size, tmp_dir=extract_dir
+                )
+                genes = (
+                    gene_count_for(sniffed, resolved, chunk_size) if count > 0 else -1
+                )
+                nnz = last_mtx_nnz() if resolved == FileType.Mtx else -1
+                if sniffed != tmp_path:
+                    sniffed.unlink(missing_ok=True)
+                tmp_path.unlink(missing_ok=True)
+                if count > 0:
+                    out.append((member.name, count, genes, resolved.value, nnz))
+    except Exception:
+        logger.debug("tar member stream failed for %s", url)
+        return None
+    else:
+        return out
+    finally:
+        shutil.rmtree(extract_dir, ignore_errors=True)
+
+
 @safe_process
 def _process_barcodes(path: Path, chunk_size: int) -> int:
+    # 10x barcodes.tsv has no header, so every line is a cell barcode
     with path.open("rb") as f:
         chunk = f.read(chunk_size)
-    idx = chunk.find(b"\n")
-    if idx == -1 or len(chunk) <= idx + 1:
-        return 0
-    return len(chunk[idx + 1 :].splitlines())
+    n = len(chunk.splitlines())
+    return n if n > 1 else 0
+
+
+def _h5_count(f: Any) -> int:
+    n_cells: int | None = None
+
+    def find_barcodes(name: str, obj: Any) -> None:
+        nonlocal n_cells
+        if n_cells is not None:
+            return
+        # match the leaf so a root-level "barcodes" dataset counts too
+        if obj is not None and name.rsplit("/", 1)[-1] == "barcodes":
+            n_cells = len(obj)
+
+    f.visititems(find_barcodes)
+    return n_cells if n_cells is not None and n_cells > 1 else 0
+
+
+def _h5ad_count(f: Any) -> int:
+    n_cells: int | None = None
+    if "obs/_index" in f:
+        n_cells = len(f["obs/_index"])
+    elif "X" in f:
+        x = f["X"]
+        if hasattr(x, "shape"):
+            n_cells = x.shape[0]
+        elif "shape" in x:
+            n_cells = x["shape"][0]
+    return n_cells if n_cells is not None and n_cells > 1 else 0
 
 
 @safe_process
 def _process_h5(path: Path, _: int) -> int:
-    n_cells = None
-
     with h5py.File(path, "r") as f:
-
-        def find_barcodes(name: str, obj: Any) -> None:
-            nonlocal n_cells
-            if n_cells is not None:
-                return
-            if obj is not None and name.endswith("/barcodes"):
-                n_cells = len(obj)
-
-        f.visititems(find_barcodes)
-
-    return n_cells if n_cells is not None and n_cells > 1 else 0
+        return _h5_count(f)
 
 
 @safe_process
 def _process_h5ad(path: Path, _: int) -> int:
-    n_cells = None
-
     with h5py.File(path, "r") as f:
-        if "obs/_index" in f:
-            n_cells = len(f["obs/_index"])
-        elif "X" in f:
-            x = f["X"]
-            if hasattr(x, "shape"):
-                n_cells = x.shape[0]
-            elif "shape" in x:
-                n_cells = x["shape"][0]
+        return _h5ad_count(f)
 
-    return n_cells if n_cells is not None and n_cells > 1 else 0
+
+def count_h5_via_http(url: str, file_type: FileType) -> int | None:
+    """Cell count of an .h5/.h5ad over HTTP range reads; None = full download."""
+    reader = open_http_range(url.replace("ftp://", "https://", 1))
+    if reader is None:
+        return None
+    try:
+        with h5py.File(reader, "r") as f:
+            return _h5_count(f) if file_type == FileType.H5 else _h5ad_count(f)
+    except (OSError, ValueError, KeyError):
+        return None
+    finally:
+        reader.close()
+
+
+# feature/gene axis datasets in a 10x-style .h5 (CellRanger v2 "genes", v3
+# "features") plus h5ad-in-h5 "var" indexes; matched by suffix on the h5 path
+_H5_GENE_SUFFIXES = (
+    "/features/id",
+    "/features/name",
+    "/genes",
+    "/gene_names",
+    "/var_names",
+    "/var/_index",
+)
+
+
+# bare leaf dataset names for the feature/gene axis (root-level, no group prefix)
+_H5_GENE_LEAVES = ("genes", "gene_names", "var_names")
+
+
+def _h5_genes(f: Any) -> int:
+    """Gene-axis length of a 10x-style .h5 (-1 if no recognizable features set)."""
+    n_genes: int | None = None
+
+    def find_features(name: str, obj: Any) -> None:
+        nonlocal n_genes
+        if n_genes is not None or obj is None:
+            return
+        low = name.lower()
+        leaf = low.rsplit("/", 1)[-1]
+        if (low.endswith(_H5_GENE_SUFFIXES) or leaf in _H5_GENE_LEAVES) and hasattr(
+            obj, "__len__"
+        ):
+            try:
+                n_genes = len(obj)
+            except TypeError:
+                n_genes = None
+
+    f.visititems(find_features)
+    return n_genes if n_genes is not None and n_genes > 1 else -1
+
+
+def _h5ad_genes(f: Any) -> int:
+    """Gene-axis length of an .h5ad (-1 if not derivable)."""
+    if "var/_index" in f:
+        n = len(f["var/_index"])
+        return n if n > 1 else -1
+    if "X" in f:
+        x = f["X"]
+        if hasattr(x, "shape") and len(x.shape) == 2:  # noqa: PLR2004
+            n = x.shape[1]
+            return n if n > 1 else -1
+        if "shape" in x:
+            n = x["shape"][1]
+            return n if n > 1 else -1
+    return -1
+
+
+def count_h5_dims_via_http(url: str, file_type: FileType) -> tuple[int, int] | None:
+    """(cells, genes) of an .h5/.h5ad over HTTP range reads; None to fall back."""
+    reader = open_http_range(url.replace("ftp://", "https://", 1))
+    if reader is None:
+        return None
+    try:
+        with h5py.File(reader, "r") as f:
+            if file_type == FileType.H5ad:
+                return _h5ad_count(f), _h5ad_genes(f)
+            return _h5_count(f), _h5_genes(f)
+    except (OSError, ValueError, KeyError):
+        return None
+    finally:
+        reader.close()
+
+
+def _mtx_genes(path: Path, chunk_size: int) -> int:
+    """Gene axis (rows) from an .mtx header (-1 if unparseable)."""
+    try:
+        with path.open("rb") as f:
+            header = f.read(chunk_size)
+    except OSError:
+        return -1
+    _min_parts = 2
+    for line in header.splitlines():
+        if line.startswith(b"%"):
+            continue
+        parts = line.split()
+        if len(parts) >= _min_parts:
+            try:
+                n_genes = int(parts[0])
+            except (ValueError, IndexError):
+                return -1
+            return n_genes if n_genes > 1 else -1
+    return -1
+
+
+def gene_count_for(path: Path, file_type: FileType, chunk_size: int) -> int:
+    """
+    Genes for an already-sniffed file where cheaply derivable, else -1.
+
+    barcodes/txt/tsv/csv/tar carry no gene axis in the fetched head; reuses the
+    local file the cell count came from, no extra download.
+    """
+    try:
+        if file_type == FileType.Mtx:
+            return _mtx_genes(path, chunk_size)
+        if file_type == FileType.H5:
+            with h5py.File(path, "r") as f:
+                return _h5_genes(f)
+        if file_type == FileType.H5ad:
+            with h5py.File(path, "r") as f:
+                return _h5ad_genes(f)
+        if file_type == FileType.Rds:
+            return last_rds_genes()
+    except Exception:
+        logger.debug("gene count failed for %s", path)
+        return -1
+    return -1
 
 
 @safe_process
@@ -313,9 +651,11 @@ def _process_txt(path: Path, chunk_size: int) -> int:
 
 @safe_process
 def _process_mtx(path: Path, chunk_size: int) -> int:
+    _mtx_nnz["nnz"] = -1
     with path.open("rb") as f:
         header = f.read(chunk_size)
 
+    _dims_parts = 3
     _min_parts = 2
     for line in header.splitlines():
         if line.startswith(b"%"):
@@ -324,6 +664,8 @@ def _process_mtx(path: Path, chunk_size: int) -> int:
         if len(parts) >= _min_parts:
             try:
                 n_cells = int(parts[1])
+                if len(parts) >= _dims_parts:
+                    _mtx_nnz["nnz"] = int(parts[2])
             except (ValueError, IndexError):
                 return 0
             else:
@@ -332,9 +674,18 @@ def _process_mtx(path: Path, chunk_size: int) -> int:
     return 0
 
 
+def _count_data_rows(path: Path) -> int:
+    with path.open("rb") as f:
+        n = sum(1 for _ in f)
+    return n - 1 if n - 1 > 1 else 0
+
+
 def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
     @safe_process
     def _wrapper(path: Path, chunk_size: int) -> int:
+        if is_cell_major(path.name):
+            return _count_data_rows(path)
+
         with path.open("rb") as f:
             chunk = f.read(chunk_size)
 
@@ -353,6 +704,9 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
 
 @safe_process
 def _process_rds(path: Path, _: int) -> int:
+    # reset both holders so a stale class/gene count from a prior link can't leak
+    _rds_state["class"] = ""
+    _rds_genes["genes"] = -1
     try:
         result = pyreadr.read_r(path)
     except LibrdataError:
@@ -368,6 +722,8 @@ def _process_rds(path: Path, _: int) -> int:
         logger.error("unexpected object type in rds %s: %s", path, type(rds_df))
         return 0
 
+    n_genes = rds_df.shape[0]
+    _rds_genes["genes"] = n_genes if n_genes > 1 else -1
     n_cells = rds_df.shape[1]
     return n_cells if n_cells > 1 else 0
 

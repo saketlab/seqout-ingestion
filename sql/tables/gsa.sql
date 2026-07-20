@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS gsa_studies (
     n_experiments       INTEGER,
     n_runs              INTEGER,
     release_time        DATE,
+    pubmed_id           TEXT,               -- JSON array, submitter-declared on the study page
     pubmed_id_pysradb   TEXT,               -- filled by backfill pm-ids, not at ingest
     pubmed_last_checked DATE
 );

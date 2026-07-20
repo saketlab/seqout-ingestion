@@ -45,7 +45,7 @@ HUMAN_EXPORT_URL = f"{GSA_BASE_URL}/gsa-human/file/exportExcelFile"
 HUMAN_BROWSE_URL = f"{GSA_BASE_URL}/gsa-human/browse/"
 # md5sum.txt lines: md5<TAB>/study/[batch/]run/filename
 MANIFEST_URL_TMPL = f"{GSA_DOWNLOAD_URL}/gsa-human/{{acc}}/md5sum.txt"
-GSA_HUMAN_FTP_BASE = "ftp://download.big.ac.cn/gsa-human"
+GSA_HUMAN_FILE_BASE = f"{GSA_DOWNLOAD_URL}/gsa-human"
 _FILENAME_TMPL = "/data/gsa-Human/webApp/gsa-human/batchExcel/human/{acc}/{acc}.xlsx"
 _STUDY_ID_RE = re.compile(r"study_id\s*=\s*'(\d+)'")
 _RUN_ACC_RE = re.compile(r"^HRR\d+$")
@@ -439,7 +439,7 @@ def _parse_manifest(text: str, study_acc: str) -> list[tuple]:
             continue
         order = ord_by_run.get(run, 0)
         ord_by_run[run] = order + 1
-        url = f"{GSA_HUMAN_FTP_BASE}{path}"
+        url = f"{GSA_HUMAN_FILE_BASE}{path}"
         rows.append((run, study_acc, order, segments[-1], md5 or None, url))
     return rows
 

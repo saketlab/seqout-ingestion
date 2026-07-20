@@ -3,7 +3,7 @@ from pathlib import Path
 import typer
 
 from sc_enrich.classify import sc_classify
-from sc_enrich.counter.yuj_setup import yuj_setup
+from sc_enrich.deep.yuj_setup import yuj_setup
 
 sc_enrich_app = typer.Typer()
 

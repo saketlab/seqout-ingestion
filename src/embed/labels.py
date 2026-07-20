@@ -10,11 +10,12 @@ processed first and each CSV resumes, so a re-run picks up where it left off.
 
 import csv
 import logging
+import multiprocessing
 import re
 import threading
 import time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -28,7 +29,7 @@ from embed.embed_constants import COLLECTIONS
 logger = logging.getLogger(__name__)
 
 DEFAULT_VLLM_BASE = "http://localhost:1729/v1"
-DEFAULT_MODEL = "unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q8_K_XL"
+DEFAULT_MODEL = "unsloth/Qwen3.6-27B-GGUF:UD-Q8_K_XL"
 
 SYSTEM_PROMPT = (
     "You are a domain expert in genomics and biomedical research who names "
@@ -44,12 +45,23 @@ SYSTEM_PROMPT = (
 
 MAX_DOCS_PER_CLUSTER = 500  # sample cap for TF-IDF
 TOP_K_KEYWORDS = 20
+# Clusters per LLM request. Labelling N at once is ~6-7x faster than 1-at-a-time
+# (one prompt+generation instead of N). Sized so a batch prompt+output (~150 tok
+# per cluster) fits one server slot's context: batch 12 ~= 1.2k tok, safe under a
+# 2048-tok/slot server. Raise -c on the server before raising this. Misaligned or
+# dropped clusters in a batch reply fall back to individual calls, so quality is
+# unaffected -- only the fast path changes.
+BATCH_SIZE = 12
 _MIN_DF_DOC_THRESHOLD = 5  # below this, don't require a term in >=2 docs
 # Only purely-alphabetic tokens (>=2 chars): drops accession ids, years, and
 # other numeric/alphanumeric noise (e.g. erp142156, 2022, covid19) that make
 # for useless label keywords.
 _TOKEN_PATTERN = r"(?u)\b[a-zA-Z]{2,}\b"  # noqa: S105
-CONCURRENCY = 8  # in-flight LLM requests; match server --parallel slots
+# In-flight requests (each carries BATCH_SIZE clusters). Only needs to exceed the
+# server's slot count so no slot ever idles; past that the GPU is compute-bound and
+# more concurrency buys nothing (32-vs-12 measured within ~5% on a 16-slot server).
+CONCURRENCY = 12
+KW_WORKERS = 8  # processes for GIL-free TF-IDF keyword extraction (5ms each, stays ahead)
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 2
 
@@ -65,13 +77,20 @@ def _load_all_data(chroma_db_dir: Path) -> list[tuple[str, dict]]:
     return records
 
 
-def _detect_levels(sample_meta: dict) -> list[str]:
-    """Clustering keys ordered coarsest -> finest (cluster_id first)."""
+def _detect_levels(sample_meta: dict, prefix: str = "cluster_l") -> list[str]:
+    """Clustering keys for `prefix` ordered coarsest -> finest.
+
+    For EVoC (``cluster_l``) the flat ``cluster_id`` is prepended; other
+    clusterings (e.g. ``leiden_l``) expose hierarchical layers only.
+    """
     layer_keys = sorted(
-        (k for k in sample_meta if k.startswith("cluster_l")),
-        key=lambda k: int(k[len("cluster_l") :]),
+        (k for k in sample_meta if k.startswith(prefix)),
+        key=lambda k: int(k[len(prefix) :]),
     )
-    return ["cluster_id", *reversed(layer_keys)]
+    levels = list(reversed(layer_keys))
+    if prefix == "cluster_l":
+        levels = ["cluster_id", *levels]
+    return levels
 
 
 def _extract_keywords(docs: list[str], top_k: int = TOP_K_KEYWORDS) -> list[str]:
@@ -105,9 +124,30 @@ def _extract_keywords(docs: list[str], top_k: int = TOP_K_KEYWORDS) -> list[str]
     return []
 
 
-def _label_cluster(client: OpenAI, model: str, keywords: list[str], size: int) -> str:
+# Per-backend sampling extras. llama.cpp/vLLM suppress this model's thinking via
+# chat_template_kwargs; ollama's OpenAI layer ignores those and needs
+# reasoning_effort=none instead (else `content` comes back empty).
+LLAMACPP_EXTRA = {
+    "chat_template_kwargs": {"enable_thinking": False},
+    "top_k": 20,
+    "min_p": 0.0,
+    "repetition_penalty": 1.0,
+}
+OLLAMA_EXTRA = {"reasoning_effort": "none"}
+
+
+def _label_cluster(
+    client: OpenAI, model: str, extra_body: dict, keywords: list[str], size: int
+) -> str | None:
+    """The cluster's label, or None if the LLM could not be reached.
+
+    None means "unknown, try again": callers MUST skip the row entirely rather than
+    writing a placeholder, because a written row is treated as done by the resume
+    logic and would never be retried -- a transient 503 (e.g. server reloading its
+    model) would otherwise be baked in as permanent bad data.
+    """
     if not keywords:
-        return "unknown"
+        return "unknown"  # nothing cached to label from; a retry can't do better
 
     prompt = (
         f"Top TF-IDF keywords from a cluster of {size} biomedical / genomics "
@@ -127,12 +167,7 @@ def _label_cluster(client: OpenAI, model: str, keywords: list[str], size: int) -
                 top_p=0.80,
                 presence_penalty=1.5,
                 max_tokens=30,
-                extra_body={
-                    "chat_template_kwargs": {"enable_thinking": False},
-                    "top_k": 20,
-                    "min_p": 0.0,
-                    "repetition_penalty": 1.0,
-                },
+                extra_body=extra_body,
             )
             out = r.choices[0].message.content or ""
             out = re.sub(r"<think>.*?</think>", "", out, flags=re.DOTALL)
@@ -143,23 +178,113 @@ def _label_cluster(client: OpenAI, model: str, keywords: list[str], size: int) -
                 backoff *= 2
                 continue
             tqdm.write(f"  error after {MAX_RETRIES} retries: {exc}")
-            return ", ".join(keywords[:3])
-    return ", ".join(keywords[:3])
+            return None
+    return None
+
+
+def _label_row(
+    client: OpenAI,
+    model: str,
+    extra_body: dict,
+    cid: int,
+    kw: list[str],
+    size: int,
+    cx: float,
+    cy: float,
+) -> list | None:
+    label = _label_cluster(client, model, extra_body, kw, size)
+    if label is None:
+        return None  # unreachable LLM -> leave unwritten so a re-run retries it
+    return [cid, label, "|".join(kw), size, f"{cx:.4f}", f"{cy:.4f}"]
+
+
+# Batched variant: one request labels BATCH_SIZE clusters. The model returns a
+# numbered line per cluster; we parse them back by number and individually
+# re-label any cluster the reply dropped/misaligned (safety net -> same quality).
+BATCH_SYSTEM_PROMPT = (
+    "You are a domain expert in genomics and biomedical research who names "
+    "clusters of research datasets. For EACH numbered cluster you are given its "
+    "most distinctive keywords (ranked by TF-IDF over the datasets' metadata). "
+    "Reply with a specific 2-5 word label that names the organism, disease, "
+    "tissue, assay/technique, pathway, or biological process distinguishing that "
+    "cluster. Never use generic terms like 'Genomic Research', 'Biomedical "
+    "Analysis', or 'Sequencing Studies'. Good labels look like: 'E. coli "
+    "Antibiotic Resistance', 'Arabidopsis Epigenomics', 'Single-Cell RNA-seq "
+    "Tumors', 'Gut Microbiome 16S'. Output EXACTLY one line per cluster as "
+    "'<number>. <label>' using the same numbering as the input -- no skipped or "
+    "merged clusters, no quotes, punctuation, explanation, or reasoning."
+)
+
+_BATCH_LINE = re.compile(r"\s*(\d+)[.)]\s*(.+)")
+
+
+def _label_batch(
+    client: OpenAI, model: str, extra_body: dict, batch: list[tuple]
+) -> list[list]:
+    """Label a whole batch in one request. `batch` items are
+    (cid, kw, size, cx, cy). Returns one CSV row per item, in input order.
+    Any cluster missing from the reply is re-labelled individually."""
+    lines = []
+    for i, (_cid, kw, size, _cx, _cy) in enumerate(batch):
+        kwtext = ", ".join(kw) if kw else "(no keywords)"
+        lines.append(f"{i + 1}. cluster of {size} datasets; keywords: {kwtext}")
+    prompt = f"Label these {len(batch)} clusters:\n\n" + "\n".join(lines)
+
+    parsed: dict[int, str] = {}
+    backoff = INITIAL_BACKOFF
+    for attempt in range(MAX_RETRIES):
+        try:
+            r = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": BATCH_SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                top_p=0.80,
+                presence_penalty=1.5,
+                max_tokens=24 * len(batch),
+                extra_body=extra_body,
+            )
+            out = r.choices[0].message.content or ""
+            out = re.sub(r"<think>.*?</think>", "", out, flags=re.DOTALL)
+            for line in out.splitlines():
+                m = _BATCH_LINE.match(line)
+                if m:
+                    n = int(m.group(1))
+                    if 1 <= n <= len(batch):
+                        parsed[n] = m.group(2).strip().strip('"').strip("'")
+            break
+        except Exception as exc:  # noqa: BLE001
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            tqdm.write(f"  batch error after {MAX_RETRIES} retries: {exc}")
+
+    rows = []
+    for i, (cid, kw, size, cx, cy) in enumerate(batch):
+        label = parsed.get(i + 1)
+        if not label:  # dropped/misaligned -> label this one on its own
+            label = _label_cluster(client, model, extra_body, kw, size)
+        if label is None:  # LLM unreachable; skip so a re-run retries this cluster
+            continue
+        rows.append([cid, label, "|".join(kw), size, f"{cx:.4f}", f"{cy:.4f}"])
+    return rows
 
 
 def _process_level(
     level: str,
     all_data: list[tuple[str, dict]],
-    client: OpenAI,
-    model: str,
+    workers: list[tuple],
     out_dir: Path,
 ) -> None:
     out_path = out_dir / f"labels_{level}.csv"
 
     existing: set[int] = set()
     if out_path.exists():
-        with out_path.open() as f:
-            existing = {int(row["cluster"]) for row in csv.DictReader(f)}
+        with out_path.open() as fh:
+            existing = {int(row["cluster"]) for row in csv.DictReader(fh)}
         if existing:
             logger.info("  resuming -- %d already labelled", len(existing))
 
@@ -178,33 +303,69 @@ def _process_level(
     if not todo:
         return
 
-    def build_row(cid: int) -> list:
-        info = clusters[cid]
-        size = len(info["docs"])
-        cx = float(np.mean(info["xs"]))
-        cy = float(np.mean(info["ys"]))
-        kw = _extract_keywords(info["docs"])
-        label = _label_cluster(client, model, kw, size)
-        return [cid, label, "|".join(kw), size, f"{cx:.4f}", f"{cy:.4f}"]
-
     # Header only when the file is truly empty. Keying on `existing` would
     # re-emit the header if a prior run wrote the header but no data rows yet.
     write_header = not out_path.exists() or out_path.stat().st_size == 0
     lock = threading.Lock()
-    with out_path.open("a", newline="") as f:
+    # TF-IDF keyword extraction is CPU-bound and GIL-locked; run alone it
+    # serialises the whole pipeline and starves the GPU. Extract keywords across
+    # processes (spawn -> safe alongside the httpx client's threads) and chain
+    # each cluster's LLM call (I/O-bound, threads) off its keyword result, so the
+    # CPU cores and the GPU work in parallel.
+    total_conc = sum(w[3] for w in workers)
+    # weighted round-robin: each endpoint appears in the rotation proportional to
+    # its concurrency (~ its throughput share), so bigger/faster servers get more.
+    rotation = [i for i, w in enumerate(workers) for _ in range(w[3])]
+    ctx = multiprocessing.get_context("spawn")
+    with (
+        out_path.open("a", newline="") as f,
+        ProcessPoolExecutor(max_workers=KW_WORKERS, mp_context=ctx) as kpool,
+        ThreadPoolExecutor(max_workers=total_conc) as lpool,
+    ):
         writer = csv.writer(f)
         if write_header:
             writer.writerow(
                 ["cluster", "label", "keywords", "size", "centroid_x", "centroid_y"],
             )
             f.flush()
-        with ThreadPoolExecutor(max_workers=CONCURRENCY) as pool:
-            futures = [pool.submit(build_row, cid) for cid in todo]
-            for fut in tqdm(as_completed(futures), total=len(todo), desc=f"  {level}"):
-                row = fut.result()
-                with lock:
-                    writer.writerow(row)
-                    f.flush()
+
+        kw_futures = {
+            kpool.submit(_extract_keywords, clusters[c]["docs"]): c for c in todo
+        }
+        llm_futures = []
+        for rr, kf in enumerate(
+            tqdm(as_completed(kw_futures), total=len(todo), desc=f"  {level} kw")
+        ):
+            cid = kw_futures[kf]
+            try:
+                kw = kf.result()
+            except Exception:  # noqa: BLE001
+                kw = []
+            info = clusters[cid]
+            client, model, extra_body, _ = workers[rotation[rr % len(rotation)]]
+            llm_futures.append(
+                lpool.submit(
+                    _label_row,
+                    client,
+                    model,
+                    extra_body,
+                    cid,
+                    kw,
+                    len(info["docs"]),
+                    float(np.mean(info["xs"])),
+                    float(np.mean(info["ys"])),
+                ),
+            )
+
+        for lf in tqdm(
+            as_completed(llm_futures), total=len(llm_futures), desc=f"  {level} llm"
+        ):
+            row = lf.result()
+            if row is None:  # LLM unreachable; leave unwritten so a re-run retries it
+                continue
+            with lock:
+                writer.writerow(row)
+                f.flush()
 
 
 def generate_labels(
@@ -212,8 +373,34 @@ def generate_labels(
     labels_dir: Path,
     vllm_base_url: str = DEFAULT_VLLM_BASE,
     model: str = DEFAULT_MODEL,
+    prefix: str = "cluster_l",
+    skip_levels: list[str] | None = None,
+    endpoints: list[dict] | None = None,
 ) -> None:
-    client = OpenAI(base_url=vllm_base_url, api_key="unused")
+    # Each endpoint: {base_url, model, concurrency, extra_body}. Default is the
+    # single llama.cpp server; pass a list to fan out across several backends/GPUs.
+    if endpoints is None:
+        endpoints = [
+            {
+                "base_url": vllm_base_url,
+                "model": model,
+                "concurrency": CONCURRENCY,
+                "extra_body": LLAMACPP_EXTRA,
+            },
+        ]
+    # max_retries=0: the SDK's own fast auto-retries stack on top of _label_cluster's
+    # retry loop and snowball into a request storm under load -> disable them and let
+    # _label_cluster handle retries with real backoff. Generous timeout so a slow (not
+    # failed) generation isn't cancelled+retried, which just doubles server load.
+    workers = [
+        (
+            OpenAI(base_url=e["base_url"], api_key="unused", max_retries=0, timeout=180.0),
+            e["model"],
+            e.get("extra_body", {}),
+            e["concurrency"],
+        )
+        for e in endpoints
+    ]
 
     logger.info("loading data from chroma")
     all_data = _load_all_data(chroma_db_dir)
@@ -222,11 +409,209 @@ def generate_labels(
         logger.warning("no documents found; nothing to label")
         return
 
-    levels = _detect_levels(all_data[0][1])
+    levels = _detect_levels(all_data[0][1], prefix)
+    skip = set(skip_levels or ())
+    if skip:
+        levels = [lv for lv in levels if lv not in skip]
     logger.info("cluster levels (coarsest -> finest): %s", levels)
 
     labels_dir.mkdir(parents=True, exist_ok=True)
     for level in levels:
-        _process_level(level, all_data, client, model, labels_dir)
+        _process_level(level, all_data, workers, labels_dir)
 
+    logger.info("labels written to %s", labels_dir)
+
+
+# ---------------------------------------------------------------------------
+# Two-phase variant: precompute TF-IDF keywords once (needs chroma), then LLM-
+# label from the cache (no chroma / no TF-IDF / no 860k-doc reload -> instant
+# restarts). Use precompute_keywords() once, then label_from_keywords() as often
+# as needed.
+# ---------------------------------------------------------------------------
+
+def _precompute_level(level: str, all_data: list[tuple[str, dict]], out_dir: Path) -> None:
+    out_path = out_dir / f"keywords_{level}.csv"
+    existing: set[int] = set()
+    if out_path.exists():
+        with out_path.open() as fh:
+            existing = {int(r["cluster"]) for r in csv.DictReader(fh)}
+
+    clusters: dict[int, dict] = defaultdict(lambda: {"docs": [], "xs": [], "ys": []})
+    for doc, meta in all_data:
+        cid = meta.get(level)
+        if cid is None:
+            continue
+        cid = int(cid)
+        clusters[cid]["docs"].append(doc)
+        clusters[cid]["xs"].append(meta["umap_2d_x"])
+        clusters[cid]["ys"].append(meta["umap_2d_y"])
+
+    todo = [c for c in clusters if c not in existing]
+    logger.info("  %s: %d clusters, %d to extract", level, len(clusters), len(todo))
+    if not todo:
+        return
+
+    write_header = not out_path.exists() or out_path.stat().st_size == 0
+    ctx = multiprocessing.get_context("spawn")
+    with (
+        out_path.open("a", newline="") as f,
+        ProcessPoolExecutor(max_workers=KW_WORKERS, mp_context=ctx) as kpool,
+    ):
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["cluster", "keywords", "size", "centroid_x", "centroid_y"])
+            f.flush()
+        kw_futures = {
+            kpool.submit(_extract_keywords, clusters[c]["docs"]): c for c in todo
+        }
+        for kf in tqdm(as_completed(kw_futures), total=len(todo), desc=f"  kw {level}"):
+            cid = kw_futures[kf]
+            try:
+                kw = kf.result()
+            except Exception:  # noqa: BLE001
+                kw = []
+            info = clusters[cid]
+            writer.writerow(
+                [
+                    cid,
+                    "|".join(kw),
+                    len(info["docs"]),
+                    f"{float(np.mean(info['xs'])):.4f}",
+                    f"{float(np.mean(info['ys'])):.4f}",
+                ],
+            )
+            f.flush()
+
+
+def precompute_keywords(
+    chroma_db_dir: Path,
+    keywords_dir: Path,
+    prefix: str = "cluster_l",
+    skip_levels: list[str] | None = None,
+) -> None:
+    """Phase 1: cache TF-IDF keywords + centroids per cluster to keywords_<level>.csv.
+    Run once; label_from_keywords() then needs no chroma/TF-IDF/doc reload."""
+    logger.info("loading data from chroma")
+    all_data = _load_all_data(chroma_db_dir)
+    logger.info("loaded %d documents", len(all_data))
+    if not all_data:
+        logger.warning("no documents found; nothing to do")
+        return
+    levels = _detect_levels(all_data[0][1], prefix)
+    skip = set(skip_levels or ())
+    levels = [lv for lv in levels if lv not in skip]
+    keywords_dir.mkdir(parents=True, exist_ok=True)
+    for level in levels:
+        _precompute_level(level, all_data, keywords_dir)
+    logger.info("keywords cached to %s", keywords_dir)
+
+
+def _label_level_from_cache(kw_path: Path, out_path: Path, workers: list[tuple]) -> None:
+    existing: set[int] = set()
+    if out_path.exists():
+        with out_path.open() as fh:
+            existing = {int(r["cluster"]) for r in csv.DictReader(fh)}
+
+    rows: list[tuple] = []
+    with kw_path.open() as fh:
+        for r in csv.DictReader(fh):
+            cid = int(r["cluster"])
+            if cid in existing:
+                continue
+            kw = r["keywords"].split("|") if r["keywords"] else []
+            rows.append((cid, kw, int(r["size"]), float(r["centroid_x"]), float(r["centroid_y"])))
+    logger.info("  %s: %d to label", out_path.stem, len(rows))
+    if not rows:
+        return
+
+    total_conc = sum(w[3] for w in workers)
+    rotation = [i for i, w in enumerate(workers) for _ in range(w[3])]
+    # Batch clusters into single requests; keep `total_conc` batches in flight so
+    # every server slot stays fed. Each batch is routed to one endpoint by the same
+    # concurrency-weighted round-robin the per-cluster path used.
+    batches = [rows[i : i + BATCH_SIZE] for i in range(0, len(rows), BATCH_SIZE)]
+    write_header = not out_path.exists() or out_path.stat().st_size == 0
+    lock = threading.Lock()
+    with (
+        out_path.open("a", newline="") as f,
+        ThreadPoolExecutor(max_workers=total_conc) as lpool,
+    ):
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(
+                ["cluster", "label", "keywords", "size", "centroid_x", "centroid_y"],
+            )
+            f.flush()
+        futs = []
+        for bi, batch in enumerate(batches):
+            client, model, extra_body, _ = workers[rotation[bi % len(rotation)]]
+            futs.append(lpool.submit(_label_batch, client, model, extra_body, batch))
+        written = 0
+        for lf in tqdm(
+            as_completed(futs), total=len(futs), desc=f"  llm {out_path.stem} (x{BATCH_SIZE})"
+        ):
+            batch_rows = lf.result()
+            if not batch_rows:
+                continue
+            written += len(batch_rows)
+            with lock:
+                writer.writerows(batch_rows)
+                f.flush()
+    skipped = len(rows) - written
+    if skipped:
+        logger.warning(
+            "  %s: %d cluster(s) unreachable and left unlabelled -- re-run to retry",
+            out_path.stem,
+            skipped,
+        )
+
+
+def label_from_keywords(
+    keywords_dir: Path,
+    labels_dir: Path,
+    endpoints: list[dict] | None = None,
+    skip_levels: list[str] | None = None,
+    vllm_base_url: str = DEFAULT_VLLM_BASE,
+    model: str = DEFAULT_MODEL,
+    concurrency: int = CONCURRENCY,
+) -> None:
+    """Phase 2: LLM-label from cached keywords_<level>.csv. No chroma / no TF-IDF /
+    no doc reload -> starts in seconds and resumes cleanly.
+
+    Defaults to the single llama.cpp server; pass `endpoints`
+    ({base_url, model, concurrency, extra_body} each) to fan out across several
+    backends/GPUs, weighted by concurrency.
+    """
+    if endpoints is None:
+        endpoints = [
+            {
+                "base_url": vllm_base_url,
+                "model": model,
+                "concurrency": concurrency,
+                "extra_body": LLAMACPP_EXTRA,
+            },
+        ]
+    workers = [
+        (
+            OpenAI(base_url=e["base_url"], api_key="unused", max_retries=0, timeout=180.0),
+            e["model"],
+            e.get("extra_body", {}),
+            e["concurrency"],
+        )
+        for e in endpoints
+    ]
+    skip = set(skip_levels or ())
+    labels_dir.mkdir(parents=True, exist_ok=True)
+
+    def lvl_num(p: Path) -> int:
+        digits = "".join(ch for ch in p.stem if ch.isdigit())
+        return int(digits) if digits else 0
+
+    # coarsest (highest suffix) first, like the original flow
+    caches = sorted(keywords_dir.glob("keywords_*.csv"), key=lvl_num, reverse=True)
+    for kw_path in caches:
+        level = kw_path.stem[len("keywords_") :]
+        if level in skip:
+            continue
+        _label_level_from_cache(kw_path, labels_dir / f"labels_{level}.csv", workers)
     logger.info("labels written to %s", labels_dir)

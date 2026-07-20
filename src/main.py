@@ -3,6 +3,7 @@ from typing import Literal
 
 import typer
 
+from cli.age import age_app
 from cli.backfill import backfill_app
 from cli.embed import embed_app
 from cli.geocode import geocode_app
@@ -45,6 +46,7 @@ cli.add_typer(geocode_app)
 cli.add_typer(sc_enrich_app, name="sc_enrich")
 cli.add_typer(transfer_app, name="transfer")
 cli.add_typer(embed_app, name="embed")
+cli.add_typer(age_app, name="age")
 
 if __name__ == "__main__":
     cli()

@@ -1,9 +1,7 @@
-import csv
 import datetime
 import json
 import logging
 import math
-import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,6 +13,12 @@ import humanfriendly
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, send_req, sqlite_connect
+from ingest.magetab import (
+    AE_IDF_MAPPING,
+    AE_SDRF_MAPPING,
+    parse_idf,
+    parse_sdrf,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -535,48 +539,6 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
     return result
 
 
-def _parse_idf(filepath: Path) -> dict | None:
-    idf_col_mapping = {
-        "PubMed ID": ("pubmed_id", _idf_first_or_none),
-        "Public Release Date": ("release_date_idf", _idf_first_or_none),
-        "Person Last Name": ("contact_name", _idf_first_or_none),
-        "Person Email": ("contact_email", _idf_first_or_none),
-        "Person Affiliation": ("contact_affiliation", _idf_first_or_none),
-        "Comment[ArrayExpressSubmissionDate]": ("submission_date", _idf_first_or_none),
-        "Experimental Factor Name": ("experimental_factors", _idf_to_json_array),
-        "Experimental Factor Type": ("experimental_factor_types", _idf_to_json_array),
-        "Protocol Name": ("protocol_names", _idf_to_json_array),
-        "Protocol Type": ("protocol_types", _idf_to_json_array),
-    }
-
-    result: dict[str, Any] = {"overflow": {}}
-    rows = []
-
-    with filepath.open() as f:
-        reader = csv.reader(f, delimiter="\t")
-        for row in reader:
-            if len(row) == 0:
-                continue
-            rows.append(row)
-
-    for row in rows:
-        key = row[0].strip()
-        values = [v.strip() for v in row[1:] if v.strip()]
-
-        if key in idf_col_mapping:
-            clean_col_name, value_extractor = idf_col_mapping[key]
-            value = value_extractor(values)
-            result[clean_col_name] = value
-
-        if values:
-            if len(values) == 1:
-                result["overflow"][key] = values[0]
-            else:
-                result["overflow"][key] = values
-
-    return result
-
-
 def _merge_json_and_idf(json_data: dict | None, idf_data: dict | None) -> dict | None:
     if not json_data and not idf_data:
         return None
@@ -671,110 +633,6 @@ def _merge_json_and_idf(json_data: dict | None, idf_data: dict | None) -> dict |
 
 
 # credits: mr. sonnet 4.6
-def normalize_sdrf_col(raw: str) -> str:
-    # strip edges, lowercase, collapse whitespace
-    # "  Source Name  " -> "source name"
-    s = re.sub(r"\s+", " ", raw.strip().lower())
-
-    # treat "factor value" as one token
-    # "factor value[disease]" -> "factorvalue[disease]"
-    s = s.replace("factor value", "factorvalue")
-
-    # drop spaces around brackets
-    # "characteristics[ organism part ]" -> "characteristics[organism part]"
-    return re.sub(r"\s*\[|\]\s*", lambda m: m.group().strip(), s)
-
-
-def _parse_sdrf(filepath: Path, accession: str) -> list | None:
-    samples = []
-    sample_col_mapping = {
-        "source name": "source_name",
-        "characteristics[organism]": "organism",
-        "characteristics[organism part]": "organism_part",
-        "characteristics[cell type]": "cell_type",
-        "characteristics[genotype]": "genotype",
-        "comment[sample_source_name]": "sample_source_name",
-        "comment[sample_title]": "sample_title",
-        "comment[sample_description]": "sample_description",
-        "comment[library_strategy]": "library_strategy",
-        "comment[library_source]": "library_source",
-        "comment[library_selection]": "library_selection",
-        "comment[ena_experiment]": "ena_experiment",
-        "comment[ena_run]": "ena_run",
-    }
-    cols_to_skip = [
-        "source name",
-        "extract name",
-        "labeled extract name",
-        "label",
-        "material type",
-        "protocol ref",
-        "term source ref",
-        "term accession number",
-        "assay name",
-        "technology type",
-        "array design ref",
-        "array data file",
-        "derived array data file",
-        "scan name",
-        "hybridization name",
-        "normalization name",
-        "performer",
-        "provider",
-        "unit",
-    ]
-
-    try:
-        with filepath.open() as f:
-            reader = csv.reader(f, delimiter="\t")
-            raw_header = next(reader, None)
-            if not raw_header:
-                return None
-
-            headers = [normalize_sdrf_col(h) for h in raw_header]
-
-            for row in reader:
-                if not row or not any(s.strip() for s in row):
-                    continue
-
-                sample: dict[str, str | None] = {"experiment_accession": accession}
-                overflow = {}
-
-                for db_col in sample_col_mapping.values():
-                    sample[db_col] = None
-
-                for i, clean_col in enumerate(headers):
-                    if i >= len(row):
-                        break
-
-                    value = row[i].strip()
-                    if not value:
-                        continue
-
-                    if clean_col in sample_col_mapping:
-                        db_col = sample_col_mapping[clean_col]
-                        sample[db_col] = value
-                    else:
-                        base = (
-                            clean_col.split("[")[0].strip()
-                            if "[" in clean_col
-                            else clean_col
-                        )
-
-                        if base in cols_to_skip or clean_col.startswith("unit["):
-                            continue
-
-                        overflow[clean_col] = value
-
-                sample["attributes_json"] = json.dumps(overflow)
-                samples.append(sample)
-
-    except FileNotFoundError:
-        return None
-    else:
-        return samples or None
-
-
 def _process_accession(accession: str, data_dir: Path) -> tuple | None:
     json_path = data_dir / f"{accession}.json"
     idf_path = data_dir / f"{accession}.idf.txt"
@@ -783,9 +641,9 @@ def _process_accession(accession: str, data_dir: Path) -> tuple | None:
     json_data = (
         _parse_experiment_json(json_path, accession) if json_path.exists() else None
     )
-    idf_data = _parse_idf(idf_path) if idf_path.exists() else None
+    idf_data = parse_idf(idf_path, AE_IDF_MAPPING) if idf_path.exists() else None
     merged = _merge_json_and_idf(json_data, idf_data)
-    samples = _parse_sdrf(sdrf_path, accession)
+    samples = parse_sdrf(sdrf_path, accession, AE_SDRF_MAPPING)
 
     return merged, samples
 
@@ -931,13 +789,3 @@ def _insert_samples(cursor: sqlite3.Cursor, samples: list[dict]) -> None:
 
 def _json_coerce_list(elem: object) -> list:
     return elem if isinstance(elem, list) else [elem]
-
-
-def _idf_first_or_none(values: list[str]) -> str | None:
-    return values[0] if values else None
-
-
-def _idf_to_json_array(values: list[str]) -> str | None:
-    if not values:
-        return None
-    return json.dumps(values)
