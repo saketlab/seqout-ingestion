@@ -5,6 +5,7 @@ import logging
 import math
 import re
 import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,53 @@ logger = logging.getLogger(__name__)
 AE_OUTPUT_DIR = "ae"
 BIOSTUDIES_API_BASE_URL = "https://www.ebi.ac.uk/biostudies/api/v1"
 BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
+FTP_EXPERIMENT_BASE_URL = (
+    "https://ftp.ebi.ac.uk/pub/databases/microarray/data/experiment"
+)
+# Apache autoindex link to a legacy processed bundle: <ACC>.processed.<n>.zip
+_PROCESSED_ZIP_RE = re.compile(
+    r'href="([^"?/][^"]*\.processed\.\d+\.zip)"', re.IGNORECASE
+)
+_FTP_RETRIES = 4  # EBI's FTP drops connections under concurrency
 PAGE_SIZE = 100
+
+
+def _probe_ftp_processed(accession: str) -> list[dict]:
+    """
+    Look up a legacy study's processed bundle on the EBI FTP.
+
+    E-SMDB / E-ERAD / E-TIGR / older E-MEXP, E-TABM and E-MTAB studies expose no
+    BioStudies "Processed Data" subsection, so `_parse_experiment_json` finds
+    nothing and falls back here; the extra request therefore hits legacy studies
+    only. ponytail: one dir GET per hit; size left null (a HEAD each would double
+    traffic for a field the UI rarely shows).
+    """
+    prefix_match = re.match(r"E-([A-Za-z]+)-", accession)
+    if not prefix_match:
+        return []
+    dir_url = f"{FTP_EXPERIMENT_BASE_URL}/{prefix_match.group(1)}/{accession}/"
+    resp = None
+    # Retry so a transient FTP error isn't misread as "no processed data".
+    for attempt in range(_FTP_RETRIES):
+        try:
+            resp = httpx.get(dir_url, timeout=30.0, follow_redirects=True)
+            break
+        except httpx.HTTPError:
+            if attempt == _FTP_RETRIES - 1:
+                return []
+            time.sleep(0.5 * (attempt + 1))
+    if resp is None or resp.status_code != httpx.codes.OK:
+        return []
+
+    files: list[dict] = []
+    seen: set[str] = set()
+    for match in _PROCESSED_ZIP_RE.finditer(resp.text):
+        name = match.group(1).rsplit("/", 1)[-1]
+        if not name.startswith(f"{accession}.processed.") or name in seen:
+            continue
+        seen.add(name)
+        files.append({"path": name, "url": f"{dir_url}{name}", "size": None})
+    return files
 
 
 def ingest_ae(
@@ -450,9 +497,13 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
             if url:
                 external_links.append({"url": url, "type": link_type})
 
+    # Legacy studies keep processed data on the FTP, not in BioStudies.
+    if not processed_files and accession:
+        processed_files = _probe_ftp_processed(accession)
+
     result["external_links"] = json.dumps(external_links)
     result["processed_data_files"] = json.dumps(processed_files)
-    result["experimental_factors_detail"] = json.dumps(processed_files)
+    result["experimental_factors_detail"] = json.dumps(exp_factors_detail)
     result["authors"] = json.dumps(authors)
     result["organizations"] = json.dumps(orgs)
     result["protocols_description"] = json.dumps(protocol_texts)

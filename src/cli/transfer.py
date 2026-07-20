@@ -55,6 +55,17 @@ def sample_tsv(
 
 
 @transfer_app.command()
+def gsa_search_tsv(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Fold BioProject title/summary, organism, and sample text into the GSA
+    search tsv (recall). Run after the gsa_* tables are loaded."""
+    from transfer.gsa_search import gsa_search_tsv_transfer
+
+    gsa_search_tsv_transfer(pg_url)
+
+
+@transfer_app.command()
 def parquet(
     output_dir: Path = typer.Option(...),
     sra_db_file: Path = typer.Option(...),
