@@ -33,6 +33,7 @@ import os
 import sys
 
 import psycopg
+from psycopg import sql
 
 # One statement, run server-side: the join stays in Postgres rather than
 # shipping millions of sample rows to this process.
@@ -73,11 +74,13 @@ computed AS (
     FROM target t
 ),
 facts AS (
-    -- An empty recompute means "no evidence", not "no organisms": ~4% of
-    -- studies have samples but no experiments linking them (DRP001120 has
-    -- organisms and zero rows in every experiments table). Overwriting those
-    -- with {{}} would blank ~29k studies, so the stored value is kept whenever
-    -- the study-level derivation comes back empty.
+    -- An empty recompute means "no evidence", not "no organisms": roughly 4 in
+    -- 100 studies have samples but no experiments linking them, and psycopg
+    -- parses a percent sign even inside a comment, so do not write one here.
+    -- (DRP001120 is the worked example: it has
+    -- organisms and zero rows in every experiments table.) Overwriting those
+    -- with {{}} would blank some 29k studies, so the stored value is kept
+    -- whenever the study-level derivation comes back empty.
     SELECT
         c.accession,
         CASE WHEN cardinality(c.organisms) > 0
@@ -102,14 +105,23 @@ WHERE f.organisms          IS DISTINCT FROM COALESCE(s.organisms, '{{}}')
    OR f.platforms          IS DISTINCT FROM COALESCE(s.platforms, '{{}}')
 """
 
+# One statement per batch, not per row. The DB does this work in microseconds;
+# the cost is the round-trip, and over an SSH tunnel that was measured at 622ms
+# — 125,888 single-row UPDATEs is over a day of pure waiting, and a window that
+# long is very likely to lose the tunnel mid-run (it did). Folding a batch into
+# one VALUES list makes it ~25 round-trips instead.
 _UPDATE_SQL = """
 UPDATE sra_studies AS s
-SET organisms = %(organisms)s,
-    library_strategies = %(library_strategies)s,
-    instrument_models = %(instrument_models)s,
-    platforms = %(platforms)s
-WHERE s.accession = %(accession)s
+SET organisms = v.organisms,
+    library_strategies = v.library_strategies,
+    instrument_models = v.instrument_models,
+    platforms = v.platforms
+FROM (VALUES %s) AS v(accession, organisms, library_strategies,
+                      instrument_models, platforms)
+WHERE s.accession = v.accession
 """
+
+_WRITE_BATCH = 5000
 
 
 def connect(pg_url: str | None) -> psycopg.Connection:
@@ -135,7 +147,9 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    sql = _RECOMPUTE_SQL.format(
+    # not named `sql`: that shadows the psycopg sql module used to build the
+    # batched UPDATE below
+    select_sql = _RECOMPUTE_SQL.format(
         where="WHERE accession LIKE %(prefix)s" if args.prefix else "",
         limit=f"LIMIT {args.limit}" if args.limit else "",
     )
@@ -145,7 +159,7 @@ def main() -> None:
         conn.execute("SET statement_timeout = '0'")
         with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
             print("computing study-level facets (this scans sra_experiments)…")
-            cur.execute(sql, params or None)
+            cur.execute(select_sql, params or None)
             changed = cur.fetchall()
 
     print(f"\nstudies whose facets would change: {len(changed):,}")
@@ -161,12 +175,25 @@ def main() -> None:
     with connect(args.pg_url) as conn:
         conn.execute("SET statement_timeout = '0'")
         with conn.cursor() as cur:
-            for i, row in enumerate(changed, 1):
-                cur.execute(_UPDATE_SQL, row)
-                if i % 5000 == 0:
-                    conn.commit()
-                    print(f"  committed {i:,}/{len(changed):,}")
-        conn.commit()
+            for start in range(0, len(changed), _WRITE_BATCH):
+                batch = changed[start : start + _WRITE_BATCH]
+                # The arrays need an explicit cast: a VALUES list gives Postgres
+                # nothing to infer element types from.
+                values = sql.SQL(", ").join(
+                    sql.SQL("({}, {}::text[], {}::text[], {}::text[], {}::text[])").format(
+                        sql.Literal(r["accession"]),
+                        sql.Literal(r["organisms"]),
+                        sql.Literal(r["library_strategies"]),
+                        sql.Literal(r["instrument_models"]),
+                        sql.Literal(r["platforms"]),
+                    )
+                    for r in batch
+                )
+                cur.execute(
+                    sql.SQL(_UPDATE_SQL.replace("%s", "{}")).format(values)
+                )
+                conn.commit()
+                print(f"  committed {min(start + _WRITE_BATCH, len(changed)):,}/{len(changed):,}")
     print(f"updated {len(changed):,} studies")
 
     if args.skip_refresh:
