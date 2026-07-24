@@ -847,8 +847,8 @@ def _sra_studies_batch_modifier(
         _get_conn = _make_conn_cache()
 
         row_meta: list[dict] = []
-        all_submissions: set[str] = set()
         all_accessions: list[str] = []
+        all_submissions: set[str] = set()
 
         for value in batch:
             accession = value["accession"]
@@ -865,45 +865,79 @@ def _sra_studies_batch_modifier(
 
             if submission:
                 all_submissions.add(submission)
+
             all_accessions.append(accession)
 
-        submission_organisms: dict[str, set[str]] = {}
+        # These facets are per STUDY, never per submission. A submission is not a
+        # study: 68,775 studies share one with another study (one submission
+        # covers 1,548), so submission-keyed values leak a study's siblings into
+        # it; and a study's samples can span many submissions (SRP584992 spans
+        # six), so its own submission misses most of them. Both directions were
+        # measured against prod -- ~12.6% of SRA studies had a wrong organism
+        # list, which search filters on directly.
+        study_strategies: dict[str, set[str]] = defaultdict(set[str])
+        study_models: dict[str, set[str]] = defaultdict(set[str])
+        study_platforms: dict[str, set[str]] = defaultdict(set[str])
+        study_sample_accs: dict[str, set[str]] = defaultdict(set[str])
+        all_sample_accs: set[str] = set()
+
+        if all_accessions:
+            unique_studies = list(set(all_accessions))
+            conn = _get_conn(sra_db_file)
+
+            for study, strategy, model, platform, samples in batch_query_in(
+                conn,
+                """SELECT
+                    study, library_strategy, instrument_model,
+                    platform, samples
+                FROM sra_experiments WHERE study""",
+                unique_studies,
+                batch_size,
+            ):
+                if strategy:
+                    study_strategies[study].add(strategy)
+                if model:
+                    study_models[study].add(model)
+                if platform:
+                    study_platforms[study].add(platform)
+                # sra_samples has no study column, so organisms take the same
+                # two hops the project page does: study -> experiment.samples
+                # -> sample.scientific_name.
+                for sample_acc in _ensure_list(_convert_to_json(samples)):
+                    if sample_acc:
+                        study_sample_accs[study].add(sample_acc)
+                        all_sample_accs.add(sample_acc)
+
+        sample_organism: dict[str, str] = {}
+        if all_sample_accs:
+            conn = _get_conn(sra_db_file)
+
+            for sample_acc, org in batch_query_in(
+                conn,
+                "SELECT accession, scientific_name FROM sra_samples WHERE accession",
+                list(all_sample_accs),
+                query_suffix="AND scientific_name IS NOT NULL",
+                batch_size=batch_size,
+            ):
+                sample_organism[sample_acc] = org
+
+        # Fallback only. ~4% of studies have samples but no experiments linking
+        # them (DRP001120 has organisms and zero rows in every experiments
+        # table), so the study-level join yields nothing for them. Empty means
+        # "no evidence", not "no organisms" — falling back to the submission
+        # keeps a coarse answer instead of blanking the field.
+        submission_organisms: dict[str, set[str]] = defaultdict(set[str])
         if all_submissions:
-            unique_submissions = list(all_submissions)
             conn = _get_conn(sra_db_file)
 
             for sub, org in batch_query_in(
                 conn,
                 "SELECT submission, scientific_name FROM sra_samples WHERE submission",
-                unique_submissions,
+                list(all_submissions),
                 query_suffix="AND scientific_name IS NOT NULL",
                 batch_size=batch_size,
             ):
-                submission_organisms.setdefault(sub, set[str]()).add(org)
-
-        submission_strategies: dict[str, set[str]] = defaultdict(set[str])
-        submission_models: dict[str, set[str]] = defaultdict(set[str])
-        submission_platforms: dict[str, set[str]] = defaultdict(set[str])
-
-        if all_submissions:
-            unique_submissions = list(all_submissions)
-            conn = _get_conn(sra_db_file)
-
-            for sub, strategy, model, platform in batch_query_in(
-                conn,
-                """SELECT
-                    submission, library_strategy, instrument_model,
-                    platform
-                FROM sra_experiments WHERE submission""",
-                unique_submissions,
-                batch_size,
-            ):
-                if strategy:
-                    submission_strategies[sub].add(strategy)
-                if model:
-                    submission_models[sub].add(model)
-                if platform:
-                    submission_platforms[sub].add(platform)
+                submission_organisms[sub].add(org)
 
         accession_countries: dict[str, set[str]] = {}
 
@@ -924,14 +958,17 @@ def _sra_studies_batch_modifier(
         results: list[dict] = []
 
         for value, meta in zip(batch, row_meta, strict=False):
-            organisms = sorted(submission_organisms.get(meta["submission"], set[str]()))
-            library_strategies = sorted(
-                submission_strategies.get(meta["submission"], set[str]()),
-            )
-            instrument_models = sorted(
-                submission_models.get(meta["submission"], set[str]()),
-            )
-            platforms = sorted(submission_platforms.get(meta["submission"], set[str]()))
+            study_acc = meta["accession"]
+            organisms = sorted(
+                {
+                    org
+                    for sample_acc in study_sample_accs.get(study_acc, set[str]())
+                    if (org := sample_organism.get(sample_acc))
+                },
+            ) or sorted(submission_organisms.get(meta["submission"], set[str]()))
+            library_strategies = sorted(study_strategies.get(study_acc, set[str]()))
+            instrument_models = sorted(study_models.get(study_acc, set[str]()))
+            platforms = sorted(study_platforms.get(study_acc, set[str]()))
             countries = sorted(accession_countries.get(meta["accession"], set[str]()))
 
             bioproject_id = None
