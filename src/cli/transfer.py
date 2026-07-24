@@ -67,6 +67,16 @@ def sample_tsv(
 
 
 @transfer_app.command()
+def pub_tsv(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Fold linked publication titles into each study's search tsv (recall)."""
+    from transfer.pub_tsv import pub_tsv_transfer
+
+    pub_tsv_transfer(pg_url)
+
+
+@transfer_app.command()
 def ddbj(
     pg_url: str = typer.Option(...),
     dra_db_file: Path | None = typer.Option(None),

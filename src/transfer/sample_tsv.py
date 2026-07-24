@@ -140,7 +140,8 @@ BEGIN
       ||  setweight(to_tsvector('english', coalesce(array_to_string(NEW.departments,' '),'')), 'D')
       ||  setweight(to_tsvector('english', coalesce(array_to_string(NEW.organizations,' '),'')), 'D')
       ||  setweight(to_tsvector('english', coalesce(array_to_string(NEW.countries,' '),'')), 'D')
-      ||  coalesce(NEW.sample_tsv, ''::tsvector);
+      ||  coalesce(NEW.sample_tsv, ''::tsvector)
+      ||  coalesce(NEW.pub_tsv, ''::tsvector);
     RETURN NEW;
 END $$;
 """
@@ -165,6 +166,7 @@ _SRA_TSV_EXPR = (
     + ") || "
     + _weighted("study_type", "D")
     + ") || coalesce(sample_tsv, ''::tsvector)"
+    + " || coalesce(pub_tsv, ''::tsvector)"
 )
 _AE_TSV_EXPR = (
     "((("
@@ -176,22 +178,28 @@ _AE_TSV_EXPR = (
     + ") || "
     + _weighted("authors_text", "D")
     + ") || coalesce(sample_tsv, ''::tsvector)"
+    + " || coalesce(pub_tsv, ''::tsvector)"
 )
 
 _STUDY_TABLES = ("geo_series", "sra_studies", "arrayexpress_experiments")
 
 
 def _ensure_sample_tsv_columns(cur: psycopg.Cursor) -> None:
+    """Both extra tsv tails: sample text (transfer.sample_tsv) and publication
+    titles (transfer.pub_tsv). Created together because the tsv expressions
+    below reference both, so either step may run first."""
     for table in _STUDY_TABLES:
-        cur.execute(
-            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS sample_tsv tsvector",
-        )
+        for column in ("sample_tsv", "pub_tsv"):
+            cur.execute(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} tsvector",
+            )
 
 
 def _tsv_up_to_date(cur: psycopg.Cursor, table: str) -> bool:
-    """True once the generated tsv expression folds in sample_tsv AND applies
-    the translate() normalization. Both markers must be present, so a table
-    left at an older definition (samples but no normalization) is redefined."""
+    """True once the generated tsv expression folds in sample_tsv and pub_tsv
+    AND applies the translate() normalization. All markers must be present, so a
+    table left at an older definition (e.g. samples but no publication titles,
+    or no normalization) is redefined."""
     cur.execute(
         "SELECT generation_expression FROM information_schema.columns"
         " WHERE table_name = %s AND column_name = 'tsv'",
@@ -199,7 +207,7 @@ def _tsv_up_to_date(cur: psycopg.Cursor, table: str) -> bool:
     )
     row = cur.fetchone()
     expr = (row[0] or "") if row else ""
-    return "sample_tsv" in expr and "translate" in expr
+    return "sample_tsv" in expr and "pub_tsv" in expr and "translate" in expr
 
 
 def _redefine_generated_tsv(
