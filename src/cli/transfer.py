@@ -171,6 +171,11 @@ def parquet(
     download_links_db_file: Path = typer.Option(...),
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=500),
+    gsa_db_file: Path | None = typer.Option(None),
+    gsa_human_db_file: Path | None = typer.Option(None),
+    gsa_bioproject_db_file: Path | None = typer.Option(None),
+    dra_db_file: Path | None = typer.Option(None),
+    gea_db_file: Path | None = typer.Option(None),
 ) -> None:
     from transfer.parquet import parquet_transfer
 
@@ -185,7 +190,26 @@ def parquet(
         download_links_db_file,
         num_workers,
         batch_size,
+        gsa_db_file=gsa_db_file,
+        gsa_human_db_file=gsa_human_db_file,
+        gsa_bioproject_db_file=gsa_bioproject_db_file,
+        dra_db_file=dra_db_file,
+        gea_db_file=gea_db_file,
     )
+
+
+@transfer_app.command()
+def parquet_from_pg(
+    pg_url: str = typer.Option(...),
+    output_dir: Path = typer.Option(...),
+    num_workers: int = typer.Option(4, "--workers"),
+    batch_size: int = typer.Option(default=5000),
+) -> None:
+    """Build the parquet dump straight from Postgres (source of truth), covering
+    all public tables plus GSA/DRA/GEA. Replaces the SQLite-fed `parquet`."""
+    from transfer.parquet import pg_parquet_transfer
+
+    pg_parquet_transfer(pg_url, output_dir, num_workers, batch_size)
 
 
 @transfer_app.command()
