@@ -22,9 +22,26 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import h5py
-import pyreadr
-import rpy2.robjects as ro
-from pyreadr.custom_errors import LibrdataError
+
+try:  # optional 'rds' extra: only the .rds readers need R / rpy2 / pyreadr
+    import pyreadr
+    import rpy2.robjects as ro
+    from pyreadr.custom_errors import LibrdataError
+except ImportError:
+    _R_HINT = (
+        "reading .rds files needs the optional 'rds' extra (rpy2 + pyreadr and a "
+        "system R install). install with: uv sync --extra rds"
+    )
+
+    class LibrdataError(Exception):  # placeholder so `except LibrdataError` resolves
+        pass
+
+    class _MissingR:  # any attribute access raises the friendly hint
+        def __getattr__(self, _name: str) -> object:
+            raise ImportError(_R_HINT)
+
+    pyreadr = ro = _MissingR()  # type: ignore[assignment]
+
 from tqdm import tqdm
 
 from helpers import batch_query_in, download_file, sqlite_connect
