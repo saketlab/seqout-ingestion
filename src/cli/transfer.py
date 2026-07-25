@@ -77,6 +77,46 @@ def pub_tsv(
 
 
 @transfer_app.command()
+def ena_organisms(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Populate ena_studies.organisms from ena_samples (multi-organism + facet)."""
+    from transfer.ena_organisms import ena_organisms_transfer
+
+    ena_organisms_transfer(pg_url)
+
+
+@transfer_app.command()
+def gsa_organisms(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Populate gsa_studies.organisms from gsa_samples (multi-organism + facet)."""
+    from transfer.gsa_organisms import gsa_organisms_transfer
+
+    gsa_organisms_transfer(pg_url)
+
+
+@transfer_app.command()
+def gea_organisms(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Populate gea_experiments.organisms from gea_samples (project page)."""
+    from transfer.gea_organisms import gea_organisms_transfer
+
+    gea_organisms_transfer(pg_url)
+
+
+@transfer_app.command()
+def dra_organisms(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Populate dra_studies_search.organisms (federated organism facet)."""
+    from transfer.dra_organisms import dra_organisms_transfer
+
+    dra_organisms_transfer(pg_url)
+
+
+@transfer_app.command()
 def ddbj(
     pg_url: str = typer.Option(...),
     dra_db_file: Path | None = typer.Option(None),

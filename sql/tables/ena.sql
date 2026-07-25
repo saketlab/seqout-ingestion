@@ -28,7 +28,11 @@ CREATE TABLE IF NOT EXISTS ena_studies (
     description                 TEXT,
     status                      TEXT,
     pubmed_id_pysradb           TEXT,
-    pubmed_last_checked         DATE
+    pubmed_last_checked         DATE,
+    -- Per-sample organism set (DISTINCT ena_samples.scientific_name), populated
+    -- post-load by transfer.ena_organisms. scientific_name above is only the
+    -- study-level organism and misses every multi-organism study.
+    organisms                   TEXT[]
 );
 
 CREATE TABLE IF NOT EXISTS ena_experiments (
