@@ -152,16 +152,33 @@ def pg_parquet_transfer(
     output_dir: Path,
     num_workers: int,
     batch_size: int,
+    *,
+    resume: bool = False,
 ) -> None:
     """Build the parquet dump straight from Postgres (source of truth) instead
     of the per-source SQLite dumps. Covers the same public tables the DuckDB
-    client reads, plus the GSA/DRA/GEA sources."""
+    client reads, plus the GSA/DRA/GEA sources.
+
+    Each table is written to a .tmp then atomically renamed, so a finished
+    <name>.parquet always means a complete table. With resume=True, tables whose
+    final file already exists are skipped -- rerun after a crash to continue."""
     output_dir.mkdir(exist_ok=True, parents=True)
+
+    todo = _PG_PARQUET_TABLES
+    if resume:
+        todo = [
+            (src, out)
+            for src, out in _PG_PARQUET_TABLES
+            if not (output_dir / f"{out}.parquet").exists()
+        ]
+        skipped = len(_PG_PARQUET_TABLES) - len(todo)
+        if skipped:
+            tqdm.write(f"resume: skipping {skipped} already-exported table(s)")
 
     with ThreadPoolExecutor(num_workers) as pool:
         futures = [
             pool.submit(_export_pg_table, pg_url, src, out, output_dir, batch_size)
-            for src, out in _PG_PARQUET_TABLES
+            for src, out in todo
         ]
         with tqdm(
             total=len(futures),
@@ -241,12 +258,14 @@ def _export_pg_table(
         ).fetchone()[0]
         exprs, schema = _pg_columns(conn, src_table)
         select = ", ".join(exprs)
+        # write to .tmp then atomically rename, so a present <name>.parquet always
+        # means a fully-written table (safe to skip on resume / serve live).
+        final_path = output_dir / f"{out_name}.parquet"
+        tmp_path = output_dir / f"{out_name}.parquet.tmp"
         # schema is known up front, so we open the writer immediately and stream
         # each batch straight to disk -- constant memory, no per-table buffering.
         with (
-            pq.ParquetWriter(
-                output_dir / f"{out_name}.parquet", schema, compression="snappy"
-            ) as writer,
+            pq.ParquetWriter(tmp_path, schema, compression="snappy") as writer,
             conn.cursor(name=f"pq_{out_name}") as cur,
             tqdm(total=total, desc=out_name, unit="row", leave=False) as pbar,
         ):
@@ -263,6 +282,7 @@ def _export_pg_table(
                 ]
                 writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
                 pbar.update(len(batch))
+    tmp_path.replace(final_path)  # atomic on same filesystem
 
 
 def _fetch_all_tables(db_file: Path, tables: list[tuple[str, Path]]) -> None:

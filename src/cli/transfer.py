@@ -204,12 +204,13 @@ def parquet_from_pg(
     output_dir: Path = typer.Option(...),
     num_workers: int = typer.Option(4, "--workers"),
     batch_size: int = typer.Option(default=5000),
+    resume: bool = typer.Option(False, "--resume", help="skip already-exported tables"),
 ) -> None:
     """Build the parquet dump straight from Postgres (source of truth), covering
     all public tables plus GSA/DRA/GEA. Replaces the SQLite-fed `parquet`."""
     from transfer.parquet import pg_parquet_transfer
 
-    pg_parquet_transfer(pg_url, output_dir, num_workers, batch_size)
+    pg_parquet_transfer(pg_url, output_dir, num_workers, batch_size, resume=resume)
 
 
 @transfer_app.command()
