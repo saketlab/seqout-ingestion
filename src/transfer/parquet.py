@@ -175,10 +175,32 @@ def pg_parquet_transfer(
                 pbar.update(1)
 
 
-def _pg_select_columns(conn: psycopg.Connection, table: str) -> list[str]:
-    """Build the SELECT list, casting jsonb/array columns to text so the parquet
-    matches the JSON-string shape the SQLite-origin dump had (keeps the client's
-    json.loads(...) accessors working)."""
+# pg scalar type -> arrow type. Anything not here (jsonb, arrays, dates,
+# text, uuid, ...) is emitted as text and mapped to string.
+_PG_TO_ARROW = {
+    "smallint": pa.int16(),
+    "integer": pa.int32(),
+    "bigint": pa.int64(),
+    "boolean": pa.bool_(),
+    "real": pa.float32(),
+    "double precision": pa.float64(),
+}
+_TO_TEXT_TYPES = frozenset(
+    {
+        "date",
+        "timestamp without time zone",
+        "timestamp with time zone",
+        "time without time zone",
+        "time with time zone",
+    },
+)
+
+
+def _pg_columns(conn: psycopg.Connection, table: str) -> tuple[list[str], pa.Schema]:
+    """Return (select exprs, arrow schema). jsonb/array/date/time columns are
+    cast to text so the parquet keeps the JSON/text shape the SQLite-origin dump
+    had (client does json.loads / strptime on them); numeric is cast to float8 so
+    it arrives as a plain float, not Decimal."""
     rows = conn.execute(
         "SELECT column_name, data_type, udt_name "
         "FROM information_schema.columns "
@@ -187,15 +209,23 @@ def _pg_select_columns(conn: psycopg.Connection, table: str) -> list[str]:
         [table],
     ).fetchall()
     exprs: list[str] = []
+    fields: list[pa.Field] = []
     for name, data_type, udt in rows:
         col = f'"{name}"'
         if data_type == "ARRAY":
-            exprs.append(f'to_json({col})::text AS {col}')
-        elif udt in ("jsonb", "json"):
-            exprs.append(f'{col}::text AS {col}')
+            exprs.append(f"to_json({col})::text AS {col}")
+            atype = pa.string()
+        elif udt in ("jsonb", "json") or data_type in _TO_TEXT_TYPES:
+            exprs.append(f"{col}::text AS {col}")
+            atype = pa.string()
+        elif data_type == "numeric":
+            exprs.append(f"{col}::double precision AS {col}")
+            atype = pa.float64()
         else:
             exprs.append(col)
-    return exprs
+            atype = _PG_TO_ARROW.get(data_type, pa.string())
+        fields.append(pa.field(name, atype))
+    return exprs, pa.schema(fields)
 
 
 def _export_pg_table(
@@ -209,39 +239,30 @@ def _export_pg_table(
         total = conn.execute(
             f'SELECT COUNT(*) FROM "{src_table}"',  # noqa: S608
         ).fetchone()[0]
-        select = ", ".join(_pg_select_columns(conn, src_table))
-        chunks: list[pa.Table] = []
-        # server-side cursor so we stream instead of loading the whole table
+        exprs, schema = _pg_columns(conn, src_table)
+        select = ", ".join(exprs)
+        # schema is known up front, so we open the writer immediately and stream
+        # each batch straight to disk -- constant memory, no per-table buffering.
         with (
+            pq.ParquetWriter(
+                output_dir / f"{out_name}.parquet", schema, compression="snappy"
+            ) as writer,
             conn.cursor(name=f"pq_{out_name}") as cur,
             tqdm(total=total, desc=out_name, unit="row", leave=False) as pbar,
         ):
             cur.itersize = batch_size
             cur.execute(f"SELECT {select} FROM \"{src_table}\"")  # noqa: S608
-            cols = None
             while True:
                 batch = cur.fetchmany(batch_size)
                 if not batch:
                     break
-                if cols is None:
-                    cols = [d.name for d in cur.description]
-                chunks.append(pa.Table.from_pandas(pd.DataFrame(batch, columns=cols)))
+                columns = list(zip(*batch, strict=True))  # rows -> columns
+                arrays = [
+                    pa.array(columns[i], type=schema.field(i).type)
+                    for i in range(len(schema))
+                ]
+                writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
                 pbar.update(len(batch))
-
-    if not chunks:
-        return
-
-    # ponytail: buffers all chunks per table then reconciles, same as the
-    # sqlite path. Fine at current sizes; go incremental if a table outgrows RAM.
-    unified_schema = _reconcile_schemas([c.schema for c in chunks])
-    chunks = [c.cast(unified_schema) for c in chunks]
-    with pq.ParquetWriter(
-        output_dir / f"{out_name}.parquet",
-        unified_schema,
-        compression="snappy",
-    ) as writer:
-        for table_chunk in chunks:
-            writer.write_table(table_chunk)
 
 
 def _fetch_all_tables(db_file: Path, tables: list[tuple[str, Path]]) -> None:
