@@ -110,6 +110,33 @@ _TARGETS = (
 )
 
 
+# SRA/AE fold pub_tsv only from study_publications, but the two linkage sources
+# barely overlap: most SRA studies with a paper carry it as a bare pmid in
+# pubmed_id_pysradb, not a study_publications row. Measured 2026-07-25: 112,496
+# SRA studies have a pmid that resolves to a pubmed_metadata title yet pub_tsv is
+# still NULL (only 12,026 of the resolvable ones were already covered). This is
+# the same pmid->pubmed_metadata path DRA/GEA use, applied as a fallback so the
+# richer study_publications source still wins (guarded by pub_tsv IS NULL).
+# GEO is excluded: its pmid is a jsonb array, a different shape, and unmeasured.
+_PMID_FALLBACK_TARGETS = (
+    ("sra_studies", "pubmed_id_pysradb"),
+    ("arrayexpress_experiments", "pubmed_id_pysradb"),
+)
+
+
+def _pmid_fallback_populate(table: str, pmid_col: str) -> str:
+    """Fill pub_tsv from the study's own pmid where study_publications did not.
+    Re-runnable: only touches rows whose pub_tsv is still NULL."""
+    return f"""
+    UPDATE {table} t
+    SET pub_tsv = setweight(to_tsvector('english', p.title), 'C')
+    FROM pubmed_metadata p
+    WHERE p.pmid = t.{pmid_col}
+      AND p.title IS NOT NULL
+      AND t.pub_tsv IS NULL
+    """
+
+
 # --------------------------------------------------------------------------
 # DRA and GEA. These have no study_publications rows at all, so the title comes
 # from pubmed_metadata via the pmid the study already carries. Both columns hold
@@ -233,6 +260,15 @@ def pub_tsv_transfer(pg_url: str) -> None:
             # 3b) GEO series whose paper arrived after their last tsv rebuild are
             #     covered by 3); series with no publication never fire the
             #     trigger, and need no rebuild (pub_tsv stays NULL).
+
+            # 3c) SRA/AE fallback: fold the pmid-resolved title for rows that
+            #     study_publications missed. Runs after 3) so pub_tsv IS NULL
+            #     means "not covered", not "not tried yet".
+            for table, pmid_col in _PMID_FALLBACK_TARGETS:
+                logger.info("pmid-fallback pub_tsv for %s ...", table)
+                cur.execute(_pmid_fallback_populate(table, pmid_col))
+                logger.info("  %s rows updated", cur.rowcount)
+                conn.commit()
 
             # 4) SRA/AE: fold pub_tsv into the generated tsv (guarded).
             _redefine_generated_tsv(
