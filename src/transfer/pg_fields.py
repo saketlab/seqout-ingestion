@@ -106,6 +106,7 @@ _SRA_STUDIES_INSERT_COLS = [
     "library_strategies",
     "instrument_models",
     "platforms",
+    "library_sources",
 ]
 _SRA_GEOCODE_SOURCE_FIELDS = [
     "place_name",

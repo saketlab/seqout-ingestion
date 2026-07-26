@@ -878,6 +878,7 @@ def _sra_studies_batch_modifier(
         study_strategies: dict[str, set[str]] = defaultdict(set[str])
         study_models: dict[str, set[str]] = defaultdict(set[str])
         study_platforms: dict[str, set[str]] = defaultdict(set[str])
+        study_sources: dict[str, set[str]] = defaultdict(set[str])
         study_sample_accs: dict[str, set[str]] = defaultdict(set[str])
         all_sample_accs: set[str] = set()
 
@@ -885,11 +886,11 @@ def _sra_studies_batch_modifier(
             unique_studies = list(set(all_accessions))
             conn = _get_conn(sra_db_file)
 
-            for study, strategy, model, platform, samples in batch_query_in(
+            for study, strategy, model, platform, source, samples in batch_query_in(
                 conn,
                 """SELECT
                     study, library_strategy, instrument_model,
-                    platform, samples
+                    platform, library_source, samples
                 FROM sra_experiments WHERE study""",
                 unique_studies,
                 batch_size,
@@ -900,6 +901,8 @@ def _sra_studies_batch_modifier(
                     study_models[study].add(model)
                 if platform:
                     study_platforms[study].add(platform)
+                if source and (source := source.strip()):  # values arrive dirty
+                    study_sources[study].add(source)
                 # sra_samples has no study column, so organisms take the same
                 # two hops the project page does: study -> experiment.samples
                 # -> sample.scientific_name.
@@ -969,6 +972,7 @@ def _sra_studies_batch_modifier(
             library_strategies = sorted(study_strategies.get(study_acc, set[str]()))
             instrument_models = sorted(study_models.get(study_acc, set[str]()))
             platforms = sorted(study_platforms.get(study_acc, set[str]()))
+            library_sources = sorted(study_sources.get(study_acc, set[str]()))
             countries = sorted(accession_countries.get(meta["accession"], set[str]()))
 
             bioproject_id = None
@@ -987,6 +991,7 @@ def _sra_studies_batch_modifier(
             modified["library_strategies"] = library_strategies
             modified["instrument_models"] = instrument_models
             modified["platforms"] = platforms
+            modified["library_sources"] = library_sources
 
             results.append(modified)
 

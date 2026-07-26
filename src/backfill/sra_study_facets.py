@@ -9,8 +9,8 @@ submission missed most of them. Measured against prod, ~12.6% of SRA studies
 carried a wrong organism list — and search filters on that column directly
 (`s.organisms @> ARRAY[...]`).
 
-This rewrites organisms / library_strategies / instrument_models / platforms
-from the study's own experiments and samples, then refreshes the
+This rewrites organisms / library_strategies / instrument_models / platforms /
+library_sources from the study's own experiments and samples, then refreshes the
 organism_growth_monthly matview that reads them (skip with --skip-refresh).
 
 An empty recompute never overwrites a stored value: ~4% of studies have samples
@@ -70,7 +70,16 @@ computed AS (
             SELECT DISTINCT e.platform FROM sra_experiments e
             WHERE e.study = t.accession AND e.platform IS NOT NULL
             ORDER BY e.platform
-        ) AS platforms
+        ) AS platforms,
+        ARRAY(
+            -- library_source arrives dirty with leading/trailing tabs and
+            -- newlines; trim so a clean value and its whitespaced twin do not
+            -- become two distinct facet values. The explicit charset is
+            -- required: single-arg btrim strips spaces only, not tab/newline/CR.
+            SELECT DISTINCT btrim(e.library_source, E' \t\n\r') FROM sra_experiments e
+            WHERE e.study = t.accession AND btrim(e.library_source, E' \t\n\r') <> ''
+            ORDER BY btrim(e.library_source, E' \t\n\r')
+        ) AS library_sources
     FROM target t
 ),
 facts AS (
@@ -92,7 +101,10 @@ facts AS (
              THEN c.instrument_models
              ELSE COALESCE(s.instrument_models, '{{}}') END AS instrument_models,
         CASE WHEN cardinality(c.platforms) > 0
-             THEN c.platforms ELSE COALESCE(s.platforms, '{{}}') END AS platforms
+             THEN c.platforms ELSE COALESCE(s.platforms, '{{}}') END AS platforms,
+        CASE WHEN cardinality(c.library_sources) > 0
+             THEN c.library_sources
+             ELSE COALESCE(s.library_sources, '{{}}') END AS library_sources
     FROM computed c
     JOIN sra_studies s ON s.accession = c.accession
 )
@@ -103,6 +115,7 @@ WHERE f.organisms          IS DISTINCT FROM COALESCE(s.organisms, '{{}}')
    OR f.library_strategies IS DISTINCT FROM COALESCE(s.library_strategies, '{{}}')
    OR f.instrument_models  IS DISTINCT FROM COALESCE(s.instrument_models, '{{}}')
    OR f.platforms          IS DISTINCT FROM COALESCE(s.platforms, '{{}}')
+   OR f.library_sources    IS DISTINCT FROM COALESCE(s.library_sources, '{{}}')
 """
 
 # One statement per batch, not per row. The DB does this work in microseconds;
@@ -115,9 +128,10 @@ UPDATE sra_studies AS s
 SET organisms = v.organisms,
     library_strategies = v.library_strategies,
     instrument_models = v.instrument_models,
-    platforms = v.platforms
+    platforms = v.platforms,
+    library_sources = v.library_sources
 FROM (VALUES %s) AS v(accession, organisms, library_strategies,
-                      instrument_models, platforms)
+                      instrument_models, platforms, library_sources)
 WHERE s.accession = v.accession
 """
 
@@ -180,12 +194,16 @@ def main() -> None:
                 # The arrays need an explicit cast: a VALUES list gives Postgres
                 # nothing to infer element types from.
                 values = sql.SQL(", ").join(
-                    sql.SQL("({}, {}::text[], {}::text[], {}::text[], {}::text[])").format(
+                    sql.SQL(
+                        "({}, {}::text[], {}::text[], {}::text[], {}::text[],"
+                        " {}::text[])",
+                    ).format(
                         sql.Literal(r["accession"]),
                         sql.Literal(r["organisms"]),
                         sql.Literal(r["library_strategies"]),
                         sql.Literal(r["instrument_models"]),
                         sql.Literal(r["platforms"]),
+                        sql.Literal(r["library_sources"]),
                     )
                     for r in batch
                 )
