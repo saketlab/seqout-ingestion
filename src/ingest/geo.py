@@ -50,9 +50,9 @@ GEO_SQL_STATEMENTS: dict[TableType, str] = {
     ),
     TableType.Series: (
         "INSERT OR REPLACE INTO geo_series "
-        "(accession, overall_design, pubmed_id, relation, samples_ref, "
+        "(accession, overall_design, pubmed_id, citation, relation, samples_ref, "
         "published_at, updated_at, summary, supplementary_data, title, series_type) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ),
     TableType.Contributors: (
         "INSERT OR REPLACE INTO geo_contributors "
@@ -534,6 +534,13 @@ def _get_series(root: ET._Element) -> list[tuple] | None:
     overall_design = _findtext(series, "Overall-Design")
     pubmed_ids_list = [p.text for p in series.findall(_wrap_ns("Pubmed-ID"))]
     pubmed_ids = json.dumps(pubmed_ids_list) if pubmed_ids_list else None
+    # GEO records some references as a <Citation> DOI/URL instead of a <Pubmed-ID>;
+    # capture it so DOI-only series (no linked PMID) aren't left blank.
+    # TODO: resolve these citation DOIs -> PMID (esearch "<doi>[DOI]" or idconv)
+    # and backfill pubmed_id when empty. Deferred for now — we only store the raw
+    # citation here.
+    citations_list = [c.text for c in series.findall(_wrap_ns("Citation"))]
+    citations = json.dumps(citations_list) if citations_list else None
     relations_raw = _et_to_dict(series.findall(_wrap_ns("Relation")))
     relations = json.dumps(relations_raw) if relations_raw else None
     sample_refs_raw = _et_to_dict(series.findall(_wrap_ns("Sample-Ref")))
@@ -562,6 +569,7 @@ def _get_series(root: ET._Element) -> list[tuple] | None:
             accession,
             overall_design,
             pubmed_ids,
+            citations,
             relations,
             sample_refs,
             published_at,

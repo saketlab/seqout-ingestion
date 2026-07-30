@@ -3,6 +3,7 @@ from typing import Literal
 
 import typer
 
+from backfill.citation_pmids import backfill_citation_pmids
 from backfill.download_links import backfill_download_links
 from backfill.dra_download_links import backfill_dra_download_links
 from backfill.pubmed_ids import backfill_pubmed_ids
@@ -100,6 +101,30 @@ def pm_meta(
         retries,
         timeout,
         is_dry_run,
+    )
+
+
+@backfill_app.command()
+def citation_pmids(
+    geo_db_file: Path = typer.Option(..., "--geo-db-file"),
+    ncbi_keys_file: Path = typer.Option(...),
+    num_workers: int = _NUM_WORKERS_FLAG,
+    batch_size: int = _BATCH_SIZE_FLAG,
+    is_dry_run: bool = typer.Option(default=False),
+    retries: int = typer.Option(20),
+    timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
+    process_all: bool = typer.Option(default=False),
+) -> None:
+    """Resolve GEO <Citation> DOIs to PMIDs into geo_series.pubmed_id_citation."""
+    backfill_citation_pmids(
+        geo_db_file,
+        ncbi_keys_file,
+        num_workers,
+        batch_size,
+        is_dry_run,
+        retries,
+        timeout,
+        process_all,
     )
 
 

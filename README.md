@@ -39,6 +39,7 @@ just ingest_gsa_human                              # GSA-Human (HRA), open-acces
 
 # Backfill supplementary data
 just backfill_pm_ids
+just backfill_citation_pmids   # GEO <Citation> DOI -> pmid; must precede pm_meta
 just backfill_pm_meta
 just backfill_download_links
 

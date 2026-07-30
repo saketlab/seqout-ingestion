@@ -137,6 +137,37 @@ def _pmid_fallback_populate(table: str, pmid_col: str) -> str:
     """
 
 
+# GEO has its own fallback: unlike SRA/AE, its pmid columns are text[] arrays
+# (pubmed_id, pubmed_id_citation) plus the scalar pubmed_id_pysradb. Native
+# pubmed_id is already covered via study_publications (~97.5%), so only the two
+# backfilled sources are folded here. Setting pub_tsv fires the GEO tsv trigger,
+# so tsv is rebuilt in the same pass -- no generated-column redefine needed.
+# To narrow to citation-only, drop the pubmed_id_pysradb UNION arm below.
+_GEO_PMID_FALLBACK_POPULATE = """
+UPDATE geo_series t
+SET pub_tsv = sub.ptsv
+FROM (
+    SELECT gp.accession,
+           setweight(to_tsvector('english',
+               string_agg(DISTINCT p.title, ' ')), 'C') AS ptsv
+    FROM (
+        SELECT g.accession, unnest(g.pubmed_id_citation) AS pmid
+        FROM geo_series g
+        WHERE g.pub_tsv IS NULL AND g.pubmed_id_citation IS NOT NULL
+        UNION
+        SELECT g.accession, g.pubmed_id_pysradb AS pmid
+        FROM geo_series g
+        WHERE g.pub_tsv IS NULL
+          AND g.pubmed_id_pysradb IS NOT NULL AND g.pubmed_id_pysradb <> ''
+    ) gp
+    JOIN pubmed_metadata p ON p.pmid = gp.pmid
+    WHERE p.title IS NOT NULL
+    GROUP BY gp.accession
+) sub
+WHERE t.accession = sub.accession AND t.pub_tsv IS NULL
+"""
+
+
 # --------------------------------------------------------------------------
 # DRA and GEA. These have no study_publications rows at all, so the title comes
 # from pubmed_metadata via the pmid the study already carries. Both columns hold
@@ -260,6 +291,14 @@ def pub_tsv_transfer(pg_url: str) -> None:
             # 3b) GEO series whose paper arrived after their last tsv rebuild are
             #     covered by 3); series with no publication never fire the
             #     trigger, and need no rebuild (pub_tsv stays NULL).
+            #
+            #     GEO pmid fallback: for series study_publications missed, fold the
+            #     title resolved from pubmed_id_citation / pubmed_id_pysradb. The
+            #     UPDATE fires the trigger, so tsv is rebuilt in the same pass.
+            logger.info("pmid-fallback pub_tsv for geo_series ...")
+            cur.execute(_GEO_PMID_FALLBACK_POPULATE)
+            logger.info("  %s rows updated", cur.rowcount)
+            conn.commit()
 
             # 3c) SRA/AE fallback: fold the pmid-resolved title for rows that
             #     study_publications missed. Runs after 3) so pub_tsv IS NULL

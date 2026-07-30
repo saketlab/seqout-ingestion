@@ -4,6 +4,7 @@ _GEO_SERIES_SELECT_COLS = [
     "summary",
     "title",
     "pubmed_id",
+    "citation",
     "samples_ref",
     "series_type",
     "relation",
@@ -12,6 +13,7 @@ _GEO_SERIES_SELECT_COLS = [
     "updated_at",
     "pubmed_id_pysradb",
     "pubmed_last_checked",
+    "pubmed_id_citation",
 ]
 _GEO_SERIES_INSERT_COLS = [
     *_GEO_SERIES_SELECT_COLS,

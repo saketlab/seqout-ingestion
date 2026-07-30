@@ -55,6 +55,12 @@ PMID_EXTRACT_QUERIES = {
             "SELECT DISTINCT pubmed_id_pysradb FROM geo_series"
             " WHERE pubmed_id_pysradb IS NOT NULL AND pubmed_id_pysradb != ''"
         ),
+        (
+            "SELECT DISTINCT value"
+            " FROM geo_series, json_each(geo_series.pubmed_id_citation)"
+            " WHERE pubmed_id_citation IS NOT NULL AND pubmed_id_citation != ''"
+            " AND pubmed_id_citation != '[]' AND json_valid(pubmed_id_citation)"
+        ),
     ],
     "ae": [
         (

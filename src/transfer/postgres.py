@@ -782,6 +782,10 @@ def _geo_series_batch_modifier(
 
             modified = dict(value)
             modified["pubmed_id"] = _convert_to_json(modified["pubmed_id"])
+            modified["citation"] = _convert_to_json(modified["citation"])
+            modified["pubmed_id_citation"] = _convert_to_json(
+                modified["pubmed_id_citation"]
+            )
             modified["samples_ref"] = meta["samples"]
             modified["series_type"] = _convert_to_json(modified["series_type"])
             modified["relation"] = [Jsonb(x) for x in meta["relations"]]

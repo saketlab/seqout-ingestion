@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS geo_series (
     summary              TEXT,
     title                TEXT,
     pubmed_id            TEXT CHECK (json_valid(pubmed_id)),
+    citation             TEXT CHECK (json_valid(citation)),
     samples_ref          TEXT CHECK (json_valid(samples_ref)),
     series_type          TEXT CHECK (json_valid(series_type)),
     relation             TEXT CHECK (json_valid(relation)),
@@ -11,7 +12,11 @@ CREATE TABLE IF NOT EXISTS geo_series (
     published_at         DATE,
     updated_at           DATE,
     pubmed_id_pysradb    TEXT,
-    pubmed_last_checked  DATE
+    pubmed_last_checked  DATE,
+    -- PMID(s) resolved from the <Citation> DOI (json array). Filled by the
+    -- citation_pmids backfill; carried to Postgres as pubmed_id_citation text[].
+    pubmed_id_citation   TEXT CHECK (json_valid(pubmed_id_citation)),
+    citation_pmid_checked DATE
 );
 
 CREATE TABLE IF NOT EXISTS geo_samples (

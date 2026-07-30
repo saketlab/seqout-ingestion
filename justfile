@@ -185,6 +185,16 @@ backfill_pm_ids *flags:
         {{ flags }}
 
 [group("backfill")]
+backfill_citation_pmids *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} backfill citation-pmids \
+        --geo-db-file {{ GEO_DB_FILE }} \
+        --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
+        --batch-size {{ BATCH_SIZE }} \
+        --retries {{ RETRIES }} \
+        --timeout {{ TIMEOUT }} \
+        {{ flags }}
+
+[group("backfill")]
 backfill_pm_meta *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill pm-meta \
         --output-dir {{ DATA_DIR }} \
