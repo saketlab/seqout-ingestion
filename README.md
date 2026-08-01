@@ -214,6 +214,27 @@ Normalize free-text sample `age` into a numeric `age_days` (+ `age_group`, `pren
 | `age normalize` | Parse raw ages → `age_norm.sqlite3` | `--source-db-file`, `--output-dir` |
 | `transfer age` | Annotate `ontology_samples_v4` with age columns | `--age-norm-db-file` |
 
+### `ontology`
+
+Rebuild the Neo4j ontology graph that powers query expansion and the search
+page's deep-dive explorer. **Not part of the nightly pipeline** — it is rebuilt
+roughly once a year, when the source ontologies publish new releases. Read
+[`docs/ontology_graph.md`](./docs/ontology_graph.md) before running it.
+
+Needs `NEO4J_URI` / `NEO4J_USER` / `NEO4J_PASSWORD` (prod sits behind an SSH
+tunnel). `ontology build` is the whole rebuild; the rest are its stages, exposed
+so an interrupted run can resume.
+
+| Command | Description | Key args |
+|---|---|---|
+| `ontology list` | Show the registry: every ontology, its source URL, what it contributes | — |
+| `ontology build` | Download → extract → load → stamp `has_children` | `--output-dir`, `--only`, `--force-download` |
+| `ontology download` | Fetch raw releases into `$DATA_DIR/ontology/raw/` | `--output-dir`, `--only`, `--force` |
+| `ontology extract` | Parse raw releases into synonym CSVs | `--output-dir`, `--only` |
+| `ontology load` | Load extracted artifacts into Neo4j | `--output-dir`, `--only` |
+| `ontology has-children` | Recompute the `has_children` flag | — |
+| `ontology stats` | Node/relationship counts, to check a rebuild | — |
+
 ### `embed`
 
 Requires the CUDA tox environment. Embed accessions, compute coordinates/clusters/neighbors, and generate labels.

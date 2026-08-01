@@ -8,6 +8,7 @@ from cli.backfill import backfill_app
 from cli.embed import embed_app
 from cli.geocode import geocode_app
 from cli.ingest import ingest_app
+from cli.ontology import ontology_app
 from cli.sc_enrich import sc_enrich_app
 from cli.transfer import transfer_app
 from cli.unify import unify_app
@@ -47,6 +48,7 @@ cli.add_typer(sc_enrich_app, name="sc_enrich")
 cli.add_typer(transfer_app, name="transfer")
 cli.add_typer(embed_app, name="embed")
 cli.add_typer(age_app, name="age")
+cli.add_typer(ontology_app, name="ontology")
 
 if __name__ == "__main__":
     cli()

@@ -272,6 +272,36 @@ transfer_parquet *flags:
         {{ _transfer_args }} \
         {{ flags }}
 
+# Rebuild the Neo4j ontology graph from scratch. Rarely run -- see docs/ontology_graph.md.
+# Needs $NEO4J_PASSWORD, and $NEO4J_URI pointing at the server (prod is behind an SSH tunnel).
+[group("ontology")]
+ontology_build *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology build \
+        --output-dir {{ DATA_DIR }} \
+        {{ flags }}
+
+# The stages of ontology_build, for resuming a run that died partway.
+[group("ontology")]
+ontology_download *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology download --output-dir {{ DATA_DIR }} {{ flags }}
+
+[group("ontology")]
+ontology_extract *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology extract --output-dir {{ DATA_DIR }} {{ flags }}
+
+[group("ontology")]
+ontology_load *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology load --output-dir {{ DATA_DIR }} {{ flags }}
+
+# Refresh the has_children flag the deep-dive explorer reads. Run after any load.
+[group("ontology")]
+ontology_has_children *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology has-children {{ flags }}
+
+[group("ontology")]
+ontology_stats *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology stats {{ flags }}
+
 [group("age")]
 age_normalize *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} age normalize \
