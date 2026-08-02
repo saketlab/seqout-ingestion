@@ -23,6 +23,15 @@ def postgres(
     gsa_db_file: Path | None = typer.Option(None),
     gsa_human_db_file: Path | None = typer.Option(None),
     gsa_bioproject_db_file: Path | None = typer.Option(None),
+    prune_publications: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--prune-publications",
+        help=(
+            "delete study_publications rows absent from this run's sqlite "
+            "buffers. Only safe when those buffers hold the full history -- "
+            "on a fresh or partial DATA_DIR this wipes the table."
+        ),
+    ),
 ) -> None:
     from transfer.postgres import postgres_transfer
 
@@ -41,6 +50,7 @@ def postgres(
         gsa_db_file=gsa_db_file,
         gsa_human_db_file=gsa_human_db_file,
         gsa_bioproject_db_file=gsa_bioproject_db_file,
+        prune_publications=prune_publications,
     )
 
 

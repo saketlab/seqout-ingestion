@@ -46,6 +46,7 @@ from transfer.pg_fields import (
     _UNIFIED_METADATA_CENTERS_SELECT_COLS,
     _UNIFIED_METADATA_INSERT_COLS,
     _UNIFIED_METADATA_SELECT_COLS,
+    non_nulling_update,
 )
 
 type _Modifier = Callable[[list[dict]], list[dict]]
@@ -78,6 +79,8 @@ def postgres_transfer(
     gsa_db_file: Path | None = None,
     gsa_human_db_file: Path | None = None,
     gsa_bioproject_db_file: Path | None = None,
+    *,
+    prune_publications: bool = False,
 ) -> None:
     table_info = {
         "geo_series": _TableInfo(
@@ -264,6 +267,7 @@ def postgres_transfer(
                 unified_metadata_db_file,
                 pubmed_metadata_db_file,
                 read_batch_size,
+                prune_publications,
             ),
         ),
     )
@@ -345,16 +349,17 @@ def _transfer_helper(
         )
 
         conflict_cols_str = ", ".join(conflict_cols) if conflict_cols else None
-        set_clause = (
-            ", ".join(
-                f"{c} = EXCLUDED.{c}" for c in insert_col_list if c not in conflict_cols
+        update_sql = (
+            non_nulling_update(
+                table_name,
+                [c for c in insert_col_list if c not in conflict_cols],
             )
             if conflict_cols
-            else None
+            else ""
         )
         on_conflict_sql = (
-            f"ON CONFLICT ({conflict_cols_str}) DO UPDATE SET {set_clause}"
-            if conflict_cols
+            f"ON CONFLICT ({conflict_cols_str}) DO UPDATE {update_sql}"
+            if update_sql
             else "ON CONFLICT DO NOTHING"
         )
 
@@ -1520,6 +1525,7 @@ def _transfer_study_publications(
     unified_metadata_db_file: Path,
     pubmed_metadata_db_file: Path,
     batch_size: int,
+    prune: bool = False,  # noqa: FBT002
 ) -> None:
     with (
         sqlite_connect(unified_metadata_db_file) as um_conn,
@@ -1599,6 +1605,20 @@ def _transfer_study_publications(
         # orphan cleanup: upserts leave rows for studies whose pmid was later
         # removed/corrected at source. groups is every current (accession,
         # source), so anything else in the table is stale.
+        #
+        # Off by default, and it must stay that way: "stale" is only meaningful
+        # if the sqlite buffers hold the WHOLE history. Run this against a fresh
+        # or partial DATA_DIR -- a new machine, a cleared cache, a failed
+        # backfill_pm_meta -- and every publication row postgres holds for a
+        # study outside this run gets deleted. Enable it deliberately, against
+        # buffers you know are complete, with a dump in hand.
+        if not prune:
+            logger.info(
+                "skipping study_publications orphan cleanup "
+                "(pass --prune-publications to enable)",
+            )
+            return
+
         with pg_conn.cursor() as cur:
             cur.execute(
                 "CREATE TEMP TABLE _valid_pub_keys (accession text, source text) "

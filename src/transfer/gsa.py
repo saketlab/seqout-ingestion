@@ -17,6 +17,7 @@ from tqdm import tqdm
 
 from helpers import sqlite_connect
 from ingest.gsa_common import GSA_DOWNLOAD_URL
+from transfer.pg_fields import non_nulling_update
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -192,10 +193,11 @@ def _upsert(
     """Batch upsert rows into a pre-existing Postgres table."""
     col_sql = ", ".join(cols)
     placeholders = ", ".join(["%s"] * len(cols))
-    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in cols if c != conflict_col)
+    update_sql = non_nulling_update(table, [c for c in cols if c != conflict_col])
+    action = f"DO UPDATE {update_sql}" if update_sql else "DO NOTHING"
     query = (
         f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "  # noqa: S608
-        f"ON CONFLICT ({conflict_col}) DO UPDATE SET {updates}"
+        f"ON CONFLICT ({conflict_col}) {action}"
     )
     with psycopg.connect(pg_url) as conn:
         batch: list[tuple] = []

@@ -16,6 +16,7 @@ import psycopg
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, sqlite_connect
+from transfer.pg_fields import non_nulling_update
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -484,12 +485,13 @@ def _upsert(
         guard = " WHERE " + " OR ".join(
             f"{table}.{c} IS NULL OR {table}.{c} = ''" for c in payload
         )
+        action = f"DO UPDATE SET {updates}{guard}"
     else:
-        updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in payload)
-        guard = ""
+        update_sql = non_nulling_update(table, payload)
+        action = f"DO UPDATE {update_sql}" if update_sql else "DO NOTHING"
     query = (
         f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "  # noqa: S608
-        f"ON CONFLICT ({conflict_col}) DO UPDATE SET {updates}{guard}"
+        f"ON CONFLICT ({conflict_col}) {action}"
     )
     with psycopg.connect(pg_url) as conn:
         batch: list[tuple] = []
