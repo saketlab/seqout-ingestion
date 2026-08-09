@@ -56,7 +56,7 @@ ignore = [
 "src/age/parser.py" = ["S101", "T201", "PLR2004", "FBT003", "PLR0911", "PT018"]
 # tests assert (S101), are not a package (INP001), and paste real archive
 # records verbatim as fixtures -- which are long lines (E501) with magic values.
-"tests/*" = ["S101", "INP001", "E501", "PLR2004", "PT017", "FLY002", "D", "ANN"]
+"tests/*" = ["S101", "INP001", "E501", "PLR2004", "PT017", "FLY002", "D", "ANN", "SLF001"]
 "recipes/*" = ["INP001", "BLE001", "T201"]
 
 [tool.ruff.format]

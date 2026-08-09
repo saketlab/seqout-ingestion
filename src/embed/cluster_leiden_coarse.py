@@ -28,10 +28,10 @@ from embed.embed_constants import COLLECTIONS
 
 logger = logging.getLogger(__name__)
 
-K = 5              # neighbours per node in the centroid graph
+K = 5  # neighbours per node in the centroid graph
 N_ITER = 10
 SEED = 42
-SHRINK = 3.0       # each new level ~3x coarser than the one below
+SHRINK = 3.0  # each new level ~3x coarser than the one below
 MIN_CLUSTERS = 20  # stop before a level degenerates into one mega-cluster
 RES_LO, RES_HI = 0.01, 200.0
 RES_STEPS = 40
@@ -166,7 +166,10 @@ def compute_coarse_leiden_clusters(chroma_db_dir, levels: int = 3) -> None:
         srt = np.sort(cur_s)[::-1]
         logger.info(
             "  %s: %d clusters | largest %.1f%% of corpus | median %d records",
-            name, n, 100 * srt[0] / total, int(np.median(cur_s)),
+            name,
+            n,
+            100 * srt[0] / total,
+            int(np.median(cur_s)),
         )
     logger.info("  agglomeration %.1fs", time.time() - t0)
 

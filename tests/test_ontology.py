@@ -66,7 +66,9 @@ def test_obo_synonym_filters(tmp_path):
                     "lbl": "old cell",
                     "meta": {
                         "deprecated": True,
-                        "synonyms": [{"pred": "hasExactSynonym", "val": "obsolete thing"}],
+                        "synonyms": [
+                            {"pred": "hasExactSynonym", "val": "obsolete thing"}
+                        ],
                     },
                 },
                 {"id": "CL:3", "meta": {}},  # unlabelled
@@ -83,7 +85,9 @@ def test_obo_id_prefixes_drop_imported_terms(tmp_path):
         {
             "id": "http://www.ebi.ac.uk/efo/EFO_1",
             "lbl": "ATAC-seq",
-            "meta": {"synonyms": [{"pred": "hasExactSynonym", "val": "ATAC sequencing"}]},
+            "meta": {
+                "synonyms": [{"pred": "hasExactSynonym", "val": "ATAC sequencing"}]
+            },
         },
         {
             "id": "http://purl.obolibrary.org/obo/UBERON_1",

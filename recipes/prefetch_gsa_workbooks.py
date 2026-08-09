@@ -1,5 +1,5 @@
 """
-Pre-fetch CRA workbooks. 
+Pre-fetch CRA workbooks.
 uv run python recipes/prefetch_gsa_workbooks.py --output-dir /NAS/saket/seqout-ddbj
 """
 

@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 _FTS_INDEX = "gsa_studies_search_fts_idx"
 
+
 # Compound names ("HepG2/C3A", "Hep-G2") tokenize as one path-like lexeme, so a
 # query for a part never matches. Normalize '/' and '-' to spaces before
 # to_tsvector (same rule as transfer.sample_tsv).
@@ -91,6 +92,7 @@ _POPULATE_SAMPLE_TSV = (
     " GROUP BY study_accession"
     ") sub WHERE s.accession = sub.study_accession"
 )
+
 
 # Generated tsv: study text + BioProject text + organism, sample text at D.
 # Uses `|| COALESCE` rather than concat_ws because concat_ws is only STABLE, and

@@ -124,7 +124,9 @@ def _swap_labels(conn: psycopg.Connection, labels_dir: Path) -> None:
         conn.commit()
         logger.info(
             "%s -> %s: %d labels%s",
-            leiden_level, app_level, len(rows),
+            leiden_level,
+            app_level,
+            len(rows),
             f" ({skipped} skipped)" if skipped else "",
         )
 

@@ -86,7 +86,9 @@ ON CONFLICT (name) DO UPDATE
     SET taxon_id = EXCLUDED.taxon_id, source = EXCLUDED.source
 """
 
-_PREVIEW = _POPULATE[_POPULATE.index("WITH pairs") : _POPULATE.index("INSERT INTO")] + """
+_PREVIEW = (
+    _POPULATE[_POPULATE.index("WITH pairs") : _POPULATE.index("INSERT INTO")]
+    + """
 SELECT COUNT(*) AS names,
        COUNT(*) FILTER (WHERE source = 'sra') AS from_sra,
        COUNT(*) FILTER (WHERE source = 'dra') AS from_dra,
@@ -94,6 +96,7 @@ SELECT COUNT(*) AS names,
        COUNT(*) FILTER (WHERE source = 'gea') AS from_gea
 FROM ranked WHERE pick = 1
 """
+)
 
 
 def connect(pg_url: str | None) -> psycopg.Connection:

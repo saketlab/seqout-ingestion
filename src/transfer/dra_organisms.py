@@ -18,9 +18,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
-_ADD_COLUMN = (
-    "ALTER TABLE dra_studies_search ADD COLUMN IF NOT EXISTS organisms text[]"
-)
+_ADD_COLUMN = "ALTER TABLE dra_studies_search ADD COLUMN IF NOT EXISTS organisms text[]"
 
 _POPULATE = """
 UPDATE dra_studies_search dss

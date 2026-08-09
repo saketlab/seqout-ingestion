@@ -61,7 +61,9 @@ _TOKEN_PATTERN = r"(?u)\b[a-zA-Z]{2,}\b"  # noqa: S105
 # server's slot count so no slot ever idles; past that the GPU is compute-bound and
 # more concurrency buys nothing (32-vs-12 measured within ~5% on a 16-slot server).
 CONCURRENCY = 12
-KW_WORKERS = 8  # processes for GIL-free TF-IDF keyword extraction (5ms each, stays ahead)
+KW_WORKERS = (
+    8  # processes for GIL-free TF-IDF keyword extraction (5ms each, stays ahead)
+)
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 2
 
@@ -394,7 +396,9 @@ def generate_labels(
     # failed) generation isn't cancelled+retried, which just doubles server load.
     workers = [
         (
-            OpenAI(base_url=e["base_url"], api_key="unused", max_retries=0, timeout=180.0),
+            OpenAI(
+                base_url=e["base_url"], api_key="unused", max_retries=0, timeout=180.0
+            ),
             e["model"],
             e.get("extra_body", {}),
             e["concurrency"],
@@ -429,7 +433,10 @@ def generate_labels(
 # as needed.
 # ---------------------------------------------------------------------------
 
-def _precompute_level(level: str, all_data: list[tuple[str, dict]], out_dir: Path) -> None:
+
+def _precompute_level(
+    level: str, all_data: list[tuple[str, dict]], out_dir: Path
+) -> None:
     out_path = out_dir / f"keywords_{level}.csv"
     existing: set[int] = set()
     if out_path.exists():
@@ -506,7 +513,9 @@ def precompute_keywords(
     logger.info("keywords cached to %s", keywords_dir)
 
 
-def _label_level_from_cache(kw_path: Path, out_path: Path, workers: list[tuple]) -> None:
+def _label_level_from_cache(
+    kw_path: Path, out_path: Path, workers: list[tuple]
+) -> None:
     existing: set[int] = set()
     if out_path.exists():
         with out_path.open() as fh:
@@ -519,7 +528,15 @@ def _label_level_from_cache(kw_path: Path, out_path: Path, workers: list[tuple])
             if cid in existing:
                 continue
             kw = r["keywords"].split("|") if r["keywords"] else []
-            rows.append((cid, kw, int(r["size"]), float(r["centroid_x"]), float(r["centroid_y"])))
+            rows.append(
+                (
+                    cid,
+                    kw,
+                    int(r["size"]),
+                    float(r["centroid_x"]),
+                    float(r["centroid_y"]),
+                )
+            )
     logger.info("  %s: %d to label", out_path.stem, len(rows))
     if not rows:
         return
@@ -548,7 +565,9 @@ def _label_level_from_cache(kw_path: Path, out_path: Path, workers: list[tuple])
             futs.append(lpool.submit(_label_batch, client, model, extra_body, batch))
         written = 0
         for lf in tqdm(
-            as_completed(futs), total=len(futs), desc=f"  llm {out_path.stem} (x{BATCH_SIZE})"
+            as_completed(futs),
+            total=len(futs),
+            desc=f"  llm {out_path.stem} (x{BATCH_SIZE})",
         ):
             batch_rows = lf.result()
             if not batch_rows:
@@ -593,7 +612,9 @@ def label_from_keywords(
         ]
     workers = [
         (
-            OpenAI(base_url=e["base_url"], api_key="unused", max_retries=0, timeout=180.0),
+            OpenAI(
+                base_url=e["base_url"], api_key="unused", max_retries=0, timeout=180.0
+            ),
             e["model"],
             e.get("extra_body", {}),
             e["concurrency"],

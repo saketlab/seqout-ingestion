@@ -170,6 +170,18 @@ def gsa_search_tsv(
 
 
 @transfer_app.command()
+def pentimento(
+    pg_url: str = typer.Option(...),
+    pentimento_db_file: Path = typer.Option(...),
+    batch_size: int = typer.Option(default=5000),
+) -> None:
+    """Load Pentimento into pg (counts, preflightx, microbe flags)."""
+    from transfer.pentimento import pentimento_transfer
+
+    pentimento_transfer(pg_url, pentimento_db_file, batch_size)
+
+
+@transfer_app.command()
 def parquet(
     output_dir: Path = typer.Option(...),
     sra_db_file: Path = typer.Option(...),

@@ -207,11 +207,11 @@ def main() -> None:
                     )
                     for r in batch
                 )
-                cur.execute(
-                    sql.SQL(_UPDATE_SQL.replace("%s", "{}")).format(values)
-                )
+                cur.execute(sql.SQL(_UPDATE_SQL.replace("%s", "{}")).format(values))
                 conn.commit()
-                print(f"  committed {min(start + _WRITE_BATCH, len(changed)):,}/{len(changed):,}")
+                print(
+                    f"  committed {min(start + _WRITE_BATCH, len(changed)):,}/{len(changed):,}"
+                )
     print(f"updated {len(changed):,} studies")
 
     if args.skip_refresh:

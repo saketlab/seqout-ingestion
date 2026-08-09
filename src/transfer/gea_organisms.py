@@ -19,9 +19,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
-_ADD_COLUMN = (
-    "ALTER TABLE gea_experiments ADD COLUMN IF NOT EXISTS organisms text[]"
-)
+_ADD_COLUMN = "ALTER TABLE gea_experiments ADD COLUMN IF NOT EXISTS organisms text[]"
 
 _POPULATE_FROM_SAMPLES = """
 UPDATE gea_experiments g

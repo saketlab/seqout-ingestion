@@ -270,7 +270,7 @@ def _export_pg_table(
             tqdm(total=total, desc=out_name, unit="row", leave=False) as pbar,
         ):
             cur.itersize = batch_size
-            cur.execute(f"SELECT {select} FROM \"{src_table}\"")  # noqa: S608
+            cur.execute(f'SELECT {select} FROM "{src_table}"')  # noqa: S608
             while True:
                 batch = cur.fetchmany(batch_size)
                 if not batch:

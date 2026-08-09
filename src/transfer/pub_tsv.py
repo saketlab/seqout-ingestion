@@ -342,8 +342,6 @@ def pub_tsv_transfer(pg_url: str) -> None:
                     f"ALTER TABLE {t.table} ADD COLUMN tsv tsvector"
                     f" GENERATED ALWAYS AS ({t.base_tsv}{_PUB_TAIL}) STORED"
                 )
-                cur.execute(
-                    f"CREATE INDEX {t.index_name} ON {t.table} USING gin (tsv)"
-                )
+                cur.execute(f"CREATE INDEX {t.index_name} ON {t.table} USING gin (tsv)")
                 conn.commit()
     logger.info("pub_tsv transfer done")
