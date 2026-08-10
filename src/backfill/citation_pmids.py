@@ -1,8 +1,9 @@
-"""Resolve the DOI in a GEO series' <Citation> to a PubMed PMID.
+"""
+Resolve the DOI in a GEO series' <Citation> to a PubMed PMID.
 
 GEO records some papers only as a <Citation> DOI, never a <Pubmed-ID> (ingest
 captures that raw text in geo_series.citation). This backfill pulls the DOI out
-of that free text and resolves it to a PMID via NCBI esearch `<doi>[DOI]` — the
+of that free text and resolves it to a PMID via NCBI esearch <doi>[DOI], the
 authoritative index lookup, NOT the SRA->PubMed elink used for pubmed_id_pysradb
 (which returns *citing* papers). The result lands in geo_series.pubmed_id_citation
 (json array), carried to Postgres as text[].
@@ -33,13 +34,11 @@ from helpers import sqlite_connect
 logger = logging.getLogger(__name__)
 
 ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-# DOI in free text; trailing sentence punctuation is trimmed after the match.
 _DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
 _TRAIL = ".,;:)]}>'\""
 # ~10 req/s per NCBI api_key; one distinct key per worker, so throttle per worker.
 _MIN_INTERVAL = 0.11
 
-# GEO series that carry a citation but no resolved pmid_citation yet.
 _MISSING_SQL = (
     "SELECT accession, citation FROM geo_series"
     " WHERE citation IS NOT NULL"

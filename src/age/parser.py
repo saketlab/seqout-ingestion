@@ -1,6 +1,4 @@
-"""
-Parse free-text sample ``age`` into a canonical numeric ``age_days``.
-"""
+"""Parse free-text sample age into a canonical numeric age_days."""
 
 from __future__ import annotations
 
@@ -33,7 +31,6 @@ _UNSPECIFIED = {
     "nd",
 }
 
-# Qualitative stage words
 _QUALITATIVE = (
     ("neonate", "neonate"),
     ("newborn", "neonate"),
@@ -49,7 +46,6 @@ _QUALITATIVE = (
     ("adult", "adult"),
 )
 
-# Prenatal stage words
 _PRENATAL_WORDS = (
     "fetus",
     "foetus",
@@ -120,17 +116,14 @@ def parse_age(raw: str) -> AgeNorm:
     if low in _UNSPECIFIED:
         return AgeNorm(None, "unspecified", False, raw)
 
-    # Prenatal: stage words, embryonic-day (E14), or fetal-weeks (16FW).
     if any(w in low for w in _PRENATAL_WORDS) or _EDAY_RE.match(s) or _FW_RE.match(s):
         return AgeNorm(None, "fetal", True, raw)
 
-    # Inequality (<1D, >90Y): parse the boundary value, keep its unit.
     m = _INEQ_RE.match(s)
     if m:
         inner = parse_age(m.group(1))
         return AgeNorm(inner.age_days, inner.age_group, inner.prenatal, raw)
 
-    # Range (55-59Y, 5-12M, 30-39, 8-10FW): midpoint of the two ends, shared unit.
     m = _RANGE_RE.match(s)
     if m:
         lo, hi, unit = _num(m.group(1)), _num(m.group(2)), m.group(3)
@@ -141,17 +134,14 @@ def parse_age(raw: str) -> AgeNorm:
             days = _unit_to_days(mid, unit)
             out = round(days, 3) if days is not None else None
             return AgeNorm(out, None, False, raw)
-        # bare range with no unit -> treat as years (age ranges like 30-39, 55-59)
         return AgeNorm(round(mid * DAYS_PER_YEAR, 3), None, False, raw)
 
-    # Bare number -> hours (confirmed); 0 is the junk placeholder.
     if _BARE_RE.match(s):
         v = _num(s)
         if v == 0:
             return AgeNorm(None, None, False, raw)
         return AgeNorm(round(v / HOURS_PER_DAY, 3), None, False, raw)
 
-    # Years (+ optional months): 30Y6M, 53Y, 1.5Y.
     m = _YM_RE.match(s)
     if m:
         days = _num(m.group(1)) * DAYS_PER_YEAR
@@ -159,18 +149,15 @@ def parse_age(raw: str) -> AgeNorm:
             days += _num(m.group(2)) * DAYS_PER_MONTH
         return AgeNorm(round(days, 3), None, False, raw)
 
-    # Single unit: 3M, 10W, <1D already stripped, 8760H.
     m = _UNIT_RE.match(s)
     if m:
         days = _unit_to_days(_num(m.group(1)), m.group(2))
         return AgeNorm(round(days, 3) if days is not None else None, None, False, raw)
 
-    # Qualitative stage words -> coarse group, no number.
     for word, group in _QUALITATIVE:
         if word in low:
             return AgeNorm(None, group, False, raw)
 
-    # Unparseable: never guess.
     return AgeNorm(None, None, False, raw)
 
 

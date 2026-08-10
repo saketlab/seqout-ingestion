@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-"""Build the organism_taxa lookup: scientific name -> NCBI taxon id.
+"""
+Build the organism_taxa lookup: scientific name -> NCBI taxon id.
 
 An organism's taxon id is a property of the organism, not of the study that
-happens to contain it — measured on prod, 315,817 of 315,997 distinct names map
+happens to contain it; measured on prod, 315,817 of 315,997 distinct names map
 to exactly one taxid (180 ambiguous, 0.06%). So it lives in one table rather
 than being copied into every project row, and the project endpoints join it
 when they build a response.
@@ -10,14 +11,14 @@ when they build a response.
 This leaves the `organisms text[]` columns and their GIN indexes alone, so the
 search filters (`organisms @> ARRAY[...]`) are unaffected.
 
-Sources, in precedence order — later ones only fill names the earlier lack:
+Sources in precedence order, each filling only the names the earlier ones lack:
     sra_samples   (scientific_name, taxon_id)   ~316k names
     dra_samples   (scientific_name, taxon_id)   +1,297
     geo_samples   channels[].Organism #text/@taxid  +319
     gea_samples   (organism, taxon_id)          +3
 Ambiguous names are resolved to their most frequently observed taxid.
 
-DRY RUN BY DEFAULT — reports what it would build. Pass --apply to write.
+Dry run by default, reporting what it would build; pass --apply to write.
 
     python -m backfill.organism_taxa            # report only
     python -m backfill.organism_taxa --apply    # create + populate
@@ -39,8 +40,7 @@ CREATE TABLE IF NOT EXISTS organism_taxa (
 );
 """
 
-# One statement: every source unioned, ranked, and de-duplicated server-side.
-# `rank` is the source precedence; `n` breaks ties within a source by how often
+# rank is the source precedence; n breaks ties within a source by how often
 # the pairing was observed, so an ambiguous name lands on its commonest taxid.
 _POPULATE = """
 WITH pairs AS (
@@ -100,8 +100,6 @@ FROM ranked WHERE pick = 1
 
 
 def connect(pg_url: str | None) -> psycopg.Connection:
-    # --pg-url matches the rest of the pipeline (see src/cli/transfer.py);
-    # PG_URL / DATABASE_URL are accepted so it can run unattended.
     url = pg_url or os.getenv("PG_URL") or os.getenv("DATABASE_URL")
     if not url:
         sys.exit("pass --pg-url, or set PG_URL / DATABASE_URL")
@@ -128,7 +126,7 @@ def main() -> None:
         print(f"    from gea_samples : {gea:,}")
 
         if not args.apply:
-            print("\ndry run — nothing written. Re-run with --apply to build.")
+            print("\ndry run, nothing written. Re-run with --apply to build.")
             return
 
         with conn.cursor() as cur:

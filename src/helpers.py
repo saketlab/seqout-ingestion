@@ -404,7 +404,6 @@ def download_file_ftp(
     if not parsed.hostname or not parsed.path:
         raise ValueError(f"invalid FTP URL: {url}")
 
-    # tunnel FTP through SOCKS5 when set; None = direct
     orig_socket = socket.socket
     if socks_proxy:
         phost, _, pport = socks_proxy.partition(":")

@@ -1,4 +1,3 @@
--- GSA-Human — CNCB-NGDC Genome Sequence Archive for Human, HRA studies.
 -- Organism is implicitly Homo sapiens.
 
 CREATE TABLE IF NOT EXISTS gsa_human_studies (
@@ -127,7 +126,6 @@ CREATE TABLE IF NOT EXISTS gsa_human_run_files (
     PRIMARY KEY (run_accession, file_ord)
 );
 
--- Per-study download/parse status, for resume + reporting.
 CREATE TABLE IF NOT EXISTS gsa_human_fetch_log (
     study_accession TEXT PRIMARY KEY,       -- HRA...
     status          TEXT NOT NULL,          -- ok | empty | failed

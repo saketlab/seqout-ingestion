@@ -51,16 +51,12 @@ def test_obo_synonym_filters(tmp_path):
                     "meta": {
                         "synonyms": [
                             {"pred": "hasExactSynonym", "val": "T-lymphocyte"},
-                            # broad synonyms change what the user asked for
                             {"pred": "hasBroadSynonym", "val": "leukocyte"},
-                            # generic_terms entry, dropped
                             {"pred": "hasExactSynonym", "val": "cell"},
-                            # <= 2 chars, dropped
                             {"pred": "hasExactSynonym", "val": "TC"},
                         ],
                     },
                 },
-                # deprecated nodes never enter the graph
                 {
                     "id": "CL:2",
                     "lbl": "old cell",
@@ -131,15 +127,14 @@ def test_cellosaurus_uses_the_identifier_name_as_canonical(tmp_path):
       <cell-line><name-list><name type="synonym">orphan</name></name-list></cell-line>
     </cell-line-list></Cellosaurus>"""
     pairs = run(src, tmp_path, xml)
-    # "MCF7" -> "mcf7" but "MCF-7" -> "mcf 7": norm() folds hyphens to spaces and
-    # does not remove them, so the two spellings stay distinct nodes joined by
-    # MAPS_TO. That edge is the whole point -- it is what lets a search for
-    # "MCF7" find a study that only ever wrote "MCF-7".
+    # "MCF7" -> "mcf7" but "MCF-7" -> "mcf 7": norm() folds hyphens to spaces
+    # without removing them, so the two spellings stay distinct nodes joined by
+    # MAPS_TO. That edge is what lets a search for "MCF7" find a study that only
+    # ever wrote "MCF-7".
     assert pairs == {
         ("mcf7", "mcf 7"),
         ("michigan cancer foundation 7", "mcf 7"),
     }
-    # the second cell-line has no type="identifier" name, so it contributes nothing
     assert not any("orphan" in p for p in pairs)
 
 
@@ -173,7 +168,6 @@ def test_mesh_builds_hierarchy_from_tree_numbers(tmp_path):
     graph = json.loads(src.hierarchy_path(tmp_path).read_text())["graphs"][0]
     names = {n["id"]: n["lbl"] for n in graph["nodes"]}
     assert names == {"D001": "neoplasms", "D002": "breast neoplasms"}
-    # C04.588 -> parent tree C04 -> D001. C04 is top-level, so it gets no edge.
     assert graph["edges"] == [{"sub": "D002", "pred": "is_a", "obj": "D001"}]
 
 

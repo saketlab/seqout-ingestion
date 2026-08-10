@@ -1,4 +1,3 @@
--- Project-level BioProject metadata scraped from ngdc.cncb.ac.cn/bioproject/browse.
 -- Shaped like geo_series; publications/funding/pubmed_id are JSON text.
 CREATE TABLE IF NOT EXISTS gsa_projects (
     accession            TEXT PRIMARY KEY,   -- PRJCA...
@@ -20,7 +19,6 @@ CREATE TABLE IF NOT EXISTS gsa_projects (
     pubmed_last_checked  DATE                -- reserved for backfill; NULL in v1
 );
 
--- Per-project fetch/parse status for resume + reporting.
 CREATE TABLE IF NOT EXISTS gsa_bioproject_fetch_log (
     accession   TEXT PRIMARY KEY,            -- PRJCA...
     status      TEXT NOT NULL,               -- ok | empty | failed | no-english

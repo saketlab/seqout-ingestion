@@ -12,7 +12,6 @@ from helpers import exec_query_from_file, send_req, sqlite_connect
 
 logger = logging.getLogger(__name__)
 
-# to redirect urllib3 logs to warning instead of info level
 logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
 
 ENA_OUTPUT_DIR = "ena"
@@ -105,7 +104,6 @@ SAMPLE_FIELDS = [
     "keywords",
     "tag",
     "datahub",
-    # organism details
     "strain",
     "cultivar",
     "ecotype",
@@ -120,7 +118,6 @@ SAMPLE_FIELDS = [
     "mating_type",
     "sex",
     "germline",
-    # sampling / collection
     "collection_date",
     "collection_date_start",
     "collection_date_end",
@@ -143,7 +140,6 @@ SAMPLE_FIELDS = [
     "sample_material",
     "sample_capture_status",
     "protocol_label",
-    # environmental
     "environmental_sample",
     "environment_biome",
     "environment_feature",
@@ -155,7 +151,6 @@ SAMPLE_FIELDS = [
     "ph",
     "salinity",
     "temperature",
-    # host
     "host",
     "host_body_site",
     "host_genotype",
@@ -167,7 +162,6 @@ SAMPLE_FIELDS = [
     "host_status",
     "host_tax_id",
     "submitted_host_sex",
-    # biological features
     "cell_line",
     "cell_type",
     "dev_stage",
@@ -176,19 +170,16 @@ SAMPLE_FIELDS = [
     "tissue_type",
     "age",
     "experimental_factor",
-    # surveillance / clinical
     "serotype",
     "serovar",
     "surveillance_target",
     "target_gene",
-    # assembly / mag
     "assembly_quality",
     "assembly_software",
     "binning_software",
     "completeness_score",
     "contamination_score",
     "sequencing_method",
-    # taxonomy
     "tax_lineage",
     "taxonomic_classification",
     "taxonomic_identity_marker",

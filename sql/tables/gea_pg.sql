@@ -1,5 +1,4 @@
--- MAGE-TAB like ArrayExpress: mirrors arrayexpress_*, tsvector on the experiment table.
--- No is_only_ddbj -- nothing in GEA is mirrored anywhere.
+-- No is_only_ddbj, since nothing in GEA is mirrored anywhere.
 
 CREATE TABLE IF NOT EXISTS gea_experiments (
     accession                 TEXT PRIMARY KEY,

@@ -22,7 +22,7 @@ except ImportError:
         "system R install). install with: uv sync --extra rds"
     )
 
-    class LibrdataError(Exception):  # placeholder so `except LibrdataError` resolves
+    class LibrdataError(Exception):  # placeholder so except LibrdataError resolves
         pass
 
     class _MissingR:  # any attribute access raises the friendly hint
@@ -39,7 +39,6 @@ logger = logging.getLogger(__name__)
 # last rpy2-read .rds class; one worker per process, so a module holder is safe
 _rds_state: dict[str, str] = {"class": ""}
 
-# gene axis (nrow) of the last pyreadr-read .rds; -1 when unknown (rpy2 path skips it)
 _rds_genes: dict[str, int] = {"genes": -1}
 
 # nnz of the last .mtx counted; -1 when unknown, used to spot raw/unfiltered
@@ -62,7 +61,6 @@ def last_rds_genes() -> int:
 MIN_DISK_SPACE_BYTES = 5 * 1024**3
 POSSIBLE_MISNOMER_FILE_TYPES = [FileType.Csv, FileType.Tsv, FileType.Txt]
 
-# cheapest and most reliable first (early-exit prefers these)
 FILE_TYPE_PRIORITY = [
     FileType.Mtx,
     FileType.Barcodes,
@@ -77,7 +75,6 @@ FILE_TYPE_PRIORITY = [
     FileType.Rds,
 ]
 
-# counted from the first chunk, so stream only the head
 HEADER_STREAMABLE = frozenset(
     {
         FileType.Mtx,
@@ -90,13 +87,12 @@ HEADER_STREAMABLE = frozenset(
     },
 )
 
-# authoritative counts; the worker stops at the first positive one
 RELIABLE_TYPES = frozenset(
     {FileType.Mtx, FileType.Barcodes, FileType.H5, FileType.H5ad, FileType.Rds},
 )
 
-# cell-by-gene matrices: cells are rows, so keep them despite a "gene" in the
-# name and count rows, not columns
+# cell-by-gene matrices have cells as rows, so these are kept despite the "gene"
+# in the name and counted by row
 CELL_MAJOR_HINTS = (
     "cell_by_gene",
     "cellxgene",
@@ -106,7 +102,6 @@ CELL_MAJOR_HINTS = (
     "cell_by_feature",
 )
 
-# skip large non-matrix files
 SKIP_SUBSTRINGS = (
     "fragments.tsv",
     ".bam",
@@ -480,7 +475,6 @@ def count_tar_members_via_stream(
 
 @safe_process
 def _process_barcodes(path: Path, chunk_size: int) -> int:
-    # 10x barcodes.tsv has no header, so every line is a cell barcode
     with path.open("rb") as f:
         chunk = f.read(chunk_size)
     n = len(chunk.splitlines())
@@ -494,7 +488,6 @@ def _h5_count(f: Any) -> int:
         nonlocal n_cells
         if n_cells is not None:
             return
-        # match the leaf so a root-level "barcodes" dataset counts too
         if obj is not None and name.rsplit("/", 1)[-1] == "barcodes":
             n_cells = len(obj)
 
@@ -553,7 +546,6 @@ _H5_GENE_SUFFIXES = (
 )
 
 
-# bare leaf dataset names for the feature/gene axis (root-level, no group prefix)
 _H5_GENE_LEAVES = ("genes", "gene_names", "var_names")
 
 
@@ -720,7 +712,8 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
 
 @safe_process
 def _process_rds(path: Path, _: int) -> int:
-    # reset both holders so a stale class/gene count from a prior link can't leak
+    # reset both holders so a stale class or gene count from a prior link cannot
+    # leak
     _rds_state["class"] = ""
     _rds_genes["genes"] = -1
     try:
@@ -749,7 +742,7 @@ def _process_rds_rpy2(path: Path) -> int:
     try:
         ro.r(f'obj <- readRDS("{path}")')
     except Exception as exc:
-        # S4 class often undefined (e.g. monocle3 missing for a cell_data_set)
+        # S4 class is often undefined, e.g. monocle3 missing for a cell_data_set
         raise RdsReadError(str(path), f"readRDS failed: {exc}") from exc
 
     try:

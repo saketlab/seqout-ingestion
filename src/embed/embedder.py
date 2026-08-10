@@ -44,7 +44,6 @@ if not hasattr(DynamicCache, "get_usable_length"):
         self.get_seq_length()
     )
 
-# Adaptive batching: batch_size = TOKEN_BUDGET // longest_seq_in_batch.
 TOKEN_BUDGET = 16384
 CHARS_PER_TOKEN = 3  # conservative proxy for length estimation
 

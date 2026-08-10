@@ -1,27 +1,19 @@
 """
-Rebuild the GSA search table (``gsa_studies_search``) so its ``tsv`` indexes the
-rich metadata that lives one join away from the thin study record.
+Rebuild the GSA search table so its tsv indexes metadata one join away.
 
 The open GSA (CRA*) study record is almost always empty: ~93% have no
-``study_title`` of their own. The descriptive text sits on the linked BioProject
-(``gsa_projects``), the organism on ``gsa_studies.scientific_name``, and the
-biology on the samples (``gsa_samples``). None of that was searchable before.
+study_title of their own. The descriptive text sits on the linked BioProject
+(gsa_projects), the organism on gsa_studies.scientific_name, and the biology on
+gsa_samples, none of which were searchable before.
 
-A GENERATED column can't reference other tables, so the cross-table text is
-materialized into columns on ``gsa_studies_search`` first, then the ``tsv`` reads
-them:
+A GENERATED column cannot reference other tables, so the cross-table text is
+materialized onto gsa_studies_search first and the tsv reads it from there:
+project_title and project_summary from gsa_projects by project_name, organisms
+from gsa_studies.scientific_name, and sample_tsv aggregated per study from the
+gsa_samples title, description, tissue, disease and cell_type at weight D.
 
-  project_title / project_summary  <- gsa_projects (BioProject), by project_name
-  organisms                        <- gsa_studies.scientific_name (also returned
-                                       on result cards by the API)
-  sample_tsv                       <- gsa_samples title/description/tissue/
-                                       disease/cell_type, aggregated per study at
-                                       weight D (recall without outranking titles),
-                                       mirroring transfer.sample_tsv for the other
-                                       sources.
-
-Canonical schema (this module is the source of truth — the Postgres search table
-was built ad-hoc and has no DDL file; sql/tables/gsa.sql is the SQLite schema):
+This module is the canonical schema: the Postgres search table was built ad-hoc
+and has no DDL file, and sql/tables/gsa.sql covers only the SQLite side.
 
   gsa_studies_search(
     accession PK, study_title, study_description, study_name, center_name,
@@ -30,8 +22,8 @@ was built ad-hoc and has no DDL file; sql/tables/gsa.sql is the SQLite schema):
     tsv tsvector GENERATED ALWAYS AS (<_TSV_EXPR>) STORED
   )  -- GIN index gsa_studies_search_fts_idx on (tsv)
 
-Re-runnable: materialized columns are SET (not appended) and the redefine step is
-guarded so it runs only when the live tsv is out of date.
+Re-runnable: materialized columns are SET rather than appended, and the redefine
+step is guarded so it runs only when the live tsv is out of date.
 """
 
 import logging
@@ -43,14 +35,13 @@ logger = logging.getLogger(__name__)
 _FTS_INDEX = "gsa_studies_search_fts_idx"
 
 
-# Compound names ("HepG2/C3A", "Hep-G2") tokenize as one path-like lexeme, so a
-# query for a part never matches. Normalize '/' and '-' to spaces before
-# to_tsvector (same rule as transfer.sample_tsv).
+# compound names ("HepG2/C3A", "Hep-G2") tokenize as one path-like lexeme, so a
+# query for a part never matches; '/' and '-' become spaces before to_tsvector,
+# the same rule as transfer.sample_tsv
 def _norm(text_expr: str) -> str:
     return f"translate({text_expr}, '/-', '  ')"
 
 
-# New columns materialized onto gsa_studies_search for the tsv to read.
 _ENSURE_COLUMNS = """
 ALTER TABLE gsa_studies_search
     ADD COLUMN IF NOT EXISTS project_title   text,
@@ -59,8 +50,6 @@ ALTER TABLE gsa_studies_search
     ADD COLUMN IF NOT EXISTS sample_tsv       tsvector
 """
 
-# BioProject title/summary + organism, by the 1:1 study PK. project_name on the
-# search row is the PRJCA; gsa_projects.accession is the same PRJCA.
 _POPULATE_PROJECT = """
 UPDATE gsa_studies_search s
 SET project_title   = pr.title,
@@ -76,9 +65,6 @@ LEFT JOIN gsa_projects pr ON pr.accession = gs.project_name
 WHERE s.accession = gs.study_accession
 """
 
-# Per-study sample text at weight D. string_agg(DISTINCT ...) collapses replicate
-# samples; left(..., 400000) caps the aggregate well under the 1 MB tsvector limit
-# (a few studies have tens of thousands of samples). Matches transfer.sample_tsv.
 _POPULATE_SAMPLE_TSV = (
     "UPDATE gsa_studies_search s SET sample_tsv = sub.stsv FROM ("
     " SELECT study_accession,"
@@ -94,9 +80,9 @@ _POPULATE_SAMPLE_TSV = (
 )
 
 
-# Generated tsv: study text + BioProject text + organism, sample text at D.
-# Uses `|| COALESCE` rather than concat_ws because concat_ws is only STABLE, and
-# a GENERATED column expression must be IMMUTABLE.
+# generated tsv: study text, BioProject text and organism, sample text at D.
+# concat_ws is only STABLE and a GENERATED column expression must be IMMUTABLE,
+# hence || COALESCE.
 def _join(*cols: str) -> str:
     return " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
 
@@ -110,9 +96,8 @@ _TSV_EXPR = (
     + "), 'B') || "
     "setweight(to_tsvector('english', "
     + _norm(
-        # organisms[1], not array_to_string(organisms, ' '): array_to_string is
-        # only STABLE (fails immutability), and GSA studies carry a single
-        # organism. Subscripting is immutable.
+        # array_to_string is only STABLE and fails immutability; GSA studies
+        # carry a single organism, and subscripting is immutable
         _join("study_name", "project_name", "center_name", "organisms[1]")
     )
     + "), 'C') || "
@@ -121,8 +106,11 @@ _TSV_EXPR = (
 
 
 def _tsv_up_to_date(cur: psycopg.Cursor) -> bool:
-    """True once the generated tsv already folds in the BioProject title and the
-    sample text (both markers), so a re-run of an up-to-date DB is a no-op."""
+    """
+    True once the generated tsv folds in both BioProject title and sample text.
+
+    Both markers must be present, so a re-run of an up-to-date DB is a no-op.
+    """
     cur.execute(
         "SELECT generation_expression FROM information_schema.columns"
         " WHERE table_name = 'gsa_studies_search' AND column_name = 'tsv'"
@@ -133,9 +121,12 @@ def _tsv_up_to_date(cur: psycopg.Cursor) -> bool:
 
 
 def _redefine_tsv(cur: psycopg.Cursor) -> None:
-    """Drop + re-add the GENERATED tsv with the enriched expression and rebuild
-    its GIN index. PG16 has no ALTER ... SET EXPRESSION; DROP COLUMN also drops
-    the dependent index, so it's recreated by name after."""
+    """
+    Re-add the GENERATED tsv with the enriched expression.
+
+    PG16 has no ALTER ... SET EXPRESSION, and DROP COLUMN takes the dependent
+    GIN index with it, so the index is recreated by name.
+    """
     if _tsv_up_to_date(cur):
         logger.info("gsa_studies_search.tsv already up to date; skipping redefine")
         return
@@ -149,11 +140,11 @@ def _redefine_tsv(cur: psycopg.Cursor) -> None:
 
 
 def gsa_search_tsv_transfer(pg_url: str) -> None:
-    """Materialize BioProject/organism/sample text into ``gsa_studies_search`` and
-    rebuild its search ``tsv``. Idempotent and re-runnable.
+    """
+    Materialize BioProject, organism and sample text and rebuild the search tsv.
 
     Depends on gsa_studies_search, gsa_studies, gsa_projects, and gsa_samples
-    already being loaded. Heavy (aggregates gsa_samples); ``statement_timeout``
+    already being loaded. Heavy (aggregates gsa_samples); statement_timeout
     is disabled for the duration.
     """
     with psycopg.connect(pg_url) as conn:

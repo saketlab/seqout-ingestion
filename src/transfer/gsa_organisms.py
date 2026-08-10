@@ -1,11 +1,11 @@
 """
-Populate ``gsa_studies.organisms`` (text[]) from ``gsa_samples`` so GSA project
-pages and the organism search facet see every organism in a study, not just the
-single study-level ``scientific_name``.
+Populate gsa_studies.organisms from gsa_samples.
 
-``gsa_samples.study_accession`` joins 1:1 to ``gsa_studies.study_accession``
-(both CRA*), so this is one GROUP BY -- no experiments hop. Measured on prod
-(2026-07-25): 19,182 studies with samples, 1,194 multi-organism.
+GSA project pages and the organism search facet otherwise see only the single
+study-level scientific_name. gsa_samples.study_accession joins 1:1 to
+gsa_studies.study_accession (both CRA*), so this is one GROUP BY with no
+experiments hop. Measured on prod 2026-07-25: 19,182 studies with samples,
+1,194 multi-organism.
 
 gsa_studies is a Postgres-side derived table (study_accession PK + embedding
 columns), not built from a static DDL, so this step owns the column via

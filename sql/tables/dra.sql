@@ -67,7 +67,6 @@ CREATE TABLE IF NOT EXISTS dra_studies (
     is_only_ddbj        INTEGER CHECK (is_only_ddbj IN (0, 1))
 );
 
--- Pins which SRA/ENA snapshot the novelty check ran against.
 CREATE TABLE IF NOT EXISTS dra_ingest_provenance (
     ingested_at      TEXT PRIMARY KEY,
     start_date       TEXT,

@@ -1,5 +1,5 @@
 """
-Ingest GSA-Human — CNCB-NGDC Genome Sequence Archive for Human, HRA studies.
+Ingest GSA-Human: CNCB-NGDC Genome Sequence Archive for Human, HRA studies.
 
 Only open-access studies get per-study detail; controlled-access studies keep a
 study row but no detail.
@@ -80,12 +80,11 @@ STUDY_COLUMNS = [
     "last_processed",
 ]
 
-# per-study sheet header -> db column maps, matched by name.
-# HRA workbooks come in three layouts. Individual and Cell Line sheets both carry
-# HRI accessions and fold into gsa_human_individuals; the older
-# "Individuals & samples" + "Files" layout is handled separately below.
+# per-study sheet header -> db column maps, matched by name. HRA workbooks come
+# in three layouts: Individual and Cell Line sheets both carry HRI accessions and
+# fold into gsa_human_individuals, while the older "Individuals & samples" plus
+# "Files" layout is handled separately below.
 
-# Individual sheet -> gsa_human_individuals (entity_type='individual')
 INDIVIDUAL_MAP = {
     "Accession": "accession",
     "Individual Identifier": "identifier",
@@ -96,7 +95,6 @@ INDIVIDUAL_MAP = {
     "Treatment": "treatment",
     "Experiment Group": "experiment_group",
 }
-# Cell Line sheet -> gsa_human_individuals (entity_type='cell_line')
 CELL_LINE_MAP = {
     "Accession": "accession",
     "Cell Line Name": "identifier",
@@ -185,8 +183,8 @@ RUN_MAP = {
     "Assembly Name or Accession": "assembly_accession",
     "Omics type": "omics_type",
 }
-# unions RUN_MAP (Run sheet) and FILES_MAP (Files sheet) so both layouts share one
-# column list; columns absent from a row map to NULL.
+# unions RUN_MAP and FILES_MAP so both layouts share one column list; columns
+# absent from a row map to NULL
 RUN_COLUMNS = [
     "accession",
     "study_accession",
@@ -196,7 +194,6 @@ RUN_COLUMNS = [
     "sample_accession",
 ]
 
-# Older combined layout: one "Individuals & samples" sheet + a thin "Files" sheet.
 INDIV_SAMPLE_INDIVIDUAL_MAP = {
     "Individual Accession": "accession",
     "Individual Identifier": "identifier",
@@ -215,7 +212,6 @@ FILES_MAP = {
     "Platform": "platform",
     "Sample": "sample_accession",
 }
-# synthesise experiment rows from the Files sheet (no Experiment sheet in that layout).
 FILES_EXPERIMENT_MAP = {
     "Experiment": "accession",
     "Sample": "sample_accession",
@@ -261,7 +257,6 @@ def ingest_gsa_human(
         humanfriendly.format_timespan(timeout),
     )
 
-    # 1. study list + study-level metadata, all in one export
     study_list_bytes = _fetch_study_list(retries, timeout, max_timeout)
     (data_dir / "Study.xlsx").write_bytes(study_list_bytes)
     sheets = parse_workbook(study_list_bytes)
@@ -271,7 +266,6 @@ def ingest_gsa_human(
         raise ValueError(msg)
     logger.info("enumerated %d HRA studies", len(study_records))
 
-    # 2. detail subset: open-access studies only, optionally date-filtered
     detail_records = [
         r for r in study_records if (coerce(r.get("Access")) or "").lower() == "open"
     ]
@@ -303,7 +297,6 @@ def ingest_gsa_human(
     )
     _log_status_counts(statuses)
 
-    # 2b. per-study md5sum.txt manifests -> authoritative run download files
     fetch_manifest = functools.partial(
         _fetch_manifest, retries=retries, timeout=timeout, max_timeout=max_timeout
     )
@@ -316,7 +309,6 @@ def ingest_gsa_human(
         suffix=".md5sum.txt",
     )
 
-    # 3. load
     exec_query_from_file("tables/gsa_human.sql", db_file)
     _ingest(db_file, studies_dir, study_records, detail_accs, statuses, date_str)
     exec_query_from_file("indexes/gsa_human.sql", db_file)
@@ -325,7 +317,7 @@ def ingest_gsa_human(
 
 def _fetch_study_list(retries: int, timeout: int, max_timeout: int) -> bytes:
     with make_client(timeout) as client:
-        # GET the browse page first to obtain the JSESSIONID cookie the export needs.
+        # the export needs the JSESSIONID cookie the browse page sets
         send_req(
             "GET",
             HUMAN_BROWSE_URL,
@@ -359,7 +351,6 @@ def _fetch_study_detail(
     max_timeout: int,
 ) -> bytes | None:
     with make_client(timeout) as client:
-        # GET the study page: yields the internal study_id and a session cookie.
         page = send_req(
             "GET",
             f"{HUMAN_BROWSE_URL}{accession}",
@@ -373,7 +364,6 @@ def _fetch_study_detail(
             logger.warning("no study_id on browse page for %s (controlled?)", accession)
             return None
         study_id = match.group(1)
-        # sidecar so a resumed run (cached xlsx) can still log study_id.
         (studies_dir / f"{accession}.study_id").write_text(study_id)
         r = send_req(
             "POST",
@@ -406,7 +396,6 @@ def _fetch_manifest(
     timeout: int,
     max_timeout: int,
 ) -> bytes | None:
-    # download host has no WAF, so no browser-UA client needed.
     try:
         r = send_req(
             "GET",
@@ -456,7 +445,7 @@ def _ingest(
         apply_write_pragmas(conn)
 
         study_rows = [_study_row(r) for r in study_records if coerce(r.get("Study"))]
-        # preserve backfill-owned pubmed columns
+        # backfill owns these pubmed columns
         bulk_upsert_preserve(
             conn,
             "gsa_human_studies",
@@ -475,7 +464,6 @@ def _ingest(
                     parsed = _parse_study(parse_workbook(xlsx_path.read_bytes()), acc)
                     status = "ok" if any(parsed.values()) else "empty"
                 except Exception:
-                    # drop a corrupt cached workbook so the next run refetches it.
                     logger.exception(
                         "failed to parse %s; removing to refetch", xlsx_path
                     )
@@ -484,7 +472,6 @@ def _ingest(
 
             counts = dict.fromkeys(_CHILD_TABLES, 0)
             if parsed is not None:
-                # clear prior child rows for this study before reinserting.
                 for table, columns in _CHILD_TABLES.items():
                     conn.execute(
                         f"DELETE FROM {table} WHERE study_accession = ?",  # noqa: S608
@@ -493,7 +480,7 @@ def _ingest(
                     bulk_upsert(conn, table, columns, parsed[table])
                     counts[table] = len(parsed[table])
 
-            # run files come from the manifest, independent of the workbook.
+            # run files come from the manifest, independent of the workbook
             manifest_path = studies_dir / f"{acc}.md5sum.txt"
             if manifest_path.exists():
                 conn.execute(
@@ -522,8 +509,8 @@ def _ingest(
                 ),
             )
 
-        # controlled-access boundary: a study flipped Open -> Controlled drops out of
-        # detail_accs, so purge child rows for every currently non-open study.
+        # a study flipped Open -> Controlled drops out of detail_accs, so purge
+        # child rows for every currently non-open study
         controlled = [
             acc
             for r in study_records
@@ -543,7 +530,6 @@ def _ingest(
         conn.commit()
 
 
-# child table -> its column list, in insert order.
 _CHILD_TABLES = {
     "gsa_human_individuals": INDIVIDUAL_COLUMNS,
     "gsa_human_samples": SAMPLE_COLUMNS,
@@ -580,7 +566,6 @@ def _parse_study(sheets: dict[str, list[dict]], acc: str) -> dict[str, list[tupl
         if (row := _child_row(r, RUN_MAP, RUN_COLUMNS, acc))
     ]
 
-    # older combined layout: "Individuals & samples" carries both, "Files" the runs.
     for r in sheets.get("Individuals & samples", []):
         if row := _child_row(
             r, INDIV_SAMPLE_INDIVIDUAL_MAP, INDIVIDUAL_COLUMNS, acc, "individual"
@@ -592,15 +577,12 @@ def _parse_study(sheets: dict[str, list[dict]], acc: str) -> dict[str, list[tupl
     runs += [
         row for r in files_sheet if (row := _child_row(r, FILES_MAP, RUN_COLUMNS, acc))
     ]
-    # the Files layout has no Experiment sheet; synthesise experiment rows from the
-    # Files sheet's Experiment/Platform/Sample columns.
     experiments += [
         row
         for r in files_sheet
         if (row := _child_row(r, FILES_EXPERIMENT_MAP, EXPERIMENT_COLUMNS, acc))
     ]
 
-    # dedupe repeated individual/experiment rows on the (accession, study_accession) PK.
     individuals = list({(row[0], row[1]): row for row in individuals}.values())
     experiments = list({(row[0], row[1]): row for row in experiments}.values())
     return {
@@ -644,7 +626,6 @@ def _child_row(
     if entity_type is not None:
         static["entity_type"] = entity_type
     row = map_row(record, header_map, columns, static)
-    # first two columns are the composite primary key and must be present.
     if row[0] is None or row[1] is None:
         return None
     return row

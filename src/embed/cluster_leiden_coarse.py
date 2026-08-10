@@ -1,7 +1,7 @@
 """
 Levels COARSER than the hierarchical-Leiden root (extends cluster_leiden.py).
 
-``cluster_leiden`` builds its hierarchy by recursively SPLITTING the full graph, so
+cluster_leiden builds its hierarchy by recursively SPLITTING the full graph, so
 its coarsest level is the root partition -- there is nothing above it. This module
 adds levels on top by AGGLOMERATING that root: cluster centroids -> cosine kNN graph
 -> Leiden -> super-clusters, repeated. Each new level is a union of the level below,
@@ -11,7 +11,7 @@ Resolution is binary-searched per level to hit a target cluster count (~SHRINK x
 coarser each step) rather than fixed, because a fixed resolution collapses straight
 into the corpus's dominant blob.
 
-Writes ``leiden_l<root+1>`` .. ``leiden_l<root+N>`` into chroma metadata; existing
+Writes leiden_l<root+1> .. leiden_l<root+N> into chroma metadata; existing
 keys are left untouched.
 """
 
@@ -143,8 +143,6 @@ def compute_coarse_leiden_clusters(chroma_db_dir, levels: int = 3) -> None:
     base_ids, cent, sizes = _centroids(db, root)
     total = int(sizes.sum())
 
-    # base_ids[i] is the root cluster id of centroid row i; chain[i] tracks which
-    # super-cluster row i belongs to as we roll up level by level.
     chain = np.arange(len(base_ids), dtype=np.int64)
     new_levels: dict[str, np.ndarray] = {}  # leiden_lN -> per-root-cluster label
 
@@ -177,7 +175,6 @@ def compute_coarse_leiden_clusters(chroma_db_dir, levels: int = 3) -> None:
         logger.warning("no coarse levels produced; nothing written")
         return
 
-    # root cluster id -> row index in base_ids, so we can look up each record's label
     pos = {int(c): i for i, c in enumerate(base_ids)}
 
     def build_meta(_i: int, meta: dict) -> dict:

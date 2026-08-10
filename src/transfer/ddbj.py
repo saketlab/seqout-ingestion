@@ -284,8 +284,6 @@ def ddbj_transfer(
         logger.warning("no dra or gea db given; nothing to transfer")
         return
 
-    # sequential: the whole DDBJ set is small enough (~1.9M rows) that a thread per
-    # table buys little, and the child tables reference the parents.
     for name, fn, args in tasks:
         logger.info("transferring %s", name)
         fn(*args)

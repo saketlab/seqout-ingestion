@@ -98,7 +98,7 @@ def _run_context(dra_db_file: Path) -> dict[str, tuple[str | None, str, str]]:
 
 
 def _read_fastqlist(path: Path) -> Iterator[tuple[str, str, str]]:
-    """Stream: fastqlist is ~470 MB / 3.4M lines, and the caller drops most of them."""
+    """Stream, since the caller drops most rows of a large fastqlist."""
     with path.open(encoding="utf-8", errors="replace") as f:
         header = f.readline()
         if not header.startswith("file_path"):
@@ -149,7 +149,6 @@ def backfill_dra_download_links(
     grouped = group_fastq_rows(_read_fastqlist(fastqlist_path), keep=set(context))
     logger.info("%d of %d dra runs have fastq files", len(grouped), len(context))
 
-    # study_accession is NOT NULL -- report rather than drop silently.
     missing_study = [r for r in grouped if context[r][0] is None]
     if missing_study:
         logger.warning(

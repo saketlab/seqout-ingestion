@@ -1,4 +1,3 @@
--- Mirrors sra_* column for column: DRA and SRA publish the same INSDC XML.
 
 CREATE TABLE IF NOT EXISTS dra_submissions (
     accession    TEXT PRIMARY KEY,
@@ -67,8 +66,8 @@ CREATE TABLE IF NOT EXISTS dra_runs (
     submission TEXT
 );
 
--- Full-text twin, mirroring gsa_studies_search. is_only_ddbj = 1 only -- a mirrored DRP
--- is the same study as its SRA/ENA twin, and would duplicate every hit.
+-- Full-text twin, mirroring gsa_studies_search. is_only_ddbj = 1 only: a
+-- mirrored DRP is the same study as its SRA/ENA twin and would duplicate hits.
 CREATE TABLE IF NOT EXISTS dra_studies_search (
     accession         TEXT PRIMARY KEY,
     study_title       TEXT,

@@ -1,8 +1,8 @@
 """
-Transfer normalized ages (``age_norm.sqlite3``) into Postgres ``ontology_samples_v4``.
+Transfer normalized ages (age_norm.sqlite3) into Postgres ontology_samples_v4.
 
-The target PK is ``(study_accession, sample)`` with no standalone unique key on
-``sample``, so this UPDATEs existing rows keyed by BOTH columns (an INSERT ...
+The target PK is (study_accession, sample) with no standalone unique key on
+sample, so this UPDATEs existing rows keyed by BOTH columns (an INSERT ...
 ON CONFLICT(sample) would create duplicates). Rows are streamed via COPY into a
 temp table, then a single UPDATE join annotates the target. Idempotent.
 """
@@ -62,10 +62,8 @@ def age_transfer(pg_url: str, age_norm_db: Path, batch_size: int) -> None:  # no
     Heavy: one COPY of the whole stage table + one UPDATE join over the target.
     statement_timeout is disabled for the duration (like sample_tsv).
     """
-    # 1) add the columns (file-driven schema, idempotent).
     exec_query_from_file("tables/age_pg.sql", pg_dsn=pg_url)
 
-    # 2) COPY -> temp, then UPDATE join on the real (study_accession, sample) key.
     with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
         cur.execute("SET statement_timeout = 0")
         cur.execute(_TEMP_DDL)
@@ -86,7 +84,6 @@ def age_transfer(pg_url: str, age_norm_db: Path, batch_size: int) -> None:  # no
         "age transfer: copied %d stage rows, updated %d target rows", copied, updated
     )
 
-    # 3) age_days btree (CONCURRENTLY -> autocommit; drop a leftover invalid one).
     _create_age_index(pg_url)
     logger.info("age transfer complete")
 
@@ -106,6 +103,5 @@ def _create_age_index(pg_url: str) -> None:
         if row is not None and row[0] is False:
             logger.warning("dropping invalid %s from an interrupted build", _AGE_INDEX)
             conn.execute(f"DROP INDEX IF EXISTS {_AGE_INDEX}")
-        # statement lives in sql/indexes/age.sql (file-driven schema).
         index_sql = (_SQL_DIR / "indexes" / "age.sql").read_text()
         conn.execute(cast("LiteralString", index_sql))

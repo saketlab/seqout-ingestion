@@ -1,4 +1,4 @@
-"""Ingest open (non-human) GSA — CNCB-NGDC Genome Sequence Archive, CRA studies."""
+"""Ingest open (non-human) GSA: CNCB-NGDC Genome Sequence Archive, CRA studies."""
 
 from __future__ import annotations
 
@@ -46,7 +46,6 @@ _CRA_RE = re.compile(r"CRA\d+")
 # The page renders Chinese or English by client. parse_study_page reads both label sets.
 _ENGLISH_HEADERS = {"Accept-Language": "en-US,en;q=0.9"}
 
-# sheet header -> db column maps, matched by name
 
 SAMPLE_MAP = {
     "Accession": "accession",
@@ -310,11 +309,8 @@ _PAGE_LABELS = (
 )
 _NEXT_KNOWN_LABEL = rf"(?=\s*(?:{_PAGE_LABELS})\s*[:：]|$)"  # noqa: RUF001
 _STRICT_FIELDS = frozenset({"title"})
-# the study page's 出版信息 / publication block lists the submitter-declared papers
 _PUBMED_RE = re.compile(r"(?:PubMed ID|PubMed)\s*[:：]?\s*(\d{6,9})")  # noqa: RUF001
 
-# A <th>label</th><td>value</td> table. Declares no publications; pmids come from
-# `backfill pm-ids`, as they do for HRA.
 _SEARCH_FIELDS = {
     "title": ("Title", "标题"),
     "release_time": ("Release date", "发布日期"),
@@ -434,7 +430,6 @@ def _scrape_study_meta(
     return meta
 
 
-######################################################################
 def _browse_is_up(accession: str, timeout: int, max_timeout: int) -> bool:
     """One probe per run: browse and search are both throttled, so don't try both."""
     try:
@@ -483,7 +478,6 @@ def parse_study_page(html: str) -> dict:
     return meta
 
 
-######################################################################
 def parse_search_page(html: str, accession: str) -> dict:
     """Search result -> {title, organization, release_time}. No publications."""
     cells: dict[str, str] = {}
@@ -543,7 +537,6 @@ def _ingest(
                     status = "ok" if (samples or experiments or runs) else "empty"
                     parsed_ok = True
                 except Exception:
-                    # drop a corrupt cached workbook so the next run refetches it.
                     logger.exception(
                         "failed to parse %s; removing to refetch", xlsx_path
                     )

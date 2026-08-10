@@ -3,13 +3,13 @@ Turn a downloaded ontology into the two artifacts the graph loader wants.
 
 Every source, whatever its native format, is reduced to:
 
-* ``expansions/<name>_term_expansions.csv`` -- columns ``short,long``. One row
-  per synonym: ``short`` is the alternative spelling, ``long`` is the canonical
-  term. Loaded as ``(:Term {name: short})-[:MAPS_TO]->(:Term {name: long})``.
-* an OBO-JSON with an ``edges`` array, for sources we take hierarchy from. Most
+* expansions/<name>_term_expansions.csv -- columns short,long. One row
+  per synonym: short is the alternative spelling, long is the canonical
+  term. Loaded as (:Term {name: short})-[:MAPS_TO]->(:Term {name: long}).
+* an OBO-JSON with an edges array, for sources we take hierarchy from. Most
   ship one; MeSH does not, so we synthesize it.
 
-Everything is keyed by *normalized name*, never by ontology id -- see ``norm``.
+Everything is keyed by *normalized name*, never by ontology id -- see norm.
 That is why a term shared by two ontologies collapses into a single node.
 """
 
@@ -31,14 +31,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: Synonym predicates we accept from OBO sources. Narrow predicates only:
+#: Synonym predicates accepted from OBO sources. Narrow predicates only:
 #: hasBroadSynonym ("cancer" for "breast cancer") and hasNarrowSynonym would
 #: both make query expansion change what the user asked for.
 _GOOD_PREDS = frozenset({"hasExactSynonym", "hasRelatedSynonym"})
 
 #: Synonyms this short are almost always initialisms that collide with
-#: unrelated terms. HGNC is the exception -- gene symbols are legitimately
-#: 2 characters (e.g. AR, MB) -- so it gets its own floor.
+#: unrelated terms. HGNC gets its own floor, since gene symbols are
+#: legitimately 2 characters (AR, MB).
 _MIN_SYNONYM_LEN = 2
 _MIN_SYNONYM_LEN_HGNC = 1
 
@@ -47,9 +47,9 @@ def norm(x: str) -> str:
     """
     Normalize a term to its graph key: lowercase, punctuation folded to spaces.
 
-    ``ATAC-seq`` -> ``atac seq``. Every writer and every reader must apply this
+    ATAC-seq -> atac seq. Every writer and every reader must apply this
     identically or lookups miss. In Cypher, normalize the *parameter* side --
-    never ``toLower(t.name)``, which cannot use the index.
+    never toLower(t.name), which cannot use the index.
     """
     x = x.strip().lower()
     x = re.sub(r"[-_/]", " ", x)
@@ -77,7 +77,7 @@ class _PairSet:
         self._pairs.add((short, long))
 
     def write(self, path: Path) -> int:
-        """Write the pairs to ``path`` as a ``short,long`` CSV. Returns the count."""
+        """Write the pairs to path as a short,long CSV. Returns the count."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="") as f:
             w = csv.writer(f)
@@ -86,20 +86,15 @@ class _PairSet:
         return len(self._pairs)
 
 
-# ---------------------------------------------------------------------------
-# download
-# ---------------------------------------------------------------------------
-
-
 def download(source: Source, root: Path, *, workers: int, force: bool) -> Path:
     """
-    Fetch a source into ``raw/``, skipping it if the file is already there.
+    Fetch a source into raw/, skipping it if the file is already there.
 
     These are 30 MB - 700 MB files from publishers that rate-limit; re-download
-    only with ``force``, or by deleting the file.
+    only with force, or by deleting the file.
     """
-    # Imported lazily: helpers pulls in psycopg/socks, and the parsing half of
-    # this module has no reason to need a database driver.
+    # imported lazily: helpers pulls in psycopg and socks, which the parsing half
+    # of this module has no reason to need
     from helpers import download_file
 
     dest = source.raw_path(root)
@@ -117,15 +112,10 @@ def download(source: Source, root: Path, *, workers: int, force: bool) -> Path:
         timeout=60,
         max_wait=120,
         with_pbar=True,
-        # Publishers serve these gzip-encoded, so the on-disk size legitimately
-        # differs from Content-Length.
+        # publishers serve these gzip-encoded, so the on-disk size legitimately
+        # differs from Content-Length
         validate_content_length=False,
     )
-
-
-# ---------------------------------------------------------------------------
-# parsers -- one per Source.parser kind
-# ---------------------------------------------------------------------------
 
 
 def _load_obo_graph(path: Path) -> dict[str, Any]:
@@ -188,11 +178,10 @@ def _extract_cellosaurus(source: Source, root: Path) -> int:
     """
     Pull cell-line name variants out of the Cellosaurus XML.
 
-    The name tagged ``type="identifier"`` is canonical; the rest of the
+    The name tagged type="identifier" is canonical; the rest of the
     name-list are the spellings seen in the literature.
     """
     pairs = _PairSet(source)
-    # iterparse + clear(): the dump is ~700 MB and a full DOM is several GB.
     with source.raw_path(root).open("rb") as fh:
         for _event, cell_line in ET.iterparse(fh, events=("end",)):  # noqa: S314
             if cell_line.tag != "cell-line":
@@ -219,7 +208,7 @@ def _extract_cellosaurus(source: Source, root: Path) -> int:
 
 
 def _open_maybe_gz(path: Path) -> BinaryIO:
-    """Open a file for binary reading, transparently decompressing ``.gz``."""
+    """Open a file for binary reading, transparently decompressing .gz."""
     return gzip.open(path, "rb") if path.suffix == ".gz" else path.open("rb")
 
 
@@ -228,10 +217,10 @@ def _extract_mesh(source: Source, root: Path) -> int:
     Build both MeSH artifacts: the synonym CSV and a synthesized OBO-JSON.
 
     MeSH ships no OBO release, but it is a poly-hierarchy encoded in *tree
-    numbers*: a descriptor owns one or more strings like ``C04.557.470``, each
+    numbers*: a descriptor owns one or more strings like C04.557.470, each
     tree number belongs to exactly one descriptor, and a tree number's parent is
-    that string minus its last ``.NNN`` segment. So we resolve
-    parent-tree -> parent-descriptor and emit ``child is_a parent``.
+    that string minus its last .NNN segment. So we resolve
+    parent-tree -> parent-descriptor and emit child is_a parent.
 
     Top-level tree numbers (no dot) hang off a single-letter category that is
     not itself a descriptor, so they come out as roots with no edge.
@@ -241,7 +230,6 @@ def _extract_mesh(source: Source, root: Path) -> int:
     ui_to_trees: dict[str, list[str]] = {}
     tree_to_ui: dict[str, str] = {}
 
-    # iterparse: the descriptor file is ~340 MB uncompressed.
     with _open_maybe_gz(source.raw_path(root)) as fh:
         for _event, rec in ET.iterparse(fh, events=("end",)):  # noqa: S314
             if rec.tag != "DescriptorRecord":
@@ -316,7 +304,7 @@ _PARSERS = {
 
 
 def extract(source: Source, root: Path) -> int:
-    """Run the right parser for ``source``. Returns the number of synonym pairs."""
+    """Run the right parser for source. Returns the number of synonym pairs."""
     count = _PARSERS[source.parser](source, root)
     logger.info("%s: %d synonym pairs -> %s", source.name, count, source.csv_path(root))
     return count

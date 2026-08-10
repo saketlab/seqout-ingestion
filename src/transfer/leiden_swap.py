@@ -1,19 +1,19 @@
 """
-One-time swap: make Leiden the clustering the apps read (overwrites EVoC in PG).
+One-time swap making Leiden the clustering the apps read, overwriting EVoC in PG.
 
-The frontend/backend read EVoC's ``cluster_l*`` names (jsonb column ``clusters``
-and table ``cluster_labels``). This rewrites those in place with Leiden data, so
-both apps adopt Leiden with zero code changes. Leiden's 5 labeled levels are
-remapped onto contiguous ``cluster_l*`` names (finest -> coarsest):
+The frontend and backend read EVoC's cluster_l* names (jsonb column clusters and
+table cluster_labels). Rewriting those in place with Leiden data lets both apps
+adopt Leiden with no code changes. Leiden's 5 labeled levels are remapped onto
+contiguous cluster_l* names, finest to coarsest:
 
     leiden_l0 -> cluster_l0    leiden_l3 -> cluster_l2    leiden_l5 -> cluster_l4
     leiden_l2 -> cluster_l1    leiden_l4 -> cluster_l3
-    leiden_l1 is dropped (near-duplicate of leiden_l0).
+    leiden_l1 is dropped, being a near-duplicate of leiden_l0.
 
-Reversible: EVoC is still in chroma (``cluster_l*``) and ``labels_cluster_l*.csv``,
-so ``transfer embed`` regenerates it. Existing ``cluster_labels`` rows are
-snapshotted to a CSV before deletion. After running, purge the server cache
-(/cache/purge) or restart so it re-reads the new levels.
+Reversible: EVoC is still in chroma (cluster_l*) and labels_cluster_l*.csv, so
+transfer embed regenerates it, and existing cluster_labels rows are snapshotted
+to a CSV before deletion. After running, purge the server cache (/cache/purge)
+or restart so it re-reads the new levels.
 """
 
 import csv
@@ -29,14 +29,11 @@ from embed.embed_constants import COLLECTION_TABLES, FETCH_BATCH
 
 logger = logging.getLogger(__name__)
 
-# leiden level (chroma key / label CSV stem) -> app level (what the apps read).
-# l0..l5 come from the recursive top-down split (cluster_leiden); l6..l8 are the
-# agglomerated levels above its root (cluster_leiden_coarse).
 LEIDEN_TO_APP = {
-    "leiden_l0": "cluster_l0",  # finest   (70348 clusters)
-    "leiden_l2": "cluster_l1",  #          (42473)
-    "leiden_l3": "cluster_l2",  #          (15497)
-    "leiden_l4": "cluster_l3",  #          ( 3826)
+    "leiden_l0": "cluster_l0",  # finest
+    "leiden_l2": "cluster_l1",
+    "leiden_l3": "cluster_l2",
+    "leiden_l4": "cluster_l3",
     "leiden_l5": "cluster_l4",  # split root (626)
     "leiden_l6": "cluster_l5",  #          (  209)
     "leiden_l7": "cluster_l6",  #          (   70)
@@ -132,7 +129,6 @@ def _swap_labels(conn: psycopg.Connection, labels_dir: Path) -> None:
 
 
 def leiden_swap(pg_url: str, chroma_db_dir: Path, labels_dir: Path) -> None:
-    # fail before mutating anything if any label CSV is missing
     missing = [
         lv for lv in LEIDEN_TO_APP if not (labels_dir / f"labels_{lv}.csv").exists()
     ]

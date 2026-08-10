@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS sra_runs (
 );
 
 -- Ordered to match the live database. pubmed_id_pysradb / pubmed_last_checked
--- are written by `backfill pm-ids`, not by ingest.
+-- are written by backfill pm-ids, not by ingest.
 CREATE TABLE IF NOT EXISTS sra_studies (
     accession           TEXT PRIMARY KEY,
     alias               TEXT,

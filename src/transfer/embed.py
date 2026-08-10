@@ -9,8 +9,8 @@ Per accession (geo_series / sra_studies / arrayexpress_experiments):
   neighbors  jsonb[]              -- [{x_3d, y_3d, z_3d, source, accession}, ...]
                                      accession lists from neighbors.sqlite3
 
-Per cluster (one shared table ``cluster_labels``): loaded from the labels CSVs;
-``centroid_x/y`` is the label anchor. All writes are upserts (accession PK /
+Per cluster (one shared table cluster_labels): loaded from the labels CSVs;
+centroid_x/y is the label anchor. All writes are upserts (accession PK /
 (level, cluster_id) PK), columns/table created if absent, so this is re-runnable.
 """
 

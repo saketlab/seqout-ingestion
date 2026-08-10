@@ -1,5 +1,3 @@
--- MAGE-TAB, mirrors arrayexpress_* (sql/tables/ae.sql). Deltas: bioproject links GEA to
--- its raw reads; no BioStudies API, so its JSON-only columns are absent.
 
 CREATE TABLE IF NOT EXISTS gea_experiments (
     accession                 TEXT PRIMARY KEY,
@@ -26,7 +24,7 @@ CREATE TABLE IF NOT EXISTS gea_experiments (
     data_files                TEXT CHECK (data_files IS NULL OR json_valid(data_files))
 );
 
--- dra_experiment / dra_run: from Comment[SRA_EXPERIMENT] / Comment[SRA_RUN] --
+-- dra_experiment / dra_run come from Comment[SRA_EXPERIMENT] / Comment[SRA_RUN]:
 -- DDBJ keeps the INSDC column names though the accessions are DRX/DRR. NULL for
 -- microarray.
 CREATE TABLE IF NOT EXISTS gea_samples (

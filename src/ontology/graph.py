@@ -1,5 +1,5 @@
 """
-Load the extracted artifacts into Neo4j, and stamp the ``has_children`` flag.
+Load the extracted artifacts into Neo4j, and stamp the has_children flag.
 
 The graph has **one node label and three relationship types**::
 
@@ -8,11 +8,11 @@ The graph has **one node label and three relationship types**::
         -[:SUBCLASS_OF]->  child   -> parent   (from OBO is_a)
         -[:PART_OF]->      part    -> whole    (from OBO BFO_0000050)
 
-``name`` is the only key -- there is no per-ontology id on a node, so a term
+name is the only key -- there is no per-ontology id on a node, so a term
 that appears in two ontologies is one merged node. That is intentional: the app
 looks terms up by the words a user typed, not by CURIE.
 
-Every write is a ``MERGE``, so re-running any of this is safe and idempotent.
+Every write is a MERGE, so re-running any of this is safe and idempotent.
 """
 
 from __future__ import annotations
@@ -40,17 +40,17 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 1000
 
-#: The uniqueness constraint doubles as the only index in the database, and it
-#: backs every name lookup and every MERGE. Relationship traversals are pointer
-#: chases -- no index applies and none is needed.
+#: The uniqueness constraint doubles as the only index in the database, backing
+#: every name lookup and every MERGE. Relationship traversals are pointer chases,
+#: so no index applies or is needed.
 _CONSTRAINT = (
     "CREATE CONSTRAINT term_name_unique IF NOT EXISTS "
     "FOR (t:Term) REQUIRE t.name IS UNIQUE"
 )
 
-#: OBO edge predicate -> our relationship type. Anything else is ignored:
-#: the remaining OBO relations (develops_from, has_part, ...) do not mean
-#: "narrower than" and would make deep-dive wander sideways.
+#: OBO edge predicate -> relationship type. Anything else is ignored: the
+#: remaining OBO relations (develops_from, has_part) do not mean "narrower
+#: than" and would make deep-dive wander sideways.
 _PRED_REL = {
     "is_a": "SUBCLASS_OF",
     "BFO_0000050": "PART_OF",
@@ -95,16 +95,16 @@ def _checked_label(label: str | None) -> str | None:
 
 def _tag_node(var: str, label: str | None) -> str:
     """
-    ``ON CREATE`` fragment marking a node this source was the first to create.
+    ON CREATE fragment marking a node this source was the first to create.
 
     On create only, so a node another ontology already contributed is never
-    relabelled. See ``Source.label`` for why that is the semantics we want.
+    relabelled. See Source.label for why that is the semantics we want.
     """
     return f" ON CREATE SET {var}:{label}" if label else ""
 
 
 def _tag_rel(var: str, label: str | None) -> str:
-    """``ON CREATE`` fragment stamping ``source`` on a newly created relationship."""
+    """ON CREATE fragment stamping source on a newly created relationship."""
     return f" ON CREATE SET {var}.source = '{label}'" if label else ""
 
 
@@ -114,7 +114,7 @@ def ensure_constraint(driver: Driver) -> None:
 
 
 def load_synonyms(driver: Driver, source: Source, root: Path) -> int:
-    """Load ``<name>_term_expansions.csv`` as MAPS_TO edges."""
+    """Load <name>_term_expansions.csv as MAPS_TO edges."""
     path = source.csv_path(root)
     with path.open() as f:
         reader = csv.reader(f)
@@ -135,7 +135,7 @@ def load_synonyms(driver: Driver, source: Source, root: Path) -> int:
 
 def load_hierarchy(driver: Driver, source: Source, root: Path) -> dict[str, int]:
     """
-    Load an OBO-JSON's ``edges`` array as SUBCLASS_OF / PART_OF relationships.
+    Load an OBO-JSON's edges array as SUBCLASS_OF / PART_OF relationships.
 
     OBO edges join node *ids*, but our graph is keyed by name, so we resolve
     each id to its normalized label first. Deprecated and unlabelled nodes drop
@@ -177,17 +177,13 @@ def load_hierarchy(driver: Driver, source: Source, root: Path) -> dict[str, int]
     return {rel: len(rows) for rel, rows in by_rel.items()}
 
 
-# ---------------------------------------------------------------------------
-# has_children
-# ---------------------------------------------------------------------------
-
 #: A term X has children iff something points at X, or at any member of X's
-#: synonym cluster, via SUBCLASS_OF/PART_OF -- excluding the cluster itself, so
-#: a synonym is never counted as a child of its own term. MAPS_TO*0..2 includes
-#: X via the *0, and two hops covers synonym-of-a-synonym chains.
+#: synonym cluster, via SUBCLASS_OF/PART_OF, excluding the cluster itself so a
+#: synonym is never counted as a child of its own term. MAPS_TO*0..2 includes X
+#: via the *0, and two hops covers synonym-of-a-synonym chains.
 #:
-#: This is the *same* definition the deep-dive children query uses, which is
-#: what makes the flag safe to trust: it can go stale, but it cannot disagree.
+#: The deep-dive children query uses this same definition, which is what makes
+#: the flag safe to trust: it can go stale, but it cannot disagree.
 _COMPUTE_HAS_CHILDREN = """
 UNWIND $names AS nm
 MATCH (x:Term {name: nm})
@@ -203,7 +199,7 @@ SET x.has_children = g > 0
 
 def stamp_has_children(driver: Driver) -> tuple[int, int]:
     """
-    Precompute ``has_children`` on every :Term. Run this last, after any load.
+    Precompute has_children on every :Term. Run this last, after any load.
 
     The frontend's deep-dive explorer needs to know whether each node it renders
     can be expanded. Working that out at query time means an undirected synonym
@@ -211,7 +207,7 @@ def stamp_has_children(driver: Driver) -> tuple[int, int]:
     graph is static between rebuilds, so we compute it once and read the flag.
 
     Staleness is a snapshot, not a hazard: the children query reads
-    ``coalesce(child.has_children, false)``, so a missing or stale flag shows a
+    coalesce(child.has_children, false), so a missing or stale flag shows a
     term as not-expandable rather than erroring. Re-run after every load.
     """
     records, _, _ = driver.execute_query(

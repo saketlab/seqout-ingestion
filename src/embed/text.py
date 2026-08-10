@@ -4,8 +4,8 @@ Source text extraction + cleaning for the embed pipeline.
 Each source has its own recipe for turning a study row into the single string we
 embed. The cleaning (lower-case, strip urls/html/non-alphanumerics, collapse
 whitespace) is identical across sources so the shared embedding space stays
-consistent. The ``iter_new_*`` helpers stream only accessions that are *not*
-already present in chroma, yielding ``(accession, cleaned_text)`` pairs and
+consistent. The iter_new_* helpers stream only accessions that are *not*
+already present in chroma, yielding (accession, cleaned_text) pairs and
 skipping rows whose text cleans down to nothing.
 """
 

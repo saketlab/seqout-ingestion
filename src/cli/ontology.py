@@ -1,7 +1,7 @@
 """
 CLI for rebuilding the Neo4j ontology graph.
 
-``ontology build`` is the whole thing end to end. The individual stages are
+ontology build is the whole thing end to end. The individual stages are
 exposed separately because the download and extract steps are slow and a
 rebuild usually fails somewhere in the middle of the Neo4j load, not before it.
 """
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def _selected(only: list[str] | None) -> list:
-    """Resolve ``--only`` names to Source objects, preserving build order."""
+    """Resolve --only names to Source objects, preserving build order."""
     if not only:
         return list(SOURCES)
     unknown = [n for n in only if n not in BY_NAME]
@@ -49,7 +49,7 @@ def download(
     workers: int = typer.Option(4),
     force: bool = typer.Option(default=False, help="re-download even if present"),
 ) -> None:
-    """Fetch the raw ontology releases into ``<output-dir>/ontology/raw/``."""
+    """Fetch the raw ontology releases into <output-dir>/ontology/raw/."""
     from ontology.extract import download as download_source
 
     root = output_dir / "ontology"
@@ -82,7 +82,7 @@ def load(
         help="skip the has_children pass; only safe if another load follows",
     ),
 ) -> None:
-    """Load the extracted artifacts into Neo4j, then stamp ``has_children``."""
+    """Load the extracted artifacts into Neo4j, then stamp has_children."""
     from ontology import graph
 
     root = output_dir / "ontology"
@@ -107,7 +107,7 @@ def build(
     force_download: bool = typer.Option(default=False),
 ) -> None:
     """
-    Rebuild the whole graph: download, extract, load, stamp ``has_children``.
+    Rebuild the whole graph: download, extract, load, stamp has_children.
 
     Safe to re-run and safe to interrupt -- downloads resume, and every write
     is a MERGE. Expect this to take hours, most of it in the Neo4j load.
@@ -121,8 +121,6 @@ def build(
 
     with graph.connect(neo4j_uri, neo4j_user, neo4j_password) as driver:
         graph.ensure_constraint(driver)
-        # One source at a time, all the way through, so a failure costs one
-        # ontology rather than the whole run.
         for source in sources:
             logger.info("=== %s (%s) ===", source.name, source.title)
             download_source(source, root, workers=workers, force=force_download)
@@ -142,7 +140,7 @@ def has_children(
     neo4j_user: str = typer.Option("neo4j", envvar="NEO4J_USER"),
     neo4j_password: str = typer.Option(..., envvar="NEO4J_PASSWORD"),
 ) -> None:
-    """Recompute the ``has_children`` flag. Run after any load that skipped it."""
+    """Recompute the has_children flag. Run after any load that skipped it."""
     from ontology import graph
 
     with graph.connect(neo4j_uri, neo4j_user, neo4j_password) as driver:

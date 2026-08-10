@@ -7,8 +7,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from tqdm import tqdm
 
-# pg source table -> parquet basename the DuckDB client expects. Names match
-# unless the pg table diverged from the historical SQLite-dump name.
 _PG_PARQUET_TABLES: list[tuple[str, str]] = [
     ("arrayexpress_experiments", "arrayexpress_experiments"),
     ("arrayexpress_samples", "arrayexpress_samples"),
@@ -28,7 +26,6 @@ _PG_PARQUET_TABLES: list[tuple[str, str]] = [
     ("unified_metadata_centers", "unified_centers"),
     ("pubmed_metadata", "pubmed_metadata"),
     ("sra_run_download_links", "run_download_links"),
-    # new sources
     ("gsa_studies", "gsa_studies"),
     ("gsa_experiments", "gsa_experiments"),
     ("gsa_samples", "gsa_samples"),
@@ -155,13 +152,16 @@ def pg_parquet_transfer(
     *,
     resume: bool = False,
 ) -> None:
-    """Build the parquet dump straight from Postgres (source of truth) instead
-    of the per-source SQLite dumps. Covers the same public tables the DuckDB
-    client reads, plus the GSA/DRA/GEA sources.
+    """
+    Build the parquet dump straight from Postgres, the source of truth.
+
+    Covers the same public tables the DuckDB client reads, plus the GSA, DRA and
+    GEA sources.
 
     Each table is written to a .tmp then atomically renamed, so a finished
     <name>.parquet always means a complete table. With resume=True, tables whose
-    final file already exists are skipped -- rerun after a crash to continue."""
+    final file already exists are skipped -- rerun after a crash to continue.
+    """
     output_dir.mkdir(exist_ok=True, parents=True)
 
     todo = _PG_PARQUET_TABLES
@@ -192,8 +192,6 @@ def pg_parquet_transfer(
                 pbar.update(1)
 
 
-# pg scalar type -> arrow type. Anything not here (jsonb, arrays, dates,
-# text, uuid, ...) is emitted as text and mapped to string.
 _PG_TO_ARROW = {
     "smallint": pa.int16(),
     "integer": pa.int32(),
@@ -214,10 +212,14 @@ _TO_TEXT_TYPES = frozenset(
 
 
 def _pg_columns(conn: psycopg.Connection, table: str) -> tuple[list[str], pa.Schema]:
-    """Return (select exprs, arrow schema). jsonb/array/date/time columns are
-    cast to text so the parquet keeps the JSON/text shape the SQLite-origin dump
-    had (client does json.loads / strptime on them); numeric is cast to float8 so
-    it arrives as a plain float, not Decimal."""
+    """
+    Return the select expressions and the arrow schema.
+
+    jsonb, array, date and time columns are cast to text so the parquet keeps
+    the shape the SQLite-origin dump had, since the client runs json.loads and
+    strptime on them. numeric is cast to float8 so it arrives as a plain float
+    rather than a Decimal.
+    """
     rows = conn.execute(
         "SELECT column_name, data_type, udt_name "
         "FROM information_schema.columns "
@@ -262,8 +264,6 @@ def _export_pg_table(
         # means a fully-written table (safe to skip on resume / serve live).
         final_path = output_dir / f"{out_name}.parquet"
         tmp_path = output_dir / f"{out_name}.parquet.tmp"
-        # schema is known up front, so we open the writer immediately and stream
-        # each batch straight to disk -- constant memory, no per-table buffering.
         with (
             pq.ParquetWriter(tmp_path, schema, compression="snappy") as writer,
             conn.cursor(name=f"pq_{out_name}") as cur,
