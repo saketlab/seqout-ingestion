@@ -266,6 +266,15 @@ transfer_postgres *flags:
         {{ _gsa_db_args }} \
         {{ flags }}
 
+# Project the pentimento SQLite into the pentimento_* pg tables the API serves.
+# Idempotent -- a rerun over unchanged data is a no-op.
+[group("pentimento")]
+transfer_pentimento *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer pentimento \
+        --pg-url "$PG_URL" \
+        --pentimento-db-file {{ PENTIMENTO_DB_FILE }} \
+        {{ flags }}
+
 [group("transfer")]
 transfer_parquet *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer parquet \
@@ -420,3 +429,65 @@ refresh_publications *flags:
 [group("refresh")]
 refresh_status:
     {{ PYTHON }} ./src/main.py --log-level warning refresh status --pg-url "$PG_URL"
+# Pentimento: one SQLite joining cell counts + preflightx + fastq links + microbes
+PENTIMENTO_DB_FILE := env("PENTIMENTO_DB_FILE", DATA_DIR + "/pentimento/pentimento.db")
+NCOUNT_PERSAMPLE_DIR := env("NCOUNT_PERSAMPLE_DIR", "/data/share/ncount_persample_July14")
+PREFLIGHTX_DB_FILE := env("PREFLIGHTX_DB_FILE", "/home/saket/enrichment/enriched_metadata_v4_combined_July14.sqlite")
+PREFLIGHTX_CSV_DIR := env("PREFLIGHTX_CSV_DIR", "/NAS/saket/github/pysradb-ingestion/sc_preflight_v4/annotated")
+VIRUS_QUANT_DIR := env("VIRUS_QUANT_DIR", "/home/saket/tissue_pull")
+PREFLIGHTX_BENCHMARK_FILE := env("PREFLIGHTX_BENCHMARK_FILE", "/NAS/saket/github/pysradb-ingestion/mukesh_single_cell_preflightx/preflightx_results/preflight_per_experiment.csv")
+
+[group("pentimento")]
+pentimento_build *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento build \
+        --output-db-file {{ PENTIMENTO_DB_FILE }} \
+        --links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --ncount-dir {{ NCOUNT_PERSAMPLE_DIR }} \
+        --preflightx-db-file {{ PREFLIGHTX_DB_FILE }} \
+        --preflightx-csv-dir {{ PREFLIGHTX_CSV_DIR }} \
+        --quant-dir {{ VIRUS_QUANT_DIR }} \
+        --benchmark-file {{ PREFLIGHTX_BENCHMARK_FILE }} \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        {{ flags }}
+
+# Running preflight ourselves. Three stages, each separately resumable: pick the
+# studies, scan the reads (network-bound, scatter this one across the fleet with
+# yuj), load the result. `preflight_ingest` needs NO quant and NO enrichment DB --
+# that is what makes a fresh scan usable on its own.
+PREFLIGHT_MANIFEST_DIR := env("PREFLIGHT_MANIFEST_DIR", DATA_DIR + "/pentimento/preflight/manifests")
+PREFLIGHT_ANNOTATED_DIR := env("PREFLIGHT_ANNOTATED_DIR", DATA_DIR + "/pentimento/preflight/annotated")
+
+[group("pentimento")]
+preflight_manifest *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight manifest \
+        --out-dir {{ PREFLIGHT_MANIFEST_DIR }} \
+        --links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        {{ flags }}
+
+# Streams remote FASTQ; hours, not minutes. Pass --in-dir to run one host's slice.
+[group("pentimento")]
+preflight_run *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight run \
+        --in-dir {{ PREFLIGHT_MANIFEST_DIR }} \
+        --out-dir {{ PREFLIGHT_ANNOTATED_DIR }} \
+        {{ flags }}
+
+[group("pentimento")]
+preflight_ingest *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight ingest \
+        --db-file {{ PENTIMENTO_DB_FILE }} \
+        --preflightx-csv-dir {{ PREFLIGHT_ANNOTATED_DIR }} \
+        --sra-db-file {{ SRA_DB_FILE }} \
+        {{ flags }}
+
+PENTIMENTO_PARQUET_DIR := env("PENTIMENTO_PARQUET_DIR", DATA_DIR + "/pentimento/parquet")
+
+# Mirror the Pentimento tables to parquet (one file per table). Pass --resume to
+# continue a killed export; finished files are complete by construction.
+[group("pentimento")]
+pentimento_parquet *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento export-parquet \
+        --db-file {{ PENTIMENTO_DB_FILE }} \
+        --output-dir {{ PENTIMENTO_PARQUET_DIR }} \
+        {{ flags }}

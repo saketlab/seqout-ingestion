@@ -348,7 +348,6 @@ def _transfer_gsa_studies_search(
         if hra:
             with sqlite_connect(hra) as c:
                 for acc, title, disease, org, proj, rel in c.execute(
-                    # Controlled studies have no fetchable detail; exclude from search.
                     """SELECT accession, title, disease, organization,
                         project_accession, release_time FROM gsa_human_studies
                         WHERE access = 'Open'""",
@@ -374,7 +373,6 @@ def _transfer_gsa_experiments(
     hra: Path | None,
     batch_size: int,
 ) -> None:
-    # one row per run, joined to its experiment and study.
     cra_sql = """
         SELECT r.accession, r.experiment_accession, e.sample_accession,
             r.study_accession, e.title, e.library_strategy, e.library_source,

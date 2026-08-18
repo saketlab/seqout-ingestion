@@ -1,6 +1,4 @@
-"""
-Age-normalization stage: parse raw per-sample ``age`` into ``age_norm.sqlite3``.
-"""
+"""Age-normalization stage: parse raw per-sample age into age_norm.sqlite3."""
 
 from __future__ import annotations
 
@@ -21,7 +19,7 @@ _AGE_FILTER = "age IS NOT NULL AND age <> ''"
 
 
 def normalize_age(source_db: Path, output_db: Path, batch_size: int) -> None:
-    """Normalize every non-empty raw age from ``source_db`` into ``output_db``."""
+    """Normalize every non-empty raw age from source_db into output_db."""
     exec_query_from_file("tables/age.sql", output_db)
 
     with sqlite_connect(source_db) as src:

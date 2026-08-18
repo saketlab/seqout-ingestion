@@ -58,7 +58,8 @@ def cluster_leiden_coarse(
     chroma_db_dir: Path = typer.Option(...),
     levels: int = typer.Option(3, help="How many levels to add above the current root"),
 ) -> None:
-    """Add levels COARSER than the Leiden root by agglomerating it.
+    """
+    Add levels COARSER than the Leiden root by agglomerating it.
 
     `cluster-leiden` splits top-down, so its coarsest level is the root -- nothing
     exists above it. This agglomerates that root into super-clusters. New levels nest
@@ -94,7 +95,8 @@ def labels(
         [], help="Level name(s) to skip, e.g. --skip-level leiden_l1 (repeatable)"
     ),
 ) -> None:
-    """One-shot labelling: read chroma, extract keywords, and LLM-label in one pass.
+    """
+    One-shot labelling: read chroma, extract keywords, and LLM-label in one pass.
 
     For a large clustering prefer the two-phase flow (`precompute-keywords` then
     `label-from-keywords`): it caches the keywords so a re-run needs no chroma and
@@ -123,7 +125,8 @@ def precompute_keywords(
         [], help="Level name(s) to skip, e.g. --skip-level leiden_l1 (repeatable)"
     ),
 ) -> None:
-    """Phase 1 (run once): cache TF-IDF keywords + centroids to keywords_<level>.csv.
+    """
+    Phase 1 (run once): cache TF-IDF keywords + centroids to keywords_<level>.csv.
 
     Reads chroma (the slow part). `label-from-keywords` then needs no chroma at all.
     """
@@ -145,7 +148,8 @@ def label_from_keywords(
         [], help="Level name(s) to skip, e.g. --skip-level leiden_l1 (repeatable)"
     ),
 ) -> None:
-    """Phase 2 (repeatable): LLM-label from the cached keywords.
+    """
+    Phase 2 (repeatable): LLM-label from the cached keywords.
 
     No chroma / no TF-IDF / no doc reload -> starts in seconds and resumes cleanly,
     so an interrupted run just picks up where it stopped.

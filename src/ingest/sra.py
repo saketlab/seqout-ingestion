@@ -568,7 +568,6 @@ def _process_tarballs(
 
     total_files = 0
     for tb in tarballs:
-        # takes around ~5-6 mins for performing file counting over 15 GB SRA file dump
         result = subprocess.run(  # noqa: S602
             f"tar -I pigz -tf {shlex.quote(str(tb))} | grep -v '/$' | wc -l",
             capture_output=True,

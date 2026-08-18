@@ -1,4 +1,3 @@
--- GSA (open / non-human) — CNCB-NGDC Genome Sequence Archive, CRA studies.
 -- Study-level title/organization/counts come from the browse scrape and may be NULL.
 
 CREATE TABLE IF NOT EXISTS gsa_studies (
@@ -109,7 +108,6 @@ CREATE TABLE IF NOT EXISTS gsa_runs (
     PRIMARY KEY (accession, study_accession)
 );
 
--- Per-study download/parse status, for resume + reporting.
 CREATE TABLE IF NOT EXISTS gsa_fetch_log (
     study_accession TEXT PRIMARY KEY,       -- CRA...
     status          TEXT NOT NULL,          -- ok | empty | failed

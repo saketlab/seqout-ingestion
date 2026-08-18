@@ -4,7 +4,7 @@ Nearest neighbors (cosine, K=300) over the combined embedding matrix.
 Brute-force on GPU: cosine == dot product of L2-normalized vectors, so the whole
 matrix lives on the GPU as fp16 and each query chunk is one matmul + topk. No
 approximate index needed at this scale. Results are stored in a sqlite table
-``neighbors(accession, neighbors)`` where neighbors is a JSON accession list.
+neighbors(accession, neighbors) where neighbors is a JSON accession list.
 """
 
 import json
@@ -48,8 +48,6 @@ def compute_neighbors(
     n = len(ids)
     logger.info("%d embeddings loaded", n)
 
-    # Build + normalize on CPU, ship a single fp16 copy to the GPU, and matmul
-    # against its (non-contiguous) transpose to avoid a second transposed copy.
     x_np = np.asarray(embeds, dtype=np.float32)
     del embeds
     x_np /= np.linalg.norm(x_np, axis=1, keepdims=True)

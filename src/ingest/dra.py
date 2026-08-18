@@ -303,7 +303,6 @@ def _fetch_submission_xml(
                 max_wait=max_timeout,
             )
         except httpx.HTTPStatusError as exc:
-            # not every submission publishes every file type
             if exc.response.status_code == _HTTP_NOT_FOUND:
                 continue
             raise
@@ -508,7 +507,6 @@ def ingest_dra(
         end_date,
     )
 
-    # computed even when the filter is off: `have` also stamps is_only_ddbj.
     have: set[str] = set()
     source = ""
     if pg_url or sra_db_file or ena_db_file:

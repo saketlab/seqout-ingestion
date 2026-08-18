@@ -877,13 +877,8 @@ def _sra_studies_batch_modifier(
 
             all_accessions.append(accession)
 
-        # These facets are per STUDY, never per submission. A submission is not a
-        # study: 68,775 studies share one with another study (one submission
-        # covers 1,548), so submission-keyed values leak a study's siblings into
-        # it; and a study's samples can span many submissions (SRP584992 spans
-        # six), so its own submission misses most of them. Both directions were
-        # measured against prod -- ~12.6% of SRA studies had a wrong organism
-        # list, which search filters on directly.
+        # keyed per study: a submission covers several studies and a study's
+        # samples span several submissions, so submission keys leak siblings
         study_strategies: dict[str, set[str]] = defaultdict(set[str])
         study_models: dict[str, set[str]] = defaultdict(set[str])
         study_platforms: dict[str, set[str]] = defaultdict(set[str])
@@ -912,9 +907,6 @@ def _sra_studies_batch_modifier(
                     study_platforms[study].add(platform)
                 if source and (source := source.strip()):  # values arrive dirty
                     study_sources[study].add(source)
-                # sra_samples has no study column, so organisms take the same
-                # two hops the project page does: study -> experiment.samples
-                # -> sample.scientific_name.
                 for sample_acc in _ensure_list(_convert_to_json(samples)):
                     if sample_acc:
                         study_sample_accs[study].add(sample_acc)
@@ -933,11 +925,8 @@ def _sra_studies_batch_modifier(
             ):
                 sample_organism[sample_acc] = org
 
-        # Fallback only. ~4% of studies have samples but no experiments linking
-        # them (DRP001120 has organisms and zero rows in every experiments
-        # table), so the study-level join yields nothing for them. Empty means
-        # "no evidence", not "no organisms" — falling back to the submission
-        # keeps a coarse answer instead of blanking the field.
+        # some studies have samples but no experiments linking them, so an
+        # empty study-level join means no evidence and must not blank the field
         submission_organisms: dict[str, set[str]] = defaultdict(set[str])
         if all_submissions:
             conn = _get_conn(sra_db_file)
@@ -1603,15 +1592,14 @@ def _transfer_study_publications(
         )
 
         # orphan cleanup: upserts leave rows for studies whose pmid was later
-        # removed/corrected at source. groups is every current (accession,
+        # removed or corrected at source. groups is every current (accession,
         # source), so anything else in the table is stale.
         #
-        # Off by default, and it must stay that way: "stale" is only meaningful
-        # if the sqlite buffers hold the WHOLE history. Run this against a fresh
-        # or partial DATA_DIR -- a new machine, a cleared cache, a failed
-        # backfill_pm_meta -- and every publication row postgres holds for a
-        # study outside this run gets deleted. Enable it deliberately, against
-        # buffers you know are complete, with a dump in hand.
+        # Off by default and it must stay that way: "stale" only means anything
+        # if the sqlite buffers hold the whole history. Against a fresh or
+        # partial DATA_DIR (a new machine, a cleared cache, a failed
+        # backfill_pm_meta) this deletes every publication row postgres holds
+        # for a study outside the run. Enable it deliberately, with a dump.
         if not prune:
             logger.info(
                 "skipping study_publications orphan cleanup "
@@ -1637,8 +1625,8 @@ def _transfer_study_publications(
         pg_conn.commit()
 
 
-# source -> its cross_ref table. doubles as the allow-list: a source absent here
-# contributes no cross-refs.
+# source -> its cross_ref table; also the allow-list, so a source absent here
+# contributes no cross-refs
 _CROSS_REF_TABLES = {
     "ae": "cross_ref_ae",
     "ena": "cross_ref_ena",
@@ -1659,8 +1647,6 @@ def _transfer_cross_refs(
         psycopg.connect(pg_url) as pg_conn,
     ):
         with pg_conn.cursor() as cur:
-            # provision every table: the loop below writes whatever source
-            # unified_metadata carries, including sra/dra/gea
             tables = [
                 (name, f"{source}_accession, target_accession, link_type")
                 for source, name in sorted(_CROSS_REF_TABLES.items())
@@ -1686,6 +1672,17 @@ def _transfer_cross_refs(
                         "LiteralString",
                         f"""CREATE UNIQUE INDEX IF NOT EXISTS idx_{table}_pk
                         ON {table} ({cols})""",
+                    ),
+                )
+
+            # target_accession is the PK index's second column, so the reverse
+            # lookup the pentimento resolver does per page cannot use it
+            for table, _ in tables:
+                cur.execute(
+                    cast(
+                        "LiteralString",
+                        f"""CREATE INDEX IF NOT EXISTS idx_{table}_target
+                        ON {table} (target_accession)""",
                     ),
                 )
 

@@ -2,8 +2,8 @@
 Hierarchical clustering over the shared space with EVoC.
 
 EVoC (Embedding Vector Oriented Clustering) runs on the raw 4096-d embeddings.
-``cluster_layers_`` gives the hierarchical layers (l0 finest -> lN coarsest, -1 =
-noise); the flat ``cluster_id`` is written too but is deliberately not transferred
+cluster_layers_ gives the hierarchical layers (l0 finest -> lN coarsest, -1 =
+noise); the flat cluster_id is written too but is deliberately not transferred
 downstream. Results are merged into each accession's chroma metadata.
 """
 

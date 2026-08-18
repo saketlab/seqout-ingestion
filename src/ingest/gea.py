@@ -247,7 +247,6 @@ def _fetch_experiment_files(
                 max_wait=max_timeout,
             )
         except httpx.HTTPStatusError as exc:
-            # not every experiment publishes every file
             if exc.response.status_code == _HTTP_NOT_FOUND:
                 continue
             raise

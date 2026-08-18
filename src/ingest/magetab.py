@@ -51,7 +51,6 @@ AE_IDF_MAPPING: IdfMapping = {
     "Protocol Type": ("protocol_types", idf_to_json_array),
 }
 
-# GEA has no BioStudies JSON, so the IDF must supply everything AE gets from it.
 GEA_IDF_MAPPING: IdfMapping = {
     **AE_IDF_MAPPING,
     "Investigation Title": ("title", idf_first_or_none),
@@ -103,7 +102,6 @@ GEA_SDRF_MAPPING: SdrfMapping = {
     "comment[sra_run]": "dra_run",
 }
 
-# structural MAGE-TAB columns that carry no sample metadata
 _SDRF_COLS_TO_SKIP = frozenset(
     {
         "source name",
@@ -130,16 +128,10 @@ _SDRF_COLS_TO_SKIP = frozenset(
 
 
 def normalize_sdrf_col(raw: str) -> str:
-    # strip edges, lowercase, collapse whitespace
-    # "  Source Name  " -> "source name"
     s = re.sub(r"\s+", " ", raw.strip().lower())
 
-    # treat "factor value" as one token
-    # "factor value[disease]" -> "factorvalue[disease]"
     s = s.replace("factor value", "factorvalue")
 
-    # drop spaces around brackets
-    # "characteristics[ organism part ]" -> "characteristics[organism part]"
     return re.sub(r"\s*\[|\]\s*", lambda m: m.group().strip(), s)
 
 

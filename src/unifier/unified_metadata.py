@@ -277,7 +277,6 @@ def _scan_geo(db_file: Path) -> SourceMap:
     series_library_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     pmids: dict[str, set[str]] = defaultdict(set)
 
-    # scanning geo_samples
     rows = conn.execute(
         "SELECT accession, channels FROM geo_samples WHERE channels IS NOT NULL",
     ).fetchall()
@@ -296,7 +295,6 @@ def _scan_geo(db_file: Path) -> SourceMap:
 
     logger.info("%d samples with organism", len(sample_organisms))
 
-    # scanning geo_series
     rows = conn.execute(
         """SELECT accession, samples_ref, series_type, published_at, pubmed_id,
             pubmed_id_pysradb
@@ -358,7 +356,6 @@ def _scan_geo(db_file: Path) -> SourceMap:
             if s:
                 pmids[accession].add(s)
 
-    # scanning geo_contributors
     rows = conn.execute(
         """SELECT accession, organization
         FROM geo_contributors
@@ -414,7 +411,6 @@ def _scan_insdc(db_file: Path, prefix: str) -> SourceMap:
     pmids: dict[str, set[str]] = defaultdict(set)
     sub_center: dict[str, str] = {}
 
-    # scanning <prefix>_samples
     rows = conn.execute(
         f"""SELECT submission, scientific_name
             FROM {prefix}_samples
@@ -434,7 +430,6 @@ def _scan_insdc(db_file: Path, prefix: str) -> SourceMap:
         len(submission_sample_count),
     )
 
-    # scanning <prefix>_experiments
     rows = conn.execute(
         f"SELECT study, library_strategy FROM {prefix}_experiments "  # noqa: S608
         "WHERE study IS NOT NULL",
@@ -454,7 +449,6 @@ def _scan_insdc(db_file: Path, prefix: str) -> SourceMap:
         len(study_experiment_count),
     )
 
-    # scanning <prefix>_studies
     rows = conn.execute(
         f"""SELECT accession, submission, links, published_at,
             pubmed_id_pysradb, center_name
@@ -519,7 +513,6 @@ def _scan_insdc(db_file: Path, prefix: str) -> SourceMap:
 
     m.pmids = dict(pmids)
 
-    # scanning <prefix>_submissions for center (fallback to study center_name)
     cursor = conn.execute(
         f"""SELECT accession, center_name
         FROM {prefix}_submissions
@@ -557,7 +550,6 @@ def _scan_ae(db_file: Path) -> SourceMap:
     experiment_sample_count: Counter[str] = Counter()
     pmids: dict[str, set[str]] = defaultdict(set)
 
-    # scanning arrayexpress_samples
     rows = conn.execute(
         """SELECT experiment_accession, organism, library_strategy
         FROM arrayexpress_samples""",
@@ -577,7 +569,6 @@ def _scan_ae(db_file: Path) -> SourceMap:
                 continue
             experiment_library_count[accession][library_strategy] += 1
 
-    # scanning arrayexpress_experiments
     rows = conn.execute(
         """SELECT
             accession, organizations, study_type,
@@ -742,7 +733,6 @@ def _scan_ena(db_file: Path) -> SourceMap:
     ena_center_orgs: dict[str, list[str]] = defaultdict(list)
     pmids: dict[str, set[str]] = defaultdict(set)
 
-    # scanning ena_samples
     rows = conn.execute(
         """SELECT
             study_accession, scientific_name
@@ -758,7 +748,6 @@ def _scan_ena(db_file: Path) -> SourceMap:
                 continue
             study_organism_count[study_accession][name] += 1
 
-    # scanning ena_experiments
     rows = conn.execute(
         """SELECT
             study_accession, library_strategy, center_name
@@ -779,7 +768,6 @@ def _scan_ena(db_file: Path) -> SourceMap:
             if center_name:
                 study_center_count[study_accession][center_name] += 1
 
-    # scanning ena_studies
     rows = conn.execute(
         """SELECT
             study_accession, first_public, pubmed_id_pysradb, center_name
@@ -827,7 +815,6 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
     """Merge open GSA (CRA) + GSA-Human (HRA) into one SourceMap keyed by accession."""
     m = SourceMap()
 
-    # --- open GSA / CRA ---
     conn = sqlite_connect(gsa_db_file)
     organism_count: dict[str, Counter[str]] = defaultdict(Counter[str])
     for study, organism in conn.execute(
@@ -865,8 +852,8 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
     m.num_samples = dict(sample_count)
 
     # --- GSA-Human / HRA (every study is human) ---
-    # Open studies have real per-study experiment/sample rows (fetched workbooks);
-    # controlled studies have only the study-level row, so fall back to its columns.
+    # open studies have real per-study experiment and sample rows from fetched
+    # workbooks; controlled studies carry only the study-level row
     conn = sqlite_connect(gsa_human_db_file)
     hra_library: dict[str, Counter[str]] = defaultdict(Counter[str])
     for study, strategy in conn.execute(
@@ -897,13 +884,13 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
             strategy, study_type, n_individuals, n_samples, n_experiments
         FROM gsa_human_studies""",
     ):
-        # every HRA study is human; keep the real individual count, defaulting only
-        # a truly-unknown (NULL) count to 1 to still mark human presence.
+        # every HRA study is human, so a NULL individual count defaults to 1 to
+        # still mark human presence
         m.organism[acc] = {
             "Homo sapiens": n_individuals if n_individuals is not None else 1,
         }
-        # prefer real per-experiment strategies; fall back to the study-level string
-        # for controlled studies that have no fetched experiment rows.
+        # controlled studies have no fetched experiment rows, so they fall back
+        # to the study-level string
         if acc in hra_library:
             m.library[acc] = dict(hra_library[acc])
         elif lib := (strategy or study_type or "").strip():

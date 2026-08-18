@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-Yuj work item: count cells for one single-cell accession.
-
-Reads download links from yuj_setup/accessions/<accession>.json, sniffs the
-supplementary files, writes results/<accession>.json, and stays idempotent.
-"""
+"""Yuj work item: count cells for one single-cell accession."""
 
 import functools
 import json
@@ -68,13 +63,10 @@ _RETRIES = 5
 _TIMEOUT = 30
 _MAX_TIMEOUT = 300
 
-# bounds only the whole-file path
 _MAX_FILE_BYTES = 30 * 1024**3
 
-# mtx count is on the first line
 _MTX_HEAD_BYTES = 1 * 1024 * 1024
 
-# per-barcode annotation tables; detected by filename, confirmed by header row only
 _META_HEAD_BYTES = 256 * 1024
 _MAX_META_COLS = 40
 _META_NAME_HINTS = (
@@ -95,7 +87,6 @@ _META_NAME_HINTS = (
     "obs.csv",
     "obs.tsv",
 )
-# matrix/index files that are never per-cell metadata
 _META_EXCLUDE = (
     ".mtx",
     "barcodes.tsv",
@@ -105,16 +96,14 @@ _META_EXCLUDE = (
     ".hdf5",
 )
 _META_EXTS = (".csv", ".tsv", ".txt")
-# rds/h5ad embed per-cell metadata internally; assume metadata present
 _EMBEDDED_METADATA_FORMATS = ("rds", "h5ad")
 
-# raw/unfiltered 10x matrices report the whole barcode whitelist as columns, not
-# real cells; flag (not drop) via exact whitelist sizes or nnz/cells far too low
+# raw/unfiltered 10x matrices report the whole barcode whitelist as columns
+# rather than real cells; detected by exact whitelist size or a low nnz/cells
 _WHITELIST_SIZES = frozenset(
     {737280, 6794880, 4526976, 3571200, 6390720, 1000000, 900000},
 )
 _MIN_NNZ_PER_CELL = 20
-# streaming a tar has no random access, so bound how much we scan for metadata
 _MAX_TARS_SCANNED = 2
 _MAX_TAR_META_MEMBERS = 50
 _MAX_TAR_MEMBERS_WALKED = 4000
@@ -149,8 +138,6 @@ _CELLTYPE_COL_HINTS = (
     "cellontology",
 )
 
-# annotation categories matched against column names (token-aware, see _match_field);
-# demographic ones (has_demographics rollup) come first
 _DEMOGRAPHIC_CATEGORIES = ("sex", "age", "race_ancestry", "bmi", "smoking")
 _META_FIELD_HINTS: dict[str, tuple[str, ...]] = {
     "subject": (
@@ -357,16 +344,15 @@ _META_FIELD_HINTS: dict[str, tuple[str, ...]] = {
 _SIDECAR_DIR = Path("yuj_setup/accessions")
 _OUT_DIR = Path("results")
 
-# fallback when no per-host socks_proxy file
 _DEFAULT_SOCKS = "10.195.102.16:1080"
 
-# hard per-accession wall-clock; download paths have no idle-stall timeout, so on
-# fire we record a 0 (item marked done, run converges); override via SC_ITEM_DEADLINE
+# hard per-accession wall-clock: download paths have no idle-stall timeout, so on
+# fire the item records 0 and counts as done, letting the run converge
 _PER_ITEM_DEADLINE = int(os.environ.get("SC_ITEM_DEADLINE", "1800"))
 
 
 class _StallTimeoutError(BaseException):
-    """BaseException so the broad `except Exception` paths can't swallow the alarm."""
+    """BaseException so the broad except Exception paths cannot swallow the alarm."""
 
 
 def _on_alarm(signum: int, frame: object) -> None:  # noqa: ARG001
@@ -456,20 +442,16 @@ def process_accession(
     )
 
     def count_link(link: DownloadLink) -> tuple[int, int, str, str]:  # noqa: PLR0911
-        # fetch and count one link -> (n_cells, n_genes, format, rds_class);
-        # n_genes is -1 when not cheaply derivable (barcodes/txt/tsv/csv/tar)
         # EBI serves supplementary files over HTTPS only; ftp:// there times out
         use_http = "ebi.ac.uk" in link.url
         ftp_url = link.url.replace("https://", "ftp://", 1)
 
-        # range-read the h5 shape (cells + genes), no full download
         if link.type in {FileType.H5, FileType.H5ad}:
             dims = count_h5_dims_via_http(link.url, link.type)
             if dims is not None:
                 n, g = dims
                 return (n, g, link.type.value, "") if n > 0 else (0, -1, "", "")
 
-        # stream tar members over ftp; EBI tars fall through to a full http download
         if link.type == FileType.Tar and not use_http:
             n = count_tar_via_stream(
                 link.url, chunk_size, timeout=timeout, socks_proxy=_read_proxy()
@@ -480,7 +462,6 @@ def process_accession(
         dest_path = acc_dir / link.extract_filename()
         try:
             if link.type in HEADER_STREAMABLE and not is_cell_major(link.url):
-                # counted from the first chunk, so fetch only that
                 head = _MTX_HEAD_BYTES if link.type == FileType.Mtx else chunk_size
                 if use_http:
                     dest_path = download_http_head(
@@ -548,8 +529,6 @@ def process_accession(
             dest_path.unlink(missing_ok=True)
             dest_path.with_suffix("").unlink(missing_ok=True)
 
-    # group links by sample (GSM in the URL, else study accession); no early-exit so
-    # every sample is captured, keeping the best cell and best gene count per sample
     samples: dict[str, dict[str, Any]] = {}
 
     def _merge(
@@ -579,14 +558,10 @@ def process_accession(
         if n_cells > s["cells"]:
             s["cells"] = n_cells
             s["cells_format"] = fmt
-            # unfiltered describes the reported count, so it tracks the cells-winner
             s["unfiltered"] = _is_unfiltered(n_cells, nnz, src)
         if n_genes > s["genes"]:
-            # genes only come from a real expression matrix, so its format is the
-            # authoritative one to report for the sample
             s["genes"] = n_genes
             s["genes_format"] = fmt
-        # nnz is a matrix property, independent of which file won the cell count
         if nnz > 0:
             s["nnz"] = nnz
         if rds_class:
@@ -608,7 +583,6 @@ def process_accession(
                         key = _sample_key(link.url, accession)
                     _merge(key, m_cells, m_genes, m_fmt, "", m_nnz, mname)
                 continue
-            # stream failed; fall back to the scalar count_link path below
         n_cells, n_genes, fmt, rds_class = count_link(link)
         nnz = last_mtx_nnz() if fmt == FileType.Mtx.value else -1
         _merge(
@@ -642,7 +616,6 @@ def process_accession(
 
 
 def _is_unfiltered(cells: int, nnz: int, src: str) -> bool:
-    # matrix looks raw/unfiltered: whitelist cols, not cells
     if cells in _WHITELIST_SIZES:
         return True
     if nnz > 0 and cells > 0 and nnz < cells * _MIN_NNZ_PER_CELL:
@@ -652,13 +625,11 @@ def _is_unfiltered(cells: int, nnz: int, src: str) -> bool:
 
 
 def _sample_key(url: str, accession: str) -> str:
-    # GSM id from the basename (not whole URL): GEO FTP paths carry a GSMxxxxnnn dir
-    # stub whose literal `nnn` would truncate a full-URL match to a colliding id
+    # match the basename only: GEO FTP paths carry a GSMxxxxnnn directory stub
+    # whose literal nnn truncates a full-URL match into a colliding id
     m = re.search(r"GSM\d+", url.rsplit("/", 1)[-1])
     if m:
         return m.group(0)
-    # fall back to an all-digit GSM dir segment (the GSMxxxxnnn stub has letters so
-    # \d+ rejects it) for basenames like .../GSM1234567/suppl/matrix.mtx.gz
     for seg in url.split("/"):
         if re.fullmatch(r"GSM\d+", seg):
             return seg
@@ -666,7 +637,6 @@ def _sample_key(url: str, accession: str) -> str:
 
 
 def _is_metadata_link(url: str) -> bool:
-    # filename looks like a per-cell metadata table
     name = url.rsplit("/", 1)[-1].lower().removesuffix(".gz")
     if any(x in name for x in _META_EXCLUDE):
         return False
@@ -676,7 +646,6 @@ def _is_metadata_link(url: str) -> bool:
 
 
 def _parse_header(line: str, name: str) -> list[str]:
-    # split a header row into column names, guessing the delimiter
     line = line.rstrip("\r\n")
     low = name.lower().removesuffix(".gz")
     if low.endswith(".csv"):
@@ -691,8 +660,8 @@ def _parse_header(line: str, name: str) -> list[str]:
 
 
 def _match_field(col: str, hints: tuple[str, ...]) -> bool:
-    # token-aware hint match: exact token (`age` in `age_years`, not `percentage`)
-    # plus a substring fallback for distinctive multi-part hints (`orig.ident`)
+    # exact token match, so age hits age_years but never percentage; distinctive
+    # multi-part hints like orig.ident also get a substring fallback
     low = col.lower()
     toks = set(re.split(r"[^a-z0-9]+", low))
     for h in hints:
@@ -704,9 +673,6 @@ def _match_field(col: str, hints: tuple[str, ...]) -> bool:
 
 
 def _detect_field_map(cols: list[str]) -> dict[str, list[str]]:
-    # map each annotation category -> the exact columns matched; keeping source
-    # columns (not just presence) matters: a `condition` from `disease_status` vs
-    # `treatment` is analytically different downstream
     out: dict[str, list[str]] = {}
     for cat, hints in _META_FIELD_HINTS.items():
         matched = [c for c in cols if _match_field(c, hints)]
@@ -716,8 +682,6 @@ def _detect_field_map(cols: list[str]) -> dict[str, list[str]]:
 
 
 def _cell_index_type(value: str) -> str:
-    # classify a per-cell row-index value: barcode (ACGTN run), renamed (cell1/Cell_2),
-    # or id (anything else)
     v = value.strip().strip('"').strip("'")
     if re.search(r"[ACGTNacgtn]{10,}", v):
         return "barcode"
@@ -727,13 +691,12 @@ def _cell_index_type(value: str) -> str:
 
 
 def _header_info(first: str, second: str, name: str) -> dict[str, Any]:
-    # build a metadata info dict from a file's first two lines
     cols = _parse_header(first, name)
     low = [c.lower() for c in cols]
     row = _parse_header(second, name) if second.strip() else []
     named_barcode = any(h in c for c in low for h in _BARCODE_COL_HINTS)
-    # unnamed row index shows up two ways: an explicit empty header cell, or the R
-    # write.table default (no rowname header) where the data row is one field wider
+    # an unnamed row index is either an empty header cell or the R write.table
+    # default, which omits the rowname header and leaves the data row one wider
     has_unnamed_index = bool(row) and (
         (bool(cols) and cols[0] == "") or len(row) > len(cols)
     )
@@ -752,8 +715,6 @@ def _header_info(first: str, second: str, name: str) -> dict[str, Any]:
         "has_demographics": any(c in fmap for c in _DEMOGRAPHIC_CATEGORIES),
         "fields": fields,
         "category_to_columns": {k: v[:6] for k, v in fmap.items()},
-        # a per-cell table has a cell key and at least one annotation field; filters out
-        # sample-level description tables that merely share a metadata-ish name
         "per_cell": (has_barcode or cell_index is not None) and bool(fields),
     }
 
@@ -767,7 +728,6 @@ def _probe_metadata(
     max_timeout: int,
     proxy: str | None,
 ) -> dict[str, Any] | None:
-    # head-read a metadata file and report its columns / annotation fields
     name = url.rsplit("/", 1)[-1]
     dest = acc_dir / f"meta_{name}"
     use_http = "ebi.ac.uk" in url
@@ -813,9 +773,8 @@ def _scan_tar_metadata(
     timeout: int,
     proxy: str | None,
 ) -> dict[str, dict[str, Any]]:
-    # find per-cell metadata members inside a streamed tar, keyed by GSM/study;
-    # records tar url + member path so the file stays retrievable (tar -xOf), bounded
-    # by the per-item deadline and a member cap since a tar has no random access
+    # records tar url + member path so the file stays retrievable via tar -xOf;
+    # a streamed tar has no random access, hence the member cap
     ftp_url = tar_url.replace("https://", "ftp://", 1)
     by_key: dict[str, dict[str, Any]] = {}
     probed = 0
@@ -826,8 +785,6 @@ def _scan_tar_metadata(
             tarfile.open(fileobj=stream, mode="r|*") as tar,
         ):
             for member in tar:
-                # cap files probed and members walked, so a huge archive with no
-                # candidates can't stream unbounded
                 if probed >= _MAX_TAR_META_MEMBERS or seen >= _MAX_TAR_MEMBERS_WALKED:
                     break
                 seen += 1
@@ -866,12 +823,10 @@ def _scan_metadata(
     timeout: int,
     max_timeout: int,
 ) -> dict[str, dict[str, Any]]:
-    # map sample key (GSM or accession) -> metadata-file info, if any
     proxy = _read_proxy()
     by_key: dict[str, dict[str, Any]] = {}
 
     def _keep(key: str, info: dict[str, Any]) -> None:
-        # only per-cell tables count as reusable metadata; keep the richest
         if not info["per_cell"]:
             return
         prev = by_key.get(key)
@@ -895,8 +850,6 @@ def _scan_metadata(
         if info is not None:
             _keep(_sample_key(url, accession), info)
 
-    # only stream tars when nothing external was found; a tar reads whole (no random
-    # access); bounded by tar/member caps, per-item deadline is the backstop
     if not by_key:
         for tar_url in tar_urls[:_MAX_TARS_SCANNED]:
             found = _scan_tar_metadata(tar_url, accession, timeout=timeout, proxy=proxy)
@@ -913,16 +866,13 @@ def _build_result(
     samples: dict[str, dict[str, Any]],
     metadata: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    # assemble the per-accession result; single_cell_count = max(per-GSM sum,
-    # largest study-level file) so combined + per-sample matrices don't double count
+    # single_cell_count = max(per-GSM sum, largest study-level file), so a
+    # combined matrix alongside per-sample ones cannot double count
     gsm = [s for s in samples.values() if s["sample"].startswith("GSM")]
     study = [s for s in samples.values() if not s["sample"].startswith("GSM")]
     gsm_sum = sum(s["cells"] for s in gsm)
     study_max = max((s["cells"] for s in study), default=0)
 
-    # GSMs are the per-sample breakdown; also surface study-level file(s) when there
-    # are no GSMs or a combined matrix exceeds the per-GSM sum, else it's the
-    # combined superset, so drop it
     rows = sorted(gsm, key=lambda s: s["cells"], reverse=True)
     if not gsm or study_max > gsm_sum:
         rows += sorted(study, key=lambda s: s["cells"], reverse=True)
@@ -930,16 +880,12 @@ def _build_result(
     proj_meta = metadata.get(accession)
 
     def _fmt(s: dict[str, Any]) -> str:
-        # prefer the expression-matrix format (the one that yielded genes) over a
-        # metadata txt/tsv that happened to tie/edge the cell count
         return s["genes_format"] if s["genes"] > 0 else s["cells_format"]
 
     def _sample_meta(s: dict[str, Any]) -> dict[str, Any] | None:
-        # a metadata file keyed to this exact sample wins
         ext = metadata.get(s["sample"])
         if ext is not None:
             return ext
-        # rds/h5ad containers embed per-cell metadata
         if _fmt(s) in _EMBEDDED_METADATA_FORMATS:
             m: dict[str, Any] = {
                 "embedded": True,
@@ -949,7 +895,6 @@ def _build_result(
             if s["rds_class"]:
                 m["rds_class"] = s["rds_class"]
             return m
-        # a study-wide metadata file covers every GSM (tag the borrowed scope)
         if s["sample"].startswith("GSM") and proj_meta is not None:
             return {**proj_meta, "scope": "study"}
         return None
@@ -971,7 +916,6 @@ def _build_result(
         for s in rows
     ]
 
-    # union of annotation categories available across every metadata source
     all_meta = [p["metadata"] for p in per_sample if p["metadata"]]
     if proj_meta:
         all_meta.append(proj_meta)

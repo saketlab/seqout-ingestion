@@ -1,20 +1,19 @@
 """
-Populate ``ena_studies.organisms`` (text[]) from ``ena_samples`` so ENA project
-pages and the organism search facet see every organism in a study, not just the
-single study-level ``scientific_name``.
+Populate ena_studies.organisms from ena_samples.
 
-Unlike SRA/DRA there is no experiments hop: ``ena_samples.study_accession`` joins
-1:1 to ``ena_studies.study_accession`` (both PRJ*), so this is one GROUP BY.
-Measured on prod (2026-07-25): 663,705 study groups, max 6,875 organisms, ~5s
-over the whole 36M-row samples table.
+ENA project pages and the organism search facet otherwise see only the single
+study-level scientific_name. There is no experiments hop as for SRA/DRA:
+ena_samples.study_accession joins 1:1 to ena_studies.study_accession (both PRJ*),
+so this is one GROUP BY. Measured on prod 2026-07-25: 663,705 study groups, max
+6,875 organisms, ~5s over the whole 36M-row samples table.
 
-No blanking: a study with no sample-derived organism keeps its own
-``scientific_name``, so the column is never worse than the scalar it replaces
-(same guard the SRA study-facet backfill uses).
+A study with no sample-derived organism keeps its own scientific_name, so the
+column is never worse than the scalar it replaces, the same guard the SRA
+study-facet backfill uses.
 
-Idempotent and re-runnable: the sample populate SETs (not appends); the fallback
-only fills rows still NULL. Doubles as the one-off prod backfill -- it creates
-the column and GIN index if missing.
+Re-runnable: the sample populate SETs rather than appends and the fallback only
+fills rows still NULL. Doubles as the one-off prod backfill, creating the column
+and GIN index if missing.
 """
 
 import logging
@@ -78,7 +77,6 @@ def ena_organisms_transfer(pg_url: str) -> None:
             cur.execute(_POPULATE_FALLBACK)
             logger.info("  %s rows from scientific_name fallback", cur.rowcount)
             cur.execute(_CREATE_GIN)
-            # mirror onto the search surface for the organism facet
             cur.execute(_ADD_SEARCH_COLUMN)
             cur.execute(_COPY_TO_SEARCH)
             logger.info("  %s rows copied to ena_studies_search", cur.rowcount)

@@ -377,19 +377,19 @@ _UNIFIED_METADATA_CENTERS_INSERT_COLS = _UNIFIED_METADATA_CENTERS_SELECT_COLS
 
 def non_nulling_update(table: str, payload_cols: list[str]) -> str:
     """
-    Build the ``SET ... WHERE ...`` of an upsert that never nulls a column.
+    Build the SET ... WHERE ... of an upsert that never nulls a column.
 
-    A bare ``c = EXCLUDED.c`` erases whatever postgres already holds whenever the
+    A bare c = EXCLUDED.c erases whatever postgres already holds whenever the
     incoming row has NULL there. Ingest writes a fresh per-window sqlite db each
     run, so a re-transfer routinely carries columns a later backfill had filled in
     -- postgres must keep those, hence COALESCE.
 
     The guard is not an optimisation. Postgres cannot see that
-    ``COALESCE(x, ...) = x``, so without it every conflicting row is rewritten
+    COALESCE(x, ...) = x, so without it every conflicting row is rewritten
     even when nothing changed, leaving dead tuples across the whole table
-    (same reasoning as ``ddbj._upsert``'s fill_gaps_only branch).
+    (same reasoning as ddbj._upsert's fill_gaps_only branch).
 
-    Returns ``""`` when there is nothing to update; callers use DO NOTHING then.
+    Returns "" when there is nothing to update; callers use DO NOTHING then.
     """
     if not payload_cols:
         return ""

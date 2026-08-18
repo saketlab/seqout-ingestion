@@ -211,8 +211,6 @@ def yuj_setup(
                 DownloadLink(type=file_type, url=url),
             )
 
-    # one sidecar per id; accessions.txt lists ids with links (the scatter unit),
-    # ids with none go to no_link_accessions.txt
     acc_dir = output_dir / "accessions"
     acc_dir.mkdir(parents=True, exist_ok=True)
     master_path = output_dir / "accessions.txt"

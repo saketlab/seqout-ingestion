@@ -38,7 +38,7 @@ def make_client(timeout: int) -> httpx.Client:
 
 
 def parse_workbook(xlsx_bytes: bytes) -> dict[str, list[dict]]:
-    """Parse an xlsx into ``{sheet_title: [row_dict, ...]}``."""
+    """Parse an xlsx into {sheet_title: [row_dict, ...]}."""
     wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), read_only=False)
     try:
         sheets: dict[str, list[dict]] = {}
@@ -71,7 +71,7 @@ def download_studies(
     desc: str,
     suffix: str = ".xlsx",
 ) -> dict[str, str]:
-    """Fetch each study's file (workbook/manifest) to disk; ``acc -> status``."""
+    """Fetch each study's file (workbook/manifest) to disk; acc -> status."""
     out_dir.mkdir(parents=True, exist_ok=True)
     statuses: dict[str, str] = {}
 
@@ -185,7 +185,7 @@ def bulk_upsert_preserve(
     rows: list[tuple],
     conflict_col: str,
 ) -> int:
-    """Upsert writing only ``columns``, preserving columns owned by other stages."""
+    """Upsert writing only columns, preserving columns owned by other stages."""
     if not rows:
         return 0
     cols = ", ".join(columns)

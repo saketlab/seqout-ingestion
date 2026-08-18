@@ -1,7 +1,7 @@
 """
 Levels COARSER than the hierarchical-Leiden root (extends cluster_leiden.py).
 
-``cluster_leiden`` builds its hierarchy by recursively SPLITTING the full graph, so
+cluster_leiden builds its hierarchy by recursively SPLITTING the full graph, so
 its coarsest level is the root partition -- there is nothing above it. This module
 adds levels on top by AGGLOMERATING that root: cluster centroids -> cosine kNN graph
 -> Leiden -> super-clusters, repeated. Each new level is a union of the level below,
@@ -11,7 +11,7 @@ Resolution is binary-searched per level to hit a target cluster count (~SHRINK x
 coarser each step) rather than fixed, because a fixed resolution collapses straight
 into the corpus's dominant blob.
 
-Writes ``leiden_l<root+1>`` .. ``leiden_l<root+N>`` into chroma metadata; existing
+Writes leiden_l<root+1> .. leiden_l<root+N> into chroma metadata; existing
 keys are left untouched.
 """
 
@@ -28,10 +28,10 @@ from embed.embed_constants import COLLECTIONS
 
 logger = logging.getLogger(__name__)
 
-K = 5              # neighbours per node in the centroid graph
+K = 5  # neighbours per node in the centroid graph
 N_ITER = 10
 SEED = 42
-SHRINK = 3.0       # each new level ~3x coarser than the one below
+SHRINK = 3.0  # each new level ~3x coarser than the one below
 MIN_CLUSTERS = 20  # stop before a level degenerates into one mega-cluster
 RES_LO, RES_HI = 0.01, 200.0
 RES_STEPS = 40
@@ -143,8 +143,6 @@ def compute_coarse_leiden_clusters(chroma_db_dir, levels: int = 3) -> None:
     base_ids, cent, sizes = _centroids(db, root)
     total = int(sizes.sum())
 
-    # base_ids[i] is the root cluster id of centroid row i; chain[i] tracks which
-    # super-cluster row i belongs to as we roll up level by level.
     chain = np.arange(len(base_ids), dtype=np.int64)
     new_levels: dict[str, np.ndarray] = {}  # leiden_lN -> per-root-cluster label
 
@@ -166,7 +164,10 @@ def compute_coarse_leiden_clusters(chroma_db_dir, levels: int = 3) -> None:
         srt = np.sort(cur_s)[::-1]
         logger.info(
             "  %s: %d clusters | largest %.1f%% of corpus | median %d records",
-            name, n, 100 * srt[0] / total, int(np.median(cur_s)),
+            name,
+            n,
+            100 * srt[0] / total,
+            int(np.median(cur_s)),
         )
     logger.info("  agglomeration %.1fs", time.time() - t0)
 
@@ -174,7 +175,6 @@ def compute_coarse_leiden_clusters(chroma_db_dir, levels: int = 3) -> None:
         logger.warning("no coarse levels produced; nothing written")
         return
 
-    # root cluster id -> row index in base_ids, so we can look up each record's label
     pos = {int(c): i for i, c in enumerate(base_ids)}
 
     def build_meta(_i: int, meta: dict) -> dict:

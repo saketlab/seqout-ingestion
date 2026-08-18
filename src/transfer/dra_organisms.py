@@ -1,7 +1,8 @@
 """
-Populate ``dra_studies_search.organisms`` (text[]) so the federated organism
-facet includes DRA. Unlike the other sources DRA needs the SRA-shape hop:
-``dra_experiments.samples[]`` (an array of sample accessions) -> ``dra_samples``.
+Populate dra_studies_search.organisms so the federated organism facet includes DRA.
+
+Unlike the other sources DRA needs the SRA-shape hop:
+dra_experiments.samples[] (an array of sample accessions) -> dra_samples.
 
 Only the search surface is populated. The DRA *project page* already derives its
 organisms live in PROJECT_DRA_SQL via the same hop, so there is no column on
@@ -18,9 +19,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
-_ADD_COLUMN = (
-    "ALTER TABLE dra_studies_search ADD COLUMN IF NOT EXISTS organisms text[]"
-)
+_ADD_COLUMN = "ALTER TABLE dra_studies_search ADD COLUMN IF NOT EXISTS organisms text[]"
 
 _POPULATE = """
 UPDATE dra_studies_search dss

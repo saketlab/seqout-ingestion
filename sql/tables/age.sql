@@ -1,10 +1,6 @@
--- Stage table for the age-normalization stage (src/age/normalize.py).
--- One row per (study_accession, sample) with a non-empty raw age; transferred
--- (UPDATE join) into Postgres ontology_samples_v4 by `transfer age`.
---
 -- Keyed by (study_accession, sample) to match ontology_samples_v4's real PK: the
 -- same sample id can appear under multiple studies with different ages, so
--- collapsing to `sample` alone would cross-contaminate them.
+-- collapsing to sample alone would cross-contaminate them.
 CREATE TABLE IF NOT EXISTS age_norm (
     study_accession TEXT NOT NULL,
     sample          TEXT NOT NULL,

@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 UNIFIED_CATALOG_DIR = "unified_catalog"
 
-# allow-list, not PRJ\w\w: an unrecognised prefix is likelier a parse error than
-# a new archive.
+# an allow-list, since an unrecognised prefix is likelier a parse error than a
+# new archive
 BIOPROJECT_RE = re.compile(r"^PRJ(?:NA|NB|NC|ND|NE|EB|EA|DB|DA|CA)\d+$")
 
 
@@ -256,8 +256,8 @@ def _build_gsa_tuples(
     catalog: list[tuple[str, str, str, str, str]] = []
     for source_dict in (gsa_dict, gsa_human_dict):
         for acc, (title, desc, project) in source_dict.items():
-            # never drop a study for blank text — fall back to the accession as title
-            # so every gsa study reaches unified_studies (and stays enrichable).
+            # blank text falls back to the accession, so every gsa study reaches
+            # unified_studies and stays enrichable
             aliases = {"bioproject": project} if project else {}
             catalog.append(
                 (
@@ -281,8 +281,6 @@ def _build_catalog_tuples(
     dra_dict: dict,
     gea_dict: dict,
 ) -> list[tuple[str, str, str, str, str]]:
-    # sra alias -> sra accession(s) (reverse: given a gse or prjna, find srps)
-    # multiple srps can map to the same alias (e.g. two srps for one gse)
     alias_to_srps: dict[str, list[str]] = {}
     srp_to_alias: dict[str, str] = {}
     for srp, (alias, _, _, _) in sra_dict.items():
@@ -290,9 +288,7 @@ def _build_catalog_tuples(
             alias_to_srps.setdefault(alias, []).append(srp)
             srp_to_alias[srp] = alias
 
-    # ena: geo_accession -> list of ena prj accessions
     geo_to_ena: dict[str, list[str]] = {}
-    # ena: secondary (srp/erp/drp) -> ena prj accession
     srp_to_ena: dict[str, str] = {}
     for prj, (secondary, geo_acc, _, _) in ena_dict.items():
         if geo_acc:
@@ -300,9 +296,7 @@ def _build_catalog_tuples(
         if secondary:
             srp_to_ena[secondary] = prj
 
-    # ae: e-geod-xxx -> gsexxx
     ae_geod_to_gse: dict[str, str] = {}
-    # ae: non-geod accession -> ena accessions (from external_links type=ena)
     ae_to_ena_links: dict[str, list[str]] = {}
     for ae_acc, (_, _, links) in ae_dict.items():
         if ae_acc.startswith("E-GEOD-"):
@@ -318,7 +312,6 @@ def _build_catalog_tuples(
             if ena_accs:
                 ae_to_ena_links[ae_acc] = ena_accs
 
-    # reverse: ena accession -> ae accession (for non-geod ae)
     ena_to_ae: dict[str, str] = {}
     for ae_acc, ena_accs in ae_to_ena_links.items():
         for ena_acc in ena_accs:
@@ -327,16 +320,16 @@ def _build_catalog_tuples(
     claimed: set[str] = set()
     catalog: list[tuple[str, str, str, str, str]] = []
 
-    # sra and dra share one bioproject namespace: a PRJDB may be held by an SRP
-    # (mirrored) or a DRP.
+    # sra and dra share one bioproject namespace: a PRJDB may be held by a
+    # mirrored SRP or by a DRP
     bioproject_to_studies: dict[str, list[str]] = {}
     for raw_dict in (sra_dict, dra_dict):
         for study_acc, (_, _, _, bioproject) in raw_dict.items():
             if bioproject:
                 bioproject_to_studies.setdefault(bioproject, []).append(study_acc)
 
-    # gea holds the curated expression layer, the matching raw study only the runs;
-    # let gea claim it first. same rule as ae_preclaim below.
+    # gea holds the curated expression layer and the matching raw study only the
+    # runs, so gea claims it first; same rule as ae_preclaim
     gea_preclaim: set[str] = set()
     gea_to_raw: dict[str, list[str]] = {}
     for gea_acc, (_, _, bioproject) in gea_dict.items():
@@ -351,11 +344,9 @@ def _build_catalog_tuples(
     if gea_preclaim:
         logger.info("pre-claimed %d raw studies for gea", len(gea_preclaim))
 
-    # pre-claiming ae-linked sra entries
-    # ae external_links contain erp accessions that also exist in sra.
-    # since ae has richer metadata for these european studies, pre-claim
-    # them so sra skips them. also handle sra entries whose alias is an
-    # ae accession (e.g. erp152569 alias=e-mtab-13444).
+    # ae external_links carry erp accessions that also exist in sra, and ae has
+    # the richer metadata for these european studies, so pre-claim them. sra
+    # entries aliased to an ae accession (erp152569 alias=e-mtab-13444) too.
     ae_preclaim: set[str] = set()
     for ae_acc in ae_dict:
         if ae_acc in claimed:
@@ -364,10 +355,8 @@ def _build_catalog_tuples(
             continue  # these are handled by geo
         ena_accs = ae_to_ena_links.get(ae_acc, [])
         for ena_acc in ena_accs:
-            # the ena link (e.g. erp123) may be in sra db
             if ena_acc in sra_dict:
                 ae_preclaim.add(ena_acc)
-            # the ena link's prj parent may have a secondary that's in sra
             if ena_acc in srp_to_ena:
                 prj = srp_to_ena[ena_acc]
                 if prj in ena_dict:
@@ -375,7 +364,6 @@ def _build_catalog_tuples(
                     if sec and sec in sra_dict:
                         ae_preclaim.add(sec)
 
-    # also find sra entries whose alias is an ae accession
     for srp, (alias, _, _, _) in sra_dict.items():
         if alias and alias in ae_dict and not alias.startswith("E-GEOD-"):
             ae_preclaim.add(srp)
@@ -384,18 +372,15 @@ def _build_catalog_tuples(
     if ae_preclaim:
         logger.info("pre-claimed %d sra entries for ae", len(ae_preclaim))
 
-    # 1. processing geo (highest priority)
     logger.info("processing geo...")
     for gse, (title, desc) in geo_dict.items():
         aliases: dict[str, str] = {}
 
-        # find sra alias(es) -- may be multiple srps for one gse
         srps = alias_to_srps.get(gse, [])
         for srp in srps:
-            aliases.setdefault("sra", srp)  # store first srp
+            aliases.setdefault("sra", srp)
             claimed.add(srp)
 
-            # sra entry alias may be a bioproject (prjna), geo (gse), or garbage
             bp_alias = srp_to_alias.get(srp, "")
             if bp_alias not in (srp, gse):
                 if BIOPROJECT_RE.match(bp_alias):
@@ -403,19 +388,16 @@ def _build_catalog_tuples(
                 elif re.match(r"^GSE\d+$", bp_alias):
                     aliases.setdefault("geo", bp_alias)
 
-            # if this srp maps to an ena prj, claim it
             if srp in srp_to_ena:
                 prj = srp_to_ena[srp]
                 aliases.setdefault("ena", prj)
                 claimed.add(prj)
 
-        # find ena alias(es) via geo_accession
         ena_prjs = geo_to_ena.get(gse, [])
         for prj in ena_prjs:
             aliases.setdefault("ena", prj)
             claimed.add(prj)
 
-        # find arrayexpress e-geod alias
         ae_acc = f"E-GEOD-{gse[3:]}"
         if ae_acc in ae_dict:
             aliases["arrayexpress"] = ae_acc
@@ -431,7 +413,6 @@ def _build_catalog_tuples(
 
     logger.info("\tgeo: %d canonical", len([r for r in catalog if r[1] == "geo"]))
 
-    # 2. processing gea (gea_preclaim already took its raw studies out of reach)
     logger.info("processing gea...")
     gea_count = 0
     for gea_acc, (title, desc, bioproject) in gea_dict.items():
@@ -445,8 +426,8 @@ def _build_catalog_tuples(
         if raw_studies:
             aliases["sra"] = raw_studies[0]
 
-        # the pre-claimed raw study never runs its own pass, so inherit the ena claims
-        # it would have made, or the mirror escapes as a second canonical row.
+        # the pre-claimed raw study never runs its own pass, so inherit the ena
+        # claims it would have made, or the mirror escapes as a second row
         if bioproject and bioproject in ena_dict:
             aliases.setdefault("ena", bioproject)
             claimed.add(bioproject)
@@ -456,8 +437,6 @@ def _build_catalog_tuples(
                 aliases.setdefault("ena", ena_prj)
                 claimed.add(ena_prj)
 
-        # blank text falls back to the accession rather than dropping the row, as
-        # in _build_gsa_tuples
         catalog.append(
             (
                 gea_acc,
@@ -472,8 +451,6 @@ def _build_catalog_tuples(
 
     logger.info("\tgea: %d canonical", gea_count)
 
-    # 3. processing sra
-    # skip gse-aliased, those are already claimed by geo
     logger.info("processing sra...")
     sra_count = 0
     for srp, (alias, title, abstract, _bioproject) in sra_dict.items():
@@ -482,26 +459,22 @@ def _build_catalog_tuples(
 
         aliases = {}
 
-        # sra alias may be a bioproject (prjna), geo (gse), or garbage
-        # skip self-aliases (drp/erp entries where alias == accession)
+        # self-alias and are skipped
         if alias and alias != srp:
             if BIOPROJECT_RE.match(alias):
                 aliases["bioproject"] = alias
             elif re.match(r"^GSE\d+$", alias):
                 aliases["geo"] = alias
 
-            # find ena entry via the srp's secondary accession reverse lookup
             ena_prj = srp_to_ena.get(srp)
             if ena_prj:
                 aliases["ena"] = ena_prj
                 claimed.add(ena_prj)
-            # also check if alias itself (prjna) is an ena study_accession
             if alias in ena_dict:
                 if "ena" not in aliases:
                     aliases["ena"] = alias
                 claimed.add(alias)
         else:
-            # Even without a useful alias, check reverse SRP->ENA lookup
             ena_prj = srp_to_ena.get(srp)
             if ena_prj:
                 aliases["ena"] = ena_prj
@@ -524,10 +497,6 @@ def _build_catalog_tuples(
 
     logger.info("\tsra: %d canonical", sra_count)
 
-    # 4. processing arrayexpress
-    # note: ae external_links contain ena accessions (erp*). these erp*
-    # accessions may also exist as study_accession in ena db (as prjeb*)
-    # and as accessions in the sra db. we must claim all of them.
     logger.info("processing arrayexpress...")
     ae_count = 0
     for ae_acc, (title, desc, _) in ae_dict.items():
@@ -536,26 +505,21 @@ def _build_catalog_tuples(
 
         aliases = {}
 
-        # claim linked ena accessions
         ena_accs = ae_to_ena_links.get(ae_acc, [])
         for ena_acc in ena_accs:
             aliases.setdefault("ena", ena_acc)
             claimed.add(ena_acc)
-            # the ena external_link value (e.g. erp123456) might be:
-            # a) a secondary_study_accession in ena db -> claim its prj parent
-            # b) a study_accession in ena db directly
-            # c) also present as an accession in the sra db
+            # an external_link value can be an ena study_accession, a secondary
+            # accession whose prj parent needs claiming, or an sra accession;
+            # all three must be claimed or the study escapes as a second row
             if ena_acc in ena_dict:
-                # it's an ena study_accession (prj*), claim its secondary too
                 secondary = ena_dict[ena_acc][0]
                 if secondary:
                     aliases.setdefault("sra", secondary)
                     claimed.add(secondary)
-            # check if it's a secondary accession (erp*) that maps to a prj
             if ena_acc in srp_to_ena:
                 prj = srp_to_ena[ena_acc]
                 claimed.add(prj)
-            # also claim from sra db if the erp exists there
             if ena_acc in sra_dict:
                 claimed.add(ena_acc)
                 aliases.setdefault("sra", ena_acc)
@@ -571,7 +535,6 @@ def _build_catalog_tuples(
 
     logger.info("\tae: %d canonical", ae_count)
 
-    # 5. processing ena
     logger.info("processing ena...")
     ena_count = 0
     for prj, (secondary, geo_acc, title, desc) in ena_dict.items():
@@ -581,7 +544,6 @@ def _build_catalog_tuples(
         aliases = {}
         if secondary:
             aliases["sra"] = secondary
-            # if the secondary srp is in sra but wasn't claimed (edge case), claim it
             if secondary in sra_dict and secondary not in claimed:
                 claimed.add(secondary)
 
@@ -602,7 +564,7 @@ def _build_catalog_tuples(
 
     logger.info("\tena: %d canonical", ena_count)
 
-    # 6. processing dra (lowest priority: only DRPs nobody else holds)
+    # lowest priority: only DRPs nobody else holds
     logger.info("processing dra...")
     dra_count = 0
     for drp, (alias, title, abstract, bioproject) in dra_dict.items():

@@ -1,9 +1,9 @@
 """
-Populate ``gea_experiments.organisms`` (text[]) from ``gea_samples`` so GEA
-project pages show every organism in a study, not just the single
-experiment-level ``organism``.
+Populate gea_experiments.organisms from gea_samples.
 
-``gea_samples.experiment_accession`` joins to ``gea_experiments.accession`` (the
+GEA project pages otherwise show only the single experiment-level organism.
+
+gea_samples.experiment_accession joins to gea_experiments.accession (the
 study surface), so one GROUP BY. Small archive: 733 studies, 14 multi-organism
 (measured 2026-07-25).
 
@@ -19,9 +19,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
-_ADD_COLUMN = (
-    "ALTER TABLE gea_experiments ADD COLUMN IF NOT EXISTS organisms text[]"
-)
+_ADD_COLUMN = "ALTER TABLE gea_experiments ADD COLUMN IF NOT EXISTS organisms text[]"
 
 _POPULATE_FROM_SAMPLES = """
 UPDATE gea_experiments g

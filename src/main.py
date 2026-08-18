@@ -9,6 +9,7 @@ from cli.embed import embed_app
 from cli.geocode import geocode_app
 from cli.ingest import ingest_app
 from cli.ontology import ontology_app
+from cli.pentimento import pentimento_app
 from cli.refresh import refresh_app
 from cli.sc_enrich import sc_enrich_app
 from cli.transfer import transfer_app
@@ -46,6 +47,7 @@ cli.add_typer(backfill_app, name="backfill")
 cli.add_typer(unify_app, name="unify")
 cli.add_typer(geocode_app)
 cli.add_typer(sc_enrich_app, name="sc_enrich")
+cli.add_typer(pentimento_app, name="pentimento")
 cli.add_typer(transfer_app, name="transfer")
 cli.add_typer(embed_app, name="embed")
 cli.add_typer(age_app, name="age")

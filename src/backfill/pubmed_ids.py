@@ -103,7 +103,6 @@ HAS_ORIGINAL_PMID_QUERIES: dict[Datasource, str] = {
         "SELECT COUNT(*) FROM gea_experiments"
         " WHERE pubmed_id IS NOT NULL AND pubmed_id != ''"
     ),
-    # CRA study pages declare their publications; HRA workbooks carry none
     Datasource.Gsa: (
         "SELECT COUNT(*) FROM gsa_studies"
         " WHERE pubmed_id IS NOT NULL AND pubmed_id != '' AND pubmed_id != '[]'"
@@ -146,7 +145,6 @@ BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
     ),
 }
 
-# datasource -> (SRAweb method, accession column in its dataframe).
 # CRA/HRA/E-GEAD have no NCBI record to elink. ae_to_pmid: literature search, smallest
 # pmid (the originating paper). DRA resolves by BioProject.
 SRAWEB_RESOLVERS: dict[Datasource, tuple[str, str]] = {

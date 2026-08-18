@@ -90,7 +90,6 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     keywords                          TEXT,
     tag                               TEXT,
     datahub                           TEXT,
-    -- organism details
     strain                            TEXT,
     cultivar                          TEXT,
     ecotype                           TEXT,
@@ -105,7 +104,6 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     mating_type                       TEXT,
     sex                               TEXT,
     germline                          TEXT,
-    -- sampling / collection
     collection_date                   TEXT,
     collection_date_start             TEXT,
     collection_date_end               TEXT,
@@ -128,7 +126,6 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     sample_material                   TEXT,
     sample_capture_status             TEXT,
     protocol_label                    TEXT,
-    -- environmental
     environmental_sample              TEXT,
     environment_biome                 TEXT,
     environment_feature               TEXT,
@@ -140,7 +137,6 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     ph                                TEXT,
     salinity                          TEXT,
     temperature                       TEXT,
-    -- host
     host                              TEXT,
     host_body_site                    TEXT,
     host_genotype                     TEXT,
@@ -152,7 +148,6 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     host_status                       TEXT,
     host_tax_id                       TEXT,
     submitted_host_sex                TEXT,
-    -- biological features
     cell_line                         TEXT,
     cell_type                         TEXT,
     dev_stage                         TEXT,
@@ -161,19 +156,16 @@ CREATE TABLE IF NOT EXISTS ena_samples (
     tissue_type                       TEXT,
     age                               TEXT,
     experimental_factor               TEXT,
-    -- surveillance / clinical
     serotype                          TEXT,
     serovar                           TEXT,
     surveillance_target               TEXT,
     target_gene                       TEXT,
-    -- assembly / mag
     assembly_quality                  TEXT,
     assembly_software                 TEXT,
     binning_software                  TEXT,
     completeness_score                TEXT,
     contamination_score               TEXT,
     sequencing_method                 TEXT,
-    -- taxonomy
     tax_lineage                       TEXT,
     taxonomic_classification          TEXT,
     taxonomic_identity_marker         TEXT,

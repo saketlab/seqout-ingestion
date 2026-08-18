@@ -33,7 +33,7 @@ except ImportError:
         "system R install). install with: uv sync --extra rds"
     )
 
-    class LibrdataError(Exception):  # placeholder so `except LibrdataError` resolves
+    class LibrdataError(Exception):  # placeholder so except LibrdataError resolves
         pass
 
     class _MissingR:  # any attribute access raises the friendly hint

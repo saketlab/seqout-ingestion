@@ -4,8 +4,8 @@ Hierarchical Leiden clustering over the shared space (alternative to EVoC).
 Pipeline: raw 4096-d embeddings -> GPU cuML PCA (400-d, L2-normalized) -> approx
 kNN graph -> recursive top-down Leiden (vtraag/leidenalg). Unlike EVoC, Leiden
 assigns EVERY point to a community, so the output has ZERO noise. Results are
-merged into each accession's chroma metadata under ``leiden_l0`` (finest) ..
-``leiden_lN`` (coarsest); EVoC's ``cluster_l*`` keys are left untouched.
+merged into each accession's chroma metadata under leiden_l0 (finest) ..
+leiden_lN (coarsest); EVoC's cluster_l* keys are left untouched.
 
 Needs a CUDA GPU (cuML) plus python-igraph + leidenalg.
 """
@@ -21,7 +21,7 @@ from embed.common import load_combined_matrix, open_chroma, scatter_write
 
 logger = logging.getLogger(__name__)
 
-N_COMPONENTS = 400  # PCA target dim (~80% of variance)
+N_COMPONENTS = 400
 K = 15  # neighbors per node in the kNN graph
 RESOLUTION = 1.0  # Leiden resolution (RBConfiguration ~ modularity at 1.0)
 N_ITER = 5  # Leiden iterations per split
@@ -78,8 +78,12 @@ def _knn_edges(xr: np.ndarray) -> np.ndarray:
 
 
 def _hierarchical_leiden(n: int, edges: np.ndarray) -> list[np.ndarray]:
-    """Recursive top-down Leiden. Returns per-node label arrays, level 0 = finest
-    .. level L = coarsest. Every node is always assigned (no noise)."""
+    """
+    Recursive top-down Leiden.
+
+    Returns per-node label arrays, level 0 finest to level L coarsest. Every
+    node is always assigned, so there is no noise label.
+    """
     g = ig.Graph(n=n, edges=edges.tolist(), directed=False)
     levels: list[np.ndarray] = []
     counter = [0]
@@ -119,13 +123,11 @@ def _hierarchical_leiden(n: int, edges: np.ndarray) -> list[np.ndarray]:
         "  Leiden %.1f min, %d raw levels", (time.time() - t0) / 60, len(levels)
     )
 
-    # forward-fill trailing -1 (a leaf keeps its label at finer levels)
     m = np.vstack(levels)
     for d in range(1, m.shape[0]):
         mask = m[d] == -1
         m[d][mask] = m[d - 1][mask]
 
-    # relabel each level to contiguous ids, then reverse so index 0 = finest
     out = [
         np.unique(m[d], return_inverse=True)[1].astype(np.int64)
         for d in range(m.shape[0])

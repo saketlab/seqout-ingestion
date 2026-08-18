@@ -162,11 +162,26 @@ def age(
 def gsa_search_tsv(
     pg_url: str = typer.Option(...),
 ) -> None:
-    """Fold BioProject title/summary, organism, and sample text into the GSA
-    search tsv (recall). Run after the gsa_* tables are loaded."""
+    """
+    Fold BioProject text, organism and sample text into the GSA search tsv.
+
+    Run after the gsa_* tables are loaded.
+    """
     from transfer.gsa_search import gsa_search_tsv_transfer
 
     gsa_search_tsv_transfer(pg_url)
+
+
+@transfer_app.command()
+def pentimento(
+    pg_url: str = typer.Option(...),
+    pentimento_db_file: Path = typer.Option(...),
+    batch_size: int = typer.Option(default=5000),
+) -> None:
+    """Load Pentimento into pg (counts, preflightx, microbe flags)."""
+    from transfer.pentimento import pentimento_transfer
+
+    pentimento_transfer(pg_url, pentimento_db_file, batch_size)
 
 
 @transfer_app.command()
@@ -216,8 +231,12 @@ def parquet_from_pg(
     batch_size: int = typer.Option(default=5000),
     resume: bool = typer.Option(False, "--resume", help="skip already-exported tables"),
 ) -> None:
-    """Build the parquet dump straight from Postgres (source of truth), covering
-    all public tables plus GSA/DRA/GEA. Replaces the SQLite-fed `parquet`."""
+    """
+    Build the parquet dump straight from Postgres, the source of truth.
+
+    Covers all public tables plus GSA, DRA and GEA, replacing the SQLite-fed
+    parquet command.
+    """
     from transfer.parquet import pg_parquet_transfer
 
     pg_parquet_transfer(pg_url, output_dir, num_workers, batch_size, resume=resume)

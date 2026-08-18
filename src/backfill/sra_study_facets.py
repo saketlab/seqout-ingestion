@@ -1,12 +1,13 @@
 #!/usr/bin/env python
-"""Recompute sra_studies facet columns at the study level.
+"""
+Recompute sra_studies facet columns at the study level.
 
 They were derived per *submission* (see the fix in
 src/transfer/postgres.py::_sra_studies_batch_modifier), which is wrong in both
 directions: one submission can cover many studies, so each inherited its
 siblings' values; and a study's samples can span many submissions, so its own
 submission missed most of them. Measured against prod, ~12.6% of SRA studies
-carried a wrong organism list — and search filters on that column directly
+carried a wrong organism list, and search filters on that column directly
 (`s.organisms @> ARRAY[...]`).
 
 This rewrites organisms / library_strategies / instrument_models / platforms /
@@ -17,7 +18,7 @@ An empty recompute never overwrites a stored value: ~4% of studies have samples
 but no experiments linking them, and blanking those would drop them out of
 organism search entirely.
 
-DRY RUN BY DEFAULT — it only reports what would change. Pass --apply to write.
+Dry run by default, reporting only what would change; pass --apply to write.
 
     python -m backfill.sra_study_facets                  # report only
     python -m backfill.sra_study_facets --limit 5000     # sample it
@@ -35,8 +36,6 @@ import sys
 import psycopg
 from psycopg import sql
 
-# One statement, run server-side: the join stays in Postgres rather than
-# shipping millions of sample rows to this process.
 _RECOMPUTE_SQL = """
 WITH target AS (
     SELECT accession FROM sra_studies
@@ -72,10 +71,8 @@ computed AS (
             ORDER BY e.platform
         ) AS platforms,
         ARRAY(
-            -- library_source arrives dirty with leading/trailing tabs and
-            -- newlines; trim so a clean value and its whitespaced twin do not
-            -- become two distinct facet values. The explicit charset is
-            -- required: single-arg btrim strips spaces only, not tab/newline/CR.
+            -- the explicit charset is required: single-arg btrim strips spaces
+            -- only, so tab/newline-padded values become distinct facet values
             SELECT DISTINCT btrim(e.library_source, E' \t\n\r') FROM sra_experiments e
             WHERE e.study = t.accession AND btrim(e.library_source, E' \t\n\r') <> ''
             ORDER BY btrim(e.library_source, E' \t\n\r')
@@ -83,13 +80,10 @@ computed AS (
     FROM target t
 ),
 facts AS (
-    -- An empty recompute means "no evidence", not "no organisms": roughly 4 in
-    -- 100 studies have samples but no experiments linking them, and psycopg
-    -- parses a percent sign even inside a comment, so do not write one here.
-    -- (DRP001120 is the worked example: it has
-    -- organisms and zero rows in every experiments table.) Overwriting those
-    -- with {{}} would blank some 29k studies, so the stored value is kept
-    -- whenever the study-level derivation comes back empty.
+    -- An empty recompute means "no evidence": roughly 4 in 100 studies have
+    -- samples but no experiments linking them, and blanking those would drop
+    -- some 29k studies. psycopg parses a percent sign even inside a comment,
+    -- so never write one here.
     SELECT
         c.accession,
         CASE WHEN cardinality(c.organisms) > 0
@@ -118,11 +112,8 @@ WHERE f.organisms          IS DISTINCT FROM COALESCE(s.organisms, '{{}}')
    OR f.library_sources    IS DISTINCT FROM COALESCE(s.library_sources, '{{}}')
 """
 
-# One statement per batch, not per row. The DB does this work in microseconds;
-# the cost is the round-trip, and over an SSH tunnel that was measured at 622ms
-# — 125,888 single-row UPDATEs is over a day of pure waiting, and a window that
-# long is very likely to lose the tunnel mid-run (it did). Folding a batch into
-# one VALUES list makes it ~25 round-trips instead.
+# batched into one VALUES list: the cost is the round-trip, and a row-by-row
+# run over an SSH tunnel takes long enough to lose the tunnel mid-run
 _UPDATE_SQL = """
 UPDATE sra_studies AS s
 SET organisms = v.organisms,
@@ -139,8 +130,6 @@ _WRITE_BATCH = 5000
 
 
 def connect(pg_url: str | None) -> psycopg.Connection:
-    # --pg-url matches the rest of the pipeline (see src/cli/transfer.py);
-    # PG_URL / DATABASE_URL are accepted so it can run unattended.
     url = pg_url or os.getenv("PG_URL") or os.getenv("DATABASE_URL")
     if not url:
         sys.exit("pass --pg-url, or set PG_URL / DATABASE_URL")
@@ -161,8 +150,8 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    # not named `sql`: that shadows the psycopg sql module used to build the
-    # batched UPDATE below
+    # not named sql, which shadows the psycopg module used to build the batched
+    # UPDATE below
     select_sql = _RECOMPUTE_SQL.format(
         where="WHERE accession LIKE %(prefix)s" if args.prefix else "",
         limit=f"LIMIT {args.limit}" if args.limit else "",
@@ -183,7 +172,7 @@ def main() -> None:
     if not changed:
         return
     if not args.apply:
-        print("\ndry run — nothing written. Re-run with --apply to write.")
+        print("\ndry run, nothing written. Re-run with --apply to write.")
         return
 
     with connect(args.pg_url) as conn:
@@ -191,8 +180,8 @@ def main() -> None:
         with conn.cursor() as cur:
             for start in range(0, len(changed), _WRITE_BATCH):
                 batch = changed[start : start + _WRITE_BATCH]
-                # The arrays need an explicit cast: a VALUES list gives Postgres
-                # nothing to infer element types from.
+                # the arrays need an explicit cast: a VALUES list gives Postgres
+                # nothing to infer element types from
                 values = sql.SQL(", ").join(
                     sql.SQL(
                         "({}, {}::text[], {}::text[], {}::text[], {}::text[],"
@@ -207,22 +196,21 @@ def main() -> None:
                     )
                     for r in batch
                 )
-                cur.execute(
-                    sql.SQL(_UPDATE_SQL.replace("%s", "{}")).format(values)
-                )
+                cur.execute(sql.SQL(_UPDATE_SQL.replace("%s", "{}")).format(values))
                 conn.commit()
-                print(f"  committed {min(start + _WRITE_BATCH, len(changed)):,}/{len(changed):,}")
+                print(
+                    f"  committed {min(start + _WRITE_BATCH, len(changed)):,}/{len(changed):,}"
+                )
     print(f"updated {len(changed):,} studies")
 
     if args.skip_refresh:
-        print("skipping matview refresh — organism charts will show stale counts")
+        print("skipping matview refresh; organism charts will show stale counts")
         return
 
-    # organism_growth_monthly is a matview over sra_studies.organisms (and the
-    # other archives'), and backs the organism charts. Nothing invalidates it
-    # automatically, so it would keep serving pre-backfill numbers. CONCURRENTLY
-    # keeps the stats page readable while it rebuilds (idx_ogm_organism_db_month
-    # is the unique index that allows it).
+    # organism_growth_monthly is a matview over sra_studies.organisms backing the
+    # organism charts, and nothing invalidates it automatically, so it would keep
+    # serving pre-backfill numbers. CONCURRENTLY keeps the stats page readable
+    # while it rebuilds; idx_ogm_organism_db_month is the unique index it needs.
     print("refreshing organism_growth_monthly (concurrently)…")
     with connect(args.pg_url) as conn:
         conn.execute("SET statement_timeout = '0'")

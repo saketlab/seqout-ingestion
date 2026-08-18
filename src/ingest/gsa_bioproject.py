@@ -1,6 +1,4 @@
-"""
-Ingest CNCB-NGDC BioProject (PRJCA) project-level metadata into gsa_projects.
-"""
+"""Ingest CNCB-NGDC BioProject (PRJCA) metadata into gsa_projects."""
 
 from __future__ import annotations
 
@@ -34,7 +32,6 @@ BROWSE_URL = f"{GSA_BASE_URL}/bioproject/browse/{{acc}}"
 _ENGLISH_HEADERS = {"Accept-Language": "en-US,en;q=0.9"}
 FETCH_LOG_COLUMNS = ["accession", "status", "fetched_at"]
 
-# SQLite column order for gsa_projects (JSON columns serialized on write).
 PROJECT_COLUMNS = [
     "accession",
     "title",

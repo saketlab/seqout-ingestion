@@ -29,7 +29,6 @@ BIOSTUDIES_FILES_BASE_URL = "https://www.ebi.ac.uk/biostudies/files"
 FTP_EXPERIMENT_BASE_URL = (
     "https://ftp.ebi.ac.uk/pub/databases/microarray/data/experiment"
 )
-# Apache autoindex link to a legacy processed bundle: <ACC>.processed.<n>.zip
 _PROCESSED_ZIP_RE = re.compile(
     r'href="([^"?/][^"]*\.processed\.\d+\.zip)"', re.IGNORECASE
 )
@@ -397,7 +396,6 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
     orgs = []
     protocol_texts = []
 
-    # processing subsections
     for it in subsections:
         items = _json_coerce_list(it)
         for sub in items:
@@ -453,7 +451,6 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
                     for s in inners:
                         inner_type = s.get("type")
 
-                        # processed files
                         if (
                             sub_type == "Assays and Data"
                             and inner_type == "Processed Data"
@@ -472,7 +469,6 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
                                             ),
                                         },
                                     )
-                        # experimental factor details
                         elif (
                             sub_type == "Samples"
                             and inner_type == "Experimental Factors"
@@ -485,7 +481,6 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
                                 for attr in s.get("attributes", [])
                             )
 
-    # external links
     for link_group in links:
         link_list = link_group if isinstance(link_group, list) else [link_group]
         for link in link_list:
@@ -513,7 +508,6 @@ def _parse_experiment_json(filepath: Path, accession: str) -> dict | None:
     result["organizations"] = json.dumps(orgs)
     result["protocols_description"] = json.dumps(protocol_texts)
 
-    # building up metadata: title, release data, organism, description and study type
     for attr in data.get("attributes", []):
         name = attr.get("name", "")
         value = attr.get("value")
@@ -633,7 +627,6 @@ def _merge_json_and_idf(json_data: dict | None, idf_data: dict | None) -> dict |
     return result
 
 
-# credits: mr. sonnet 4.6
 def _process_accession(accession: str, data_dir: Path) -> tuple | None:
     json_path = data_dir / f"{accession}.json"
     idf_path = data_dir / f"{accession}.idf.txt"

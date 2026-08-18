@@ -2,7 +2,7 @@
 UMAP coordinates over the shared 4096-d space (cuML / RAPIDS).
 
 Runs cuML UMAP directly on the raw embeddings (no PCA) for both 2D and 3D, then
-writes ``umap_2d_*`` / ``umap_3d_*`` back into each accession's chroma metadata.
+writes umap_2d_* / umap_3d_* back into each accession's chroma metadata.
 Needs a CUDA GPU.
 """
 
