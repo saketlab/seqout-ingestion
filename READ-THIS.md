@@ -193,6 +193,30 @@ backups manually.
 
 ## Environment note
 
-`uv sync` fails on the old machine because `vendor/yuj` is an uninitialised
-submodule. On the lab box run `git submodule update --init --recursive` first, or
-`uv run pytest` will not work.
+**Clone with submodules.** `vendor/yuj` is a submodule and `uv sync` fails on the
+path dependency while it is an empty directory:
+
+```bash
+git submodule update --init --recursive
+uv sync --all-extras
+```
+
+Three things in `pyproject.toml` / `.python-version` look like they could be
+tidied and cannot. Each was tried:
+
+- **`pysradb` comes from git `develop`, not PyPI.** The released 2.5.x has no
+  `SRAweb.pmid_info`, which `backfill/pubmed_meta.py` and
+  `refresh/publications.py` both call. Pinning a PyPI version installs cleanly
+  and then dies at runtime, part-way through a refresh run.
+- **`psycopg[binary]`, not bare `psycopg`.** The binary wheel bundles libpq. With
+  bare `psycopg` you get the pure-Python implementation, which needs Homebrew's
+  keg-only libpq on the loader path -- i.e. `DYLD_FALLBACK_LIBRARY_PATH` exported
+  before every command, ad-hoc scripts included.
+- **`.python-version` is `3.14`, not `3.14t`.** Free-threading buys nothing here:
+  `pysradb` pulls in pandas, pandas has not declared free-thread safety, so the
+  GIL is re-enabled at import (`sys._is_gil_enabled()` returns `True` on 3.14t).
+  Every thread pool in this repo is I/O-bound `ThreadPoolExecutor`, which the GIL
+  does not block anyway. Meanwhile `psycopg-binary` publishes no `cp314t` wheel,
+  so 3.14t silently costs you the point above. If you switch back, note that
+  plain `3.14` can still resolve to the free-threaded build when it is the
+  higher patch -- check `.venv/bin/python -VV`.

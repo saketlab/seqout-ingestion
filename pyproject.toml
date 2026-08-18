@@ -15,7 +15,7 @@ dependencies = [
     "tqdm>=4.67.3",
     "typer>=0.26.7",
     "h5py>=3.16.0",
-    "psycopg>=3.3.4",
+    "psycopg[binary]>=3.3.4",
     "results>=1.4.1772627293",
     "testing-postgresql>=1.3.0",
     "pyarrow>=19.0.0,<24",
@@ -23,7 +23,8 @@ dependencies = [
     "rapidfuzz>=3.14.5",
     "numpy>=2.3.0rc1",
     "pysocks>=1.7.1",
-    "pysradb>=2.5.1",
+    "pysradb",
+    "yuj",
 ]
 
 [project.optional-dependencies]
@@ -63,8 +64,14 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
 
-
 [tool.uv.sources]
+# pysradb tracks `develop`, NOT PyPI. The released 2.5.x has no `SRAweb.pmid_info`,
+# which backfill/pubmed_meta.py and refresh/publications.py both call. Moving this
+# to a PyPI version pin breaks the publication metadata step at runtime, not at
+# install time -- so it looks fine until a refresh run dies.
+pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
+# Uninitialised submodule => empty dir => `uv sync` fails on this path.
+# `git submodule update --init --recursive` first.
 yuj = { path = "./vendor/yuj" }
 
 [tool.pytest.ini_options]
