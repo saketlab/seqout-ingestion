@@ -9,8 +9,9 @@ Read the modules in this order:
 1. ``sources.py`` -- the registry. Every ontology, its download URL, its file
    format, and the knobs used when parsing it. Start here.
 2. ``extract.py`` -- downloads a source and turns it into two archive-neutral
-   artifacts: a ``short,long`` synonym CSV and (where we take hierarchy) an
-   OBO-JSON with an ``edges`` array.
-3. ``graph.py`` -- loads those artifacts into Neo4j and stamps the
-   ``has_children`` flag the frontend reads.
+   artifacts: a ``short,long,id`` synonym CSV and (where we take hierarchy) an
+   OBO-JSON with an ``edges`` array. ``id`` is the source's CURIE for the
+   canonical term, and ``curie()`` is the delicate part of producing it.
+3. ``graph.py`` -- loads those artifacts into Neo4j, records each term's source
+   CURIEs in ``xrefs``, and stamps the ``has_children`` flag the frontend reads.
 """

@@ -3,14 +3,23 @@ Turn a downloaded ontology into the two artifacts the graph loader wants.
 
 Every source, whatever its native format, is reduced to:
 
-* ``expansions/<name>_term_expansions.csv`` -- columns ``short,long``. One row
-  per synonym: ``short`` is the alternative spelling, ``long`` is the canonical
-  term. Loaded as ``(:Term {name: short})-[:MAPS_TO]->(:Term {name: long})``.
+* ``expansions/<name>_term_expansions.csv`` -- columns ``short,long,id``. One
+  row per synonym: ``short`` is the alternative spelling, ``long`` is the
+  canonical term. Loaded as
+  ``(:Term {name: short})-[:MAPS_TO]->(:Term {name: long})``.
 * an OBO-JSON with an ``edges`` array, for sources we take hierarchy from. Most
   ship one; MeSH does not, so we synthesize it.
 
 Everything is keyed by *normalized name*, never by ontology id -- see ``norm``.
 That is why a term shared by two ontologies collapses into a single node.
+
+The ``id`` column is that merged node's missing provenance: the source's CURIE
+for the canonical term (``UBERON:0002107``, ``HGNC:5``, ``CVCL_0030``,
+``MeSH:D008099``). graph.py appends it to the node's ``xrefs`` list, so a term
+contributed by three ontologies ends up carrying all three CURIEs and the source
+is readable off the prefix. A *synonym* has no id of its own, so it carries its
+descriptor's -- ``t2dm`` and ``type 2 diabetes mellitus`` both list
+``MONDO:0005148``.
 """
 
 from __future__ import annotations
@@ -57,31 +66,86 @@ def norm(x: str) -> str:
     return x.strip()
 
 
+#: A well-formed CURIE: ``PREFIX:local``. Cellosaurus accessions (``CVCL_0030``)
+#: are the one legitimate exception and are passed through verbatim by their
+#: parser rather than through ``curie``.
+_CURIE_RE = re.compile(r"[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9.-]+")
+
+#: Cross-reference URLs that keep the registry in the *path* instead of the id.
+#: Taking the last path segment of these yields a bare number ("1014") naming no
+#: registry, so they have to be matched explicitly. See ``curie``.
+_HGNC_URL_RE = re.compile(r"genenames\.org/.*hgnc_id=(\d+)")
+_IDENTIFIERS_ORG_RE = re.compile(r"https?://identifiers\.org/([^/]+)/(.+)$")
+_IDENTIFIERS_ORG_NS = {"hgnc": "HGNC", "ncbigene": "NCBIGene", "ensembl": "ENSEMBL"}
+
+
+def curie(node_id: str) -> str:
+    """
+    OBO node id -> CURIE. ``.../MONDO_0005148`` -> ``MONDO:0005148``.
+
+    This is the fragile part of provenance, so it is explicit rather than
+    clever. Most ids are PURLs whose last path segment is ``PREFIX_local``, but
+    an OBO graph's node list also contains cross-references and annotation
+    properties, and those do not follow the rule:
+
+    * ``http://identifiers.org/ncbigene/1014`` -- registry is the *path*
+      segment; the tail alone is a bare ``1014``.
+    * ``https://www.genenames.org/...?hgnc_id=10000`` -- registry is in a query
+      parameter.
+    * ``#fragment`` URLs, dbpedia, ORCID and Dublin Core refs -- not term ids at
+      all.
+
+    Returns ``""`` for anything it cannot resolve, and every caller skips empty
+    ids. A regression here shows up as junk in ``xrefs`` rather than as an
+    error, so ``docs/ontology_graph.md`` carries a Cypher check for it.
+    """
+    m = _HGNC_URL_RE.search(node_id)
+    if m:
+        return f"HGNC:{m.group(1)}"
+
+    m = _IDENTIFIERS_ORG_RE.match(node_id)
+    if m:
+        ns = _IDENTIFIERS_ORG_NS.get(m.group(1).lower())
+        return f"{ns}:{m.group(2)}" if ns else ""
+
+    tail = node_id.rsplit("/", 1)[-1]
+    if "#" in tail or "?" in tail:  # annotation property, not a term
+        return ""
+    tail = tail.replace("_", ":", 1)
+    return tail if _CURIE_RE.fullmatch(tail) else ""
+
+
 class _PairSet:
-    """Collects (synonym, canonical) pairs, applying the per-source filters."""
+    """Collects (synonym, canonical, id) triples, applying the per-source filters."""
 
     def __init__(self, source: Source) -> None:
-        self._pairs: set[tuple[str, str]] = set()
+        self._pairs: set[tuple[str, str, str]] = set()
         self._generic = source.generic_terms
         self._floor = (
             _MIN_SYNONYM_LEN_HGNC if source.parser == "hgnc" else _MIN_SYNONYM_LEN
         )
 
-    def add(self, short: str, long: str) -> None:
-        """Record one synonym pair, unless it is trivial or too generic."""
+    def add(self, short: str, long: str, term_id: str = "") -> None:
+        """
+        Record one synonym pair, unless it is trivial or too generic.
+
+        ``term_id`` is the canonical term's CURIE, carried so graph.py can stamp
+        provenance. It is allowed to be empty -- a source that cannot supply one
+        still contributes a usable MAPS_TO edge.
+        """
         short, long = norm(short), norm(long)
         if not short or short == long:
             return
         if short in self._generic or len(short) <= self._floor:
             return
-        self._pairs.add((short, long))
+        self._pairs.add((short, long, term_id))
 
     def write(self, path: Path) -> int:
-        """Write the pairs to ``path`` as a ``short,long`` CSV. Returns the count."""
+        """Write the pairs to ``path`` as a ``short,long,id`` CSV. Returns the count."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["short", "long"])
+            w.writerow(["short", "long", "id"])
             w.writerows(sorted(self._pairs))
         return len(self._pairs)
 
@@ -155,9 +219,10 @@ def _extract_obo(source: Source, root: Path) -> int:
     pairs = _PairSet(source)
     for node in _obo_nodes(graph, source):
         canonical = node["lbl"]
+        term_id = curie(node.get("id", ""))
         for syn in node.get("meta", {}).get("synonyms", []):
             if syn.get("pred") in _GOOD_PREDS and syn.get("val"):
-                pairs.add(syn["val"], canonical)
+                pairs.add(syn["val"], canonical, term_id)
     return pairs.write(source.csv_path(root))
 
 
@@ -176,11 +241,13 @@ def _extract_hgnc(source: Source, root: Path) -> int:
         symbol = doc.get("symbol")
         if not symbol:
             continue
+        # HGNC publishes the CURIE directly ("HGNC:5"); no curie() needed.
+        term_id = doc.get("hgnc_id", "")
         if doc.get("name"):
-            pairs.add(doc["name"], symbol)
+            pairs.add(doc["name"], symbol, term_id)
         for key in ("alias_symbol", "prev_symbol", "prev_name", "alias_name"):
             for alias in doc.get(key, []):
-                pairs.add(alias, symbol)
+                pairs.add(alias, symbol, term_id)
     return pairs.write(source.csv_path(root))
 
 
@@ -190,6 +257,12 @@ def _extract_cellosaurus(source: Source, root: Path) -> int:
 
     The name tagged ``type="identifier"`` is canonical; the rest of the
     name-list are the spellings seen in the literature.
+
+    The accession tagged ``type="primary"`` is the provenance id. It is a bare
+    ``CVCL_0030``, not a ``PREFIX:local`` CURIE -- Cellosaurus simply does not
+    issue one, so it is recorded verbatim and is the documented exception to the
+    CURIE shape in ``docs/ontology_graph.md``. Secondary accessions are retired
+    duplicates and are skipped.
     """
     pairs = _PairSet(source)
     # iterparse + clear(): the dump is ~700 MB and a full DOM is several GB.
@@ -202,6 +275,18 @@ def _extract_cellosaurus(source: Source, root: Path) -> int:
                 cell_line.clear()
                 continue
 
+            accessions = cell_line.find("accession-list")
+            term_id = ""
+            if accessions is not None:
+                term_id = next(
+                    (
+                        a.text
+                        for a in accessions.findall("accession")
+                        if a.attrib.get("type") == "primary" and a.text
+                    ),
+                    "",
+                )
+
             canonical = next(
                 (
                     n.text
@@ -213,7 +298,7 @@ def _extract_cellosaurus(source: Source, root: Path) -> int:
             if canonical:
                 for name in names.findall("name"):
                     if name.text:
-                        pairs.add(name.text, canonical)
+                        pairs.add(name.text, canonical, term_id)
             cell_line.clear()
     return pairs.write(source.csv_path(root))
 
@@ -235,6 +320,12 @@ def _extract_mesh(source: Source, root: Path) -> int:
 
     Top-level tree numbers (no dot) hang off a single-letter category that is
     not itself a descriptor, so they come out as roots with no edge.
+
+    Node ids in the synthesized OBO are written as ``MeSH:<ui>`` rather than the
+    bare descriptor ui. Nothing in the hierarchy load needs the prefix -- it
+    resolves ids against the same file -- but graph.py also runs ``curie`` over
+    those ids to stamp provenance, and a bare ``D008099`` names no registry and
+    would resolve to ``""``.
     """
     pairs = _PairSet(source)
     ui_to_name: dict[str, str] = {}
@@ -261,7 +352,7 @@ def _extract_mesh(source: Source, root: Path) -> int:
             ui_to_name[ui] = norm(name_el.text)
             for term in rec.findall(".//Concept/TermList/Term/String"):
                 if term.text:
-                    pairs.add(term.text, name_el.text)
+                    pairs.add(term.text, name_el.text, f"MeSH:{ui}")
 
             trees = [
                 t.text for t in rec.findall(".//TreeNumberList/TreeNumber") if t.text
@@ -286,10 +377,11 @@ def _extract_mesh(source: Source, root: Path) -> int:
                 "graphs": [
                     {
                         "nodes": [
-                            {"id": ui, "lbl": name} for ui, name in ui_to_name.items()
+                            {"id": f"MeSH:{ui}", "lbl": name}
+                            for ui, name in ui_to_name.items()
                         ],
                         "edges": [
-                            {"sub": c, "pred": "is_a", "obj": p}
+                            {"sub": f"MeSH:{c}", "pred": "is_a", "obj": f"MeSH:{p}"}
                             for c, p in sorted(edges)
                         ],
                     },

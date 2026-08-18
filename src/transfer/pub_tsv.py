@@ -89,7 +89,14 @@ _PUB_TSV_EXPR = "setweight(to_tsvector('english', " + _PUB_TITLES + "), 'C')"
 
 
 def _populate(table: str, sources: tuple[str, ...]) -> str:
-    """SET (not append) => re-runnable."""
+    """SET (not append) => re-runnable.
+
+    The ``IS DISTINCT FROM`` guard is not an optimisation, same as
+    ``pg_fields.non_nulling_update``: without it every row with a publication is
+    rewritten into a dead tuple on every run, and on GEO it also re-fires the tsv
+    trigger for 232k rows. That is tolerable quarterly and not weekly -- see
+    refresh/publications.py, which calls this on a schedule.
+    """
     return f"""
     UPDATE {table} t
     SET pub_tsv = sub.ptsv
@@ -99,6 +106,7 @@ def _populate(table: str, sources: tuple[str, ...]) -> str:
         WHERE sp.source = ANY(%(sources)s)
     ) sub
     WHERE t.accession = sub.accession
+      AND t.pub_tsv IS DISTINCT FROM sub.ptsv
     """
 
 
@@ -234,7 +242,7 @@ _PMID_TARGETS = (
 
 def _pmid_populate(t: _PmidTarget) -> str:
     """SET (not append) => re-runnable. string_agg guards against a study
-    resolving to more than one title."""
+    resolving to more than one title. Same no-op guard as ``_populate``."""
     return f"""
     UPDATE {t.table} tgt
     SET pub_tsv = sub.ptsv
@@ -248,6 +256,7 @@ def _pmid_populate(t: _PmidTarget) -> str:
         GROUP BY s.{t.join_col}
     ) sub
     WHERE tgt.accession = sub.accession
+      AND tgt.pub_tsv IS DISTINCT FROM sub.ptsv
     """
 
 

@@ -1,0 +1,27 @@
+[Unit]
+Description=seqout weekly publication refresh (pysradb + OpenAlex -> postgres)
+Documentation=file:///opt/seqout-ingestion/src/refresh/publications.py
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# adjust User= and the /opt/seqout-ingestion paths to wherever the checkout and
+# its .venv actually live on the VPS.
+User=seqout
+WorkingDirectory=/opt/seqout-ingestion
+# PG_URL, NCBI_KEYS_FILE and OPENALEX_KEYS_FILE are read from here (envvar= on
+# the typer options), so the unit needs no flags of its own.
+EnvironmentFile=/opt/seqout-ingestion/.env
+ExecStart=/opt/seqout-ingestion/.venv/bin/python ./src/main.py --log-level info refresh publications
+
+# The run walks a ~1.5M study backlog a slice at a time and is rate limited by
+# NCBI, not by us -- it must never be killed halfway, and must never crowd out
+# the API that shares this box.
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=idle
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

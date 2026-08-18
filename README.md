@@ -57,6 +57,10 @@ just sc_enrich_counter
 # Export to Postgres or Parquet
 just transfer_postgres
 just transfer_parquet
+
+# Weekly, on the VPS: refresh publication linkage straight in Postgres
+just refresh_publications
+just refresh_status
 ```
 
 Or run directly without `just`:
@@ -230,10 +234,18 @@ so an interrupted run can resume.
 | `ontology list` | Show the registry: every ontology, its source URL, what it contributes | — |
 | `ontology build` | Download → extract → load → stamp `has_children` | `--output-dir`, `--only`, `--force-download` |
 | `ontology download` | Fetch raw releases into `$DATA_DIR/ontology/raw/` | `--output-dir`, `--only`, `--force` |
-| `ontology extract` | Parse raw releases into synonym CSVs | `--output-dir`, `--only` |
+| `ontology extract` | Parse raw releases into `short,long,id` synonym CSVs | `--output-dir`, `--only` |
 | `ontology load` | Load extracted artifacts into Neo4j | `--output-dir`, `--only` |
+| `ontology xrefs` | Stamp `xrefs` provenance only — MATCH-only, writes no edge | `--output-dir`, `--only` |
 | `ontology has-children` | Recompute the `has_children` flag | — |
 | `ontology stats` | Node/relationship counts, to check a rebuild | — |
+
+Terms carry an `xrefs` list of the source CURIEs they came from
+(`["UBERON:0002107", "MeSH:D008099"]`) — the graph merges terms by name, so this
+is its only provenance record. Use `ontology xrefs` rather than a full
+`ontology build` to backfill it onto a graph whose edges predate the `id`
+column: `build` MERGEs synonym edges, and a regenerated extract never reproduces
+an older one exactly, so drifted pairs would be added beside the originals.
 
 ### `embed`
 
@@ -256,6 +268,60 @@ Export to downstream formats.
 | `transfer postgres` | SQLite → PostgreSQL (idempotent upserts) | `--pg-url` |
 | `transfer parquet` | SQLite → Parquet files | `--output-dir` |
 | `transfer embed` | Push embedding columns from chroma to Postgres | `--chroma-db-dir`, `--neighbors-db-file`, `--labels-dir`, `--start-from` |
+
+### `refresh`
+
+Periodic re-enrichment run **on the VPS, straight against production Postgres** —
+no `DATA_DIR`, no SQLite. Publication linkage is the one enrichment that goes
+stale on its own (a 2024 dataset gets its paper in 2026), so it runs where the
+data lives instead of waiting for a lab-box transfer.
+
+| Command | Description | Key args |
+|---|---|---|
+| `refresh publications` | pysradb + OpenAlex → `pubmed_id_pysradb`, `pubmed_metadata`, `pub_tsv` | `--pg-url`, `--ncbi-keys-file`, `--openalex-keys-file`, `--limit-per-source`, `--recheck-after` |
+| `refresh status` | Publication coverage per source — how far the weekly runs have got | `--pg-url` |
+
+Three steps, in order:
+
+1. **resolve** — studies with no publication at all → pysradb. Never-checked
+   first, then least-recently-checked. `pubmed_last_checked` is the queue cursor
+   and is stamped on every accession tried, hit or miss, so the queue advances.
+2. **metadata** — pmids a study references but `pubmed_metadata` does not hold →
+   `pysradb.pmid_info` (NCBI efetch + OpenAlex journal metrics).
+3. **tsv** — `pub_tsv_transfer()`, folding the new paper titles into each study's
+   search `tsv`.
+
+Both API steps are budgeted, because the unlinked backlog is ~1.5M studies (most
+of it ENA). A weekly run chips at it forever; it is not meant to finish. Skip
+individual steps with `--skip-resolve` / `--skip-meta` / `--skip-tsv`, and see
+what a run would do with `--is-dry-run`.
+
+```bash
+just refresh_publications                    # a full run, default budgets
+just refresh_publications --is-dry-run       # queue sizes only, no API calls
+just refresh_status                          # coverage per source
+```
+
+#### Weekly service
+
+`deploy/` holds a systemd oneshot + timer that runs it every Monday at 03:00.
+The unit reads `PG_URL`, `NCBI_KEYS_FILE` and `OPENALEX_KEYS_FILE` from
+`/opt/seqout-ingestion/.env`, so it carries no flags of its own.
+
+```bash
+sudo cp deploy/seqout-pubrefresh.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now seqout-pubrefresh.timer
+```
+
+Checking on it:
+
+```bash
+systemctl list-timers seqout-pubrefresh      # when it next fires, when it last ran
+journalctl -u seqout-pubrefresh -f           # live log; progress ticks once a minute
+just refresh_status                          # what it has actually achieved
+sudo systemctl start seqout-pubrefresh       # run it now, off-schedule
+```
 
 ## Embed / Embed pipeline
 

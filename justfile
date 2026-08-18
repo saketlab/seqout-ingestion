@@ -293,6 +293,13 @@ ontology_extract *flags:
 ontology_load *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology load --output-dir {{ DATA_DIR }} {{ flags }}
 
+# Stamp xrefs provenance onto an already-built graph. MATCH-only -- it cannot
+# create a node or an edge, so prefer it over ontology_build when backfilling a
+# graph whose edges predate the CSV `id` column. Needs ontology_extract first.
+[group("ontology")]
+ontology_xrefs *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology xrefs --output-dir {{ DATA_DIR }} {{ flags }}
+
 # Refresh the has_children flag the deep-dive explorer reads. Run after any load.
 [group("ontology")]
 ontology_has_children *flags:
@@ -395,3 +402,21 @@ transfer_leiden_swap *flags:
         --chroma-db-dir {{ CHROMA_DB_DIR }} \
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
+
+# Weekly publication refresh. Runs on the VPS against postgres directly -- no
+# DATA_DIR, no sqlite. Installed as seqout-pubrefresh.timer (see deploy/).
+[group("refresh")]
+refresh_publications *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} refresh publications \
+        --pg-url "$PG_URL" \
+        --ncbi-keys-file {{ NCBI_KEYS_FILE }} \
+        --openalex-keys-file {{ OPENALEX_KEYS_FILE }} \
+        --batch-size {{ BATCH_SIZE }} \
+        --retries {{ RETRIES }} \
+        --timeout {{ TIMEOUT }} \
+        {{ flags }}
+
+# How far the weekly runs have got: linked/unlinked per source, pmid backlog.
+[group("refresh")]
+refresh_status:
+    {{ PYTHON }} ./src/main.py --log-level warning refresh status --pg-url "$PG_URL"

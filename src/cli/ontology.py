@@ -136,6 +136,37 @@ def build(
             logger.info("%-14s %d", key, value)
 
 
+@ontology_app.command()
+def xrefs(
+    output_dir: Path = typer.Option(...),
+    neo4j_uri: str = typer.Option("neo4j://localhost:7687", envvar="NEO4J_URI"),
+    neo4j_user: str = typer.Option("neo4j", envvar="NEO4J_USER"),
+    neo4j_password: str = typer.Option(..., envvar="NEO4J_PASSWORD"),
+    only: list[str] = typer.Option(None, help="ontology names; default is all"),
+) -> None:
+    """
+    Stamp ``xrefs`` provenance onto an already-built graph, touching no edge.
+
+    This is the backfill path, for a graph whose edges predate the ``id``
+    column. Prefer it over a full ``build`` in that case: ``build`` MERGEs the
+    synonym edges, and a freshly regenerated extract never reproduces an old one
+    exactly, so the pairs that drifted would be added *beside* the originals
+    rather than replacing them. Every write here is MATCH-based and cannot
+    create a node or a relationship.
+
+    Needs the extracted CSVs on disk (``ontology extract``), not the raw
+    downloads.
+    """
+    from ontology import graph
+
+    root = output_dir / "ontology"
+    with graph.connect(neo4j_uri, neo4j_user, neo4j_password) as driver:
+        for source in _selected(only):
+            graph.load_xrefs(driver, source, root)
+        for key, value in graph.stats(driver).items():
+            logger.info("%-14s %d", key, value)
+
+
 @ontology_app.command("has-children")
 def has_children(
     neo4j_uri: str = typer.Option("neo4j://localhost:7687", envvar="NEO4J_URI"),

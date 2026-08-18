@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the seqout publication refresh every Monday
+
+[Timer]
+OnCalendar=Mon *-*-* 03:00:00
+# catch up if the box was down at 03:00, and jitter so we do not hit NCBI at the
+# same second every week.
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

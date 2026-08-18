@@ -9,8 +9,9 @@ the code, not assumed.
 Migrate to the lab GPU machine, **start with an empty `DATA_DIR`**, and treat the
 production Postgres on the VPS as the source of truth.
 
-- The VPS runs **nothing but Postgres**. All pipeline stages — CPU ones included —
-  run on the lab box and push over an SSH tunnel. `DATA_DIR` holds ~15GB per SRA
+- The VPS runs **nothing but Postgres** — with one deliberate exception, see
+  `refresh publications` below. All other pipeline stages, CPU ones included, run
+  on the lab box and push over an SSH tunnel. `DATA_DIR` holds ~15GB per SRA
   tarball plus the GEO/ENA/AE caches and chroma; none of that belongs on the VPS.
 - SQLite stays as a **local staging buffer**. It is deliberately not being replaced
   by direct-to-Postgres writes — see "Rejected" below.
@@ -114,11 +115,33 @@ This is the main piece of outstanding work.
 ## Cadence
 
 ```
-weekly    → geo, ena, ae, gsa, gsa_human, dra, gea
+weekly    → geo, ena, ae, gsa, gsa_human, dra, gea            (lab box)
             + backfill, unify, geocode, transfer postgres, embed run
+weekly    → refresh publications                              (VPS, Mondays 03:00)
 monthly   → the above, preceded by ingest_sra (18th)
 quarterly → embed coords / cluster / neighbors / keywords / labels, transfer embed
 ```
+
+**`refresh publications` is the one stage that runs on the VPS**, as
+`seqout-pubrefresh.timer` (units in `deploy/`). It is postgres-native — no SQLite,
+no `DATA_DIR` — because publication linkage goes stale on its own: a dataset
+released in 2024 gets its paper in 2026, and nothing in the lab-box pipeline ever
+revisits it. It resolves unlinked studies via pysradb, fills `pubmed_metadata`
+via OpenAlex, then refreshes `pub_tsv`.
+
+It does not fight the lab box. `postgres.py` upserts through
+`non_nulling_update()`, so an incoming NULL `pubmed_id_pysradb` from a fresh
+SQLite window loses to what the VPS wrote. The reverse is not true — the VPS
+never writes back to SQLite, so the lab box's `backfill pm-ids` will re-resolve
+the same studies from scratch. That is wasted API calls, not lost data; if it
+matters, drop `backfill pm-ids` from the weekly lab-box run and let the VPS own
+publication linkage outright.
+
+Also changed for this: `transfer/pub_tsv.py`'s two populate statements grew an
+`IS DISTINCT FROM` no-op guard. Without it, a weekly `pub_tsv` refresh rewrites
+every publication-carrying row into a dead tuple and re-fires the GEO tsv trigger
+for 232k rows — fine quarterly, not fine weekly. Same reasoning as
+`non_nulling_update`'s guard.
 
 `embed run` is genuinely incremental — `embedder.py:190` diffs against existing
 chroma IDs. The rest are **not**: `coords`, `cluster` and `neighbors` all call
@@ -151,7 +174,8 @@ backups manually.
    pick `--start-date` for the first catch-up run per source so there's no coverage
    gap. Ask if not supplied.
 2. **Weekly / monthly / quarterly service scripts**, not yet written. Intended for
-   `recipes/`. Include the SRA guard:
+   `recipes/`. The VPS half is done (`deploy/seqout-pubrefresh.{service,timer}`);
+   what is missing is the lab-box ingest/transfer chain. Include the SRA guard:
    ```bash
    if curl -s https://ftp.ncbi.nlm.nih.gov/sra/reports/Metadata/ \
       | grep -qE "NCBI_SRA_Metadata_Full_$(date -u +%Y%m)[0-9]{2}\.tar\.gz"; then

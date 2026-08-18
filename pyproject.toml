@@ -12,7 +12,6 @@ dependencies = [
     "lxml>=7.0.0a1",
     "neo4j>=5.28.0",
     "openpyxl>=3.1.5",
-    "pysradb",
     "tqdm>=4.67.3",
     "typer>=0.26.7",
     "h5py>=3.16.0",
@@ -24,7 +23,7 @@ dependencies = [
     "rapidfuzz>=3.14.5",
     "numpy>=2.3.0rc1",
     "pysocks>=1.7.1",
-    "yuj",
+    "pysradb>=2.5.1",
 ]
 
 [project.optional-dependencies]
@@ -64,11 +63,8 @@ quote-style = "double"
 indent-style = "space"
 line-ending = "lf"
 
-[tool.uv]
-environments = ["sys_platform == 'linux'"]
 
 [tool.uv.sources]
-pysradb = { git = "https://github.com/saketkc/pysradb.git", rev = "develop" }
 yuj = { path = "./vendor/yuj" }
 
 [tool.pytest.ini_options]
