@@ -3,6 +3,8 @@ from pathlib import Path
 import typer
 
 from sc_db.build import PHASES, sc_db_build, summarise
+from sc_db.export import BUCKETS
+from sc_db.export import export_accessions as _export
 
 sc_db_app = typer.Typer()
 
@@ -79,3 +81,39 @@ def build(
 def summary(sc_db_file: Path = typer.Option(...)) -> None:
     """Print the queue's bucket counts from the existing DB."""
     typer.echo(summarise(sc_db_file))
+
+
+@sc_db_app.command()
+def export_accessions(
+    sc_db_file: Path = typer.Option(...),
+    bucket: str = typer.Option(..., help=f"one of {sorted(BUCKETS)}"),
+    out_file: Path = typer.Option(..., help="one study accession per line"),
+    limit: int = typer.Option(None, help="cap the list, for a trial slice"),
+    max_runs: int = typer.Option(
+        None, help="drop studies resolving to more runs than this"
+    ),
+    evidence_tier: str = typer.Option(
+        None, help="keep one tier only; 'high' is led by insdc_library_source"
+    ),
+    manifest_dir: Path = typer.Option(
+        None,
+        help="preflight manifest dir; given, drops studies whose manifest "
+        "carries no fastq_ftp and so would scan nothing",
+    ),
+    is_by_next_stage: bool = typer.Option(
+        default=False,
+        help="select on next_stage, so a study queued to another stage "
+        "first is left out",
+    ),
+) -> None:
+    count = _export(
+        sc_db_file,
+        bucket,
+        out_file,
+        limit,
+        max_runs,
+        evidence_tier,
+        manifest_dir,
+        by_next_stage=is_by_next_stage,
+    )
+    typer.echo(f"{count} studies -> {out_file}")

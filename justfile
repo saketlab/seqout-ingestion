@@ -33,7 +33,6 @@ GEO_COMBINED_DB_FILE := env("GEO_COMBINED_DB_FILE", DATA_DIR + "/combined/geo_me
 AE_COMBINED_DB_FILE := env("AE_COMBINED_DB_FILE", DATA_DIR + "/combined/ae_metadata_combined.db")
 NCOUNT_EXTRA_DB_FILE := env("NCOUNT_EXTRA_DB_FILE", shell("ls -1 " + justfile_directory() + "/data/ncount/*.db 2>/dev/null | sort -r | head -1"))
 ENA_DELTA_DB_FILE := env("ENA_DELTA_DB_FILE", "")
-# Read by enriched_assay_library_col: model assay calls from enrichment.
 ENRICHED_DB_FILE := env("ENRICHED_DB_FILE", "/data/share/saket_dump/enrichment/enriched_metadata_v4_combined.sqlite")
 
 UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_catalog/unified_catalog.db")
@@ -167,6 +166,47 @@ backfill_dra_download_links *flags:
         --workers {{ WORKERS }} \
         --retries {{ RETRIES }} \
         --timeout {{ TIMEOUT }} \
+        {{ flags }}
+
+PREFLIGHT_TIER := env("PREFLIGHT_TIER", "high")
+PMID_RETRY_MANIFEST := env("PMID_RETRY_MANIFEST", DATA_DIR + "/pmid_retry/manifest.txt")
+PMID_RETRY_DB_FILE := env("PMID_RETRY_DB_FILE", DATA_DIR + "/pmid_retry/pmid_retry.db")
+PMID_RETRY_RESULTS_DIR := env("PMID_RETRY_RESULTS_DIR", env("HOME") + "/pmid_retry_pull")
+
+[group("pmid_retry")]
+pmid_retry_gaps *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pmid_retry gaps \
+        --pg-url "$PG_URL" \
+        --manifest-file {{ PMID_RETRY_MANIFEST }} \
+        --exclude-db-file {{ PMID_RETRY_DB_FILE }} \
+        {{ flags }}
+
+[group("pmid_retry")]
+pmid_retry_fetch *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pmid_retry fetch \
+        --manifest-file {{ PMID_RETRY_MANIFEST }} \
+        --out-dir {{ PMID_RETRY_RESULTS_DIR }} \
+        --keys-file {{ NCBI_KEYS_FILE }} \
+        {{ flags }}
+
+[group("pmid_retry")]
+pmid_retry_ingest *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pmid_retry ingest \
+        --results-dir {{ PMID_RETRY_RESULTS_DIR }} \
+        --db-file {{ PMID_RETRY_DB_FILE }} \
+        {{ flags }}
+
+[group("pmid_retry")]
+pmid_retry_verify *flags:
+    NCBI_KEYS_FILE={{ NCBI_KEYS_FILE }} {{ PYTHON }} {{ ENTRYPOINT }} pmid_retry verify \
+        --db-file {{ PMID_RETRY_DB_FILE }} \
+        {{ flags }}
+
+[group("pmid_retry")]
+pmid_retry_transfer *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pmid_retry transfer \
+        --db-file {{ PMID_RETRY_DB_FILE }} \
+        --pg-url "$PG_URL" \
         {{ flags }}
 
 [group("backfill")]
@@ -312,8 +352,6 @@ transfer_pentimento *flags:
         --pentimento-db-file {{ PENTIMENTO_DB_FILE }} \
         {{ flags }}
 
-# DDBJ DRA and GEA into the dra_* / gea_* tables. Separate from transfer_postgres
-# because _all_db_args carries only sra/geo/ena/ae.
 [group("transfer")]
 transfer_ddbj *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer ddbj \
@@ -323,7 +361,6 @@ transfer_ddbj *flags:
         --read-batch-size {{ BATCH_SIZE }} \
         {{ flags }}
 
-# Backfill scientific_name on the run tables from each archive's own metadata.
 [group("transfer")]
 transfer_ena_organisms *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer ena-organisms \
@@ -363,14 +400,10 @@ ontology_extract *flags:
 ontology_load *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology load --output-dir {{ DATA_DIR }} {{ flags }}
 
-# Stamp xrefs provenance onto an already-built graph. MATCH-only -- it cannot
-# create a node or an edge, so prefer it over ontology_build when backfilling a
-# graph whose edges predate the CSV `id` column. Needs ontology_extract first.
 [group("ontology")]
 ontology_xrefs *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology xrefs --output-dir {{ DATA_DIR }} {{ flags }}
 
-# Refresh the has_children flag the deep-dive explorer reads. Run after any load.
 [group("ontology")]
 ontology_has_children *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology has-children {{ flags }}
@@ -570,6 +603,33 @@ _fleet:
     @mkdir -p yuj
     @command cp -f {{ FLEET_SRC }} {{ FLEET_LOCAL }} && chmod 600 {{ FLEET_LOCAL }}
     @echo "fleet copied to {{ FLEET_LOCAL }} (edit this, never {{ FLEET_SRC }})"
+
+# Study accession list for one queue bucket, the fleet's input format.
+[group("sc_evidence")]
+sc_db_export bucket *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_db export-accessions \
+        --sc-db-file {{ SC_DB_FILE }} \
+        --bucket {{ bucket }} \
+        --out-file {{ GAPS_DIR }}/queue_{{ bucket }}.txt \
+        {{ flags }}
+
+# Scan the queue's preflightx bucket, including studies with FASTQ and no matrix.
+[group("backfill")]
+backfill_preflight_queue *flags: _fleet
+    just sc_db_export preflightx --is-by-next-stage
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight manifest \
+        --out-dir {{ QUANT_DIR }}/preflight_manifests_v2 \
+        --links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        --accession-file {{ GAPS_DIR }}/queue_preflightx.txt
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_db export-accessions \
+        --sc-db-file {{ SC_DB_FILE }} \
+        --bucket preflightx --is-by-next-stage \
+        --evidence-tier {{ PREFLIGHT_TIER }} \
+        --manifest-dir {{ QUANT_DIR }}/preflight_manifests_v2 \
+        --out-file {{ GAPS_DIR }}/scatter_preflightx.txt {{ flags }}
+    command cp -f {{ GAPS_DIR }}/scatter_preflightx.txt yuj/preflight/studies.txt
+    cd yuj/preflight && yuj scatter && yuj run
 
 [group("backfill")]
 backfill_preflight *flags: _fleet

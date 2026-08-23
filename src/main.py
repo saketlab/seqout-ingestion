@@ -14,6 +14,7 @@ from cli.inheritance import inheritance_app
 from cli.nord import nord_app
 from cli.ontology import ontology_app
 from cli.pentimento import pentimento_app
+from cli.pmid_retry import pmid_retry_app
 from cli.refresh import refresh_app
 from cli.sc_db import sc_db_app
 from cli.sc_enrich import sc_enrich_app
@@ -50,6 +51,7 @@ def main(
 
 cli.add_typer(ingest_app, name="ingest")
 cli.add_typer(backfill_app, name="backfill")
+cli.add_typer(pmid_retry_app, name="pmid_retry")
 cli.add_typer(unify_app, name="unify")
 cli.add_typer(geocode_app)
 cli.add_typer(sc_enrich_app, name="sc_enrich")
