@@ -1,0 +1,423 @@
+# Prompt text for the extraction chain in extract.py, verbatim.
+#
+# <field>_primary is the embedding-matched path, <field>_fallback the
+# description path. Loaded by prompts.py; edit the text here, not there.
+#
+# `|2` is a literal block scalar with the indentation fixed at 2 columns
+# rather than inferred. age_primary and assay_primary have an indented
+# first line; inferring would eat that indentation and change the prompt.
+# `|2-` keeps a prompt that ends in spaces instead of a newline.
+
+chat_template_system: |2-
+  {sys_prompt}
+
+chat_template_user: |2-
+  project_context: {project_context}
+  information: {info}
+
+age_primary: |2-
+
+              Extract the numeric age value and its unit from the input.
+              If a range is provided, use the lower bound.
+              If no unit is present, assume years.
+              Call the `age_to_hours` tool with `value` and `unit`.
+              Do not answer with free-form text.
+          
+
+tissue_primary: |2
+
+  You are extracting a tissue or organ name from sample-level metadata.
+
+  RETURN a tissue/organ name when the data clearly contains one.
+  You can use an organ name as tissue too.
+  When disease context mentions a tissue (e.g., "breast cancer", "lung tumor",
+  "hepatocellular carcinoma"), extract the tissue of origin ("Breast", "Lung", "Liver").
+
+  RETURN null when:
+  - Values are sequencing instruments (Illumina, NovaSeq, HiSeq, NextSeq, etc.)
+  - Values are numeric, URLs, file paths, accession IDs, or dates
+  - No tissue can be determined
+
+  NEVER return:
+  - Cell line names (HeLa, K562, MCF7, A549, HCT116, HEK293, etc.) — those are not tissues
+  - Gene or protein names (TP53, CTCF, H3K27ac, etc.)
+  - Cell types (fibroblast, macrophage, T cells) — those belong in cell_type, not tissue
+  - Use broad organ/tissue terms: "Brain" not "hippocampal neurons", "Blood" not "CD4+ T cells"
+
+  Return only the tissue/organ name in title case, or null.
+
+tissue_fallback: |2
+
+  Infer the tissue or organ from the sample description and project context.
+  Return only the tissue/organ name in title case, or null if it cannot be determined.
+
+  RULES:
+  - Use broad organ-level terms: "Brain", "Liver", "Blood", "Lung", "Breast", etc.
+  - When disease context mentions a tissue ("breast cancer"), extract the tissue ("Breast")
+  - Do NOT return cell line names (HeLa, K562, MCF7, etc.) — those are not tissues
+  - Do NOT return gene/protein names (TP53, CTCF, H3K27ac, etc.)
+  - Do NOT return cell types (fibroblast, macrophage, T cells) — those belong in cell_type
+  - Do NOT return sequencing platform names, accession IDs, or dates
+  - If the description only mentions experimental conditions or treatments, return null
+
+cell_type_primary: |2
+
+  You are extracting a cell type from sample-level metadata.
+
+  RETURN a cell type when the data explicitly names one. Examples of valid cell types:
+  "T cells", "CD4+ T cells", "macrophage", "neurons", "fibroblasts", "hepatocytes",
+  "embryonic stem cells", "NK cells", "monocytes", "epithelial cells", "B cells".
+
+  RETURN null when:
+  - Values are cell line names (K562, HeLa, MCF7, HCT116, A549, HEK293, HepG2,
+    U2OS, SH-SY5Y, THP-1, Jurkat, MDA-MB-231, PC-9, etc.)
+    — those belong in cell_line, not cell_type
+  - Values are tissue/organ names (liver, brain, lung) — those belong in tissue
+  - Values are numeric, codes, URLs, or accession IDs
+  - No cell type can be determined — return null rather than guessing
+
+  Return only the cell type name in title case, or null.
+
+cell_type_fallback: |2
+
+  Infer the cell type from the sample description and project context.
+  Return only the cell type name in title case, or null if it cannot be determined.
+
+  CRITICAL RULES:
+  - NEVER return cell line names (HeLa, K562, MCF7, A549, HCT116, HEK293, Jurkat,
+    HepG2, U2OS, SH-SY5Y, THP-1, etc.) — those belong in cell_line, not cell_type
+  - NEVER guess or infer a cell type that is not explicitly mentioned in the data
+  - If the description only mentions a cell line or experimental conditions, return null
+  - Do not return accession IDs or sequencing metadata
+
+ethnicity_primary: |2
+
+  You are extracting ethnicity or population ancestry from sample-level metadata.
+
+  RETURN a standardized ethnicity/ancestry when the data clearly contains one
+  (e.g., "Caucasian", "African American", "East Asian", "Hispanic").
+
+  RETURN null when:
+  - Values are single letters, numbers, or coded identifiers
+  - Values are country names (these describe geography, not ethnicity)
+  - Values are ambiguous or not clearly an ethnicity
+
+  Return only the ethnicity/ancestry name in title case, or null.
+
+disease_primary: |2
+
+  You are extracting a disease or medical condition from sample-level metadata.
+
+  PRIMARY SOURCE: Base your decision on sample-level attributes only.
+  PROJECT CONTEXT (title, description, overall_design): Use only as a reference
+  to interpret ambiguous sample attributes — never as the sole basis for a disease call.
+
+  RETURN a disease/condition name when sample attributes explicitly contain:
+  - Named diseases (e.g., "Alzheimer's disease", "type 2 diabetes")
+  - Cancer/tumor types (e.g., "glioblastoma", "breast adenocarcinoma")
+  - Infection status with a named pathogen (e.g., "SARS-CoV-2 infected")
+  - Named syndromes or disorders (e.g., "Down syndrome", "sepsis")
+
+  For healthy/normal/control samples, return "Healthy", "Normal", or "Control"
+  as appropriate — these are valid disease column values indicating absence of disease.
+
+  RETURN null when:
+  - Only tissue/organ names are present (e.g., "liver", "cortex") with no disease stated
+  - No disease is explicitly mentioned in the sample attributes, even if project context suggests one
+  - Values are ambiguous, numeric, a URL, or a file path
+
+  Return only the standardized disease/condition name in title case, or null.
+
+disease_fallback: |2
+
+  Infer the disease or medical condition from the sample description and project context.
+
+  RETURN a disease/condition when the description explicitly mentions one:
+  - Named diseases (e.g., "Alzheimer's disease", "type 2 diabetes")
+  - Cancer/tumor types (e.g., "glioblastoma", "breast adenocarcinoma")
+  - Infection with a named pathogen (e.g., "SARS-CoV-2 infected")
+
+  For healthy/normal/control samples, return "Healthy", "Normal", or "Control".
+
+  RETURN null when:
+  - Only tissue/organ names are present with no disease stated
+  - Values describe experimental treatments, knockdowns, or perturbations
+    (e.g., "LPS treatment", "siRNA knockdown") — those are treatments, not diseases
+  - Values are gene names, accession IDs, or sequencing metadata
+
+  Return only the disease/condition name in title case, or null.
+
+assay_primary: |2-
+
+              Extract assay type using protocol, molecule, and library fields.
+              RULES:
+              - Return ONLY the assay string or null, no other text
+              - Always preserve directional markers: 3', 5', 3ʹ, 5ʹ (prime symbols)
+              - Ignore file paths, URLs, sample IDs, dates, and metadata
+              - Include version numbers only in official kit names (e.g., "v3.1")
+              - Use standard scientific nomenclature
+              - Keep output short (typically 2-20 characters)
+              - Use molecule as supporting context (e.g., RNA, DNA, ATAC), but do not
+                return molecule alone unless it clearly maps to a standard assay name
+
+              ASSAY RECOGNITION:
+              Transcriptomics:
+              - RNA-Seq: polyA, mRNA, total RNA, ribosomal depletion, bulk RNA
+              - scRNA-Seq vs snRNA-Seq: "snRNA-Seq" if nucleus/nuclei/nuclear;
+                "scRNA-Seq" if cells; default "scRNA-Seq" if ambiguous
+              - miRNA-Seq / Small RNA-Seq: microRNA, small RNA, smRNA
+              - CAGE / GRO-Seq / PRO-Seq / SLAM-Seq: nascent transcription
+              - Ribo-Seq: ribosome profiling, polysome profiling
+
+              Epigenomics — binding:
+              - ChIP-seq: chromatin immunoprecipitation, ChIP, antibody pulldown
+              - CUT&Tag / CUT&Run: cleavage under targets, pA-Tn5, pA-MNase
+              - DamID: DNA adenine methyltransferase identification
+              - DAP-Seq: DNA affinity purification sequencing
+
+              Epigenomics — accessibility:
+              - ATAC-seq: transposase, tagmentation, open chromatin, Tn5
+              - scATAC-seq / snATAC-seq: single-cell/nucleus ATAC
+              - DNase-seq: DNase I hypersensitivity, DNase-HS
+              - FAIRE-Seq: formaldehyde-assisted isolation of regulatory elements
+              - MNase-Seq: micrococcal nuclease
+
+              Epigenomics — methylation:
+              - WGBS: whole-genome bisulfite sequencing
+              - RRBS: reduced representation bisulfite sequencing
+              - Bisulfite-Seq / BS-Seq: bisulfite conversion
+              - MeDIP-Seq: methylated DNA immunoprecipitation
+              - scBS-Seq: single-cell bisulfite sequencing
+
+              Chromatin conformation:
+              - Hi-C / Micro-C: chromatin conformation, proximity ligation
+              - HiChIP / PLAC-Seq: conformation + immunoprecipitation
+
+              RNA–protein:
+              - CLIP-seq / eCLIP / iCLIP: crosslinking immunoprecipitation
+              - RIP-Seq: RNA immunoprecipitation
+
+              Genomics:
+              - WGS: whole genome sequencing
+              - WXS: whole exome sequencing, exome capture, target enrichment
+              - Targeted Sequencing: amplicon, gene panel
+              - RAD-Seq / ddRAD: restriction-site associated DNA
+
+              Metagenomics:
+              - 16S rRNA Sequencing: 16S amplicon, V3-V4 region
+              - 18S rRNA Sequencing: 18S amplicon, ITS region
+              - Metagenomics: shotgun metagenome, metagenomic profiling
+              - Metatranscriptomics: metagenomic RNA
+
+              Arrays:
+              - Expression Array / Microarray: Affymetrix, Agilent, hybridization, probe
+              - SNP Array: genotyping array, BeadChip, Illumina Infinium
+              - Methylation Array: 450K, EPIC, Infinium methylation
+              - Array CGH: comparative genomic hybridization array
+              - ChIP-chip: chromatin immunoprecipitation + microarray (not sequencing)
+
+              Single-cell platforms (ALWAYS include platform name + version if available):
+              - 10x Genomics: "10x 3' v3", "10x 5' v2", "10x Multiome", "10x ATAC"
+                (Chromium, Next GEM — include direction 3'/5' and chemistry version v1-v4)
+              - Smart-Seq2 / Smart-Seq3: plate-based, full-length
+              - Drop-Seq / inDrops / inDrops-2: droplet microfluidics
+              - CEL-Seq / CEL-Seq2: linear amplification
+              - MARS-Seq: massively parallel scRNA-Seq
+              - PIPseq: Fluent BioSciences, particle-templated instant partitions
+                (include version: "PIPseq v20", "PIPseq v10")
+              - Parse Biosciences: Evercode combinatorial barcoding
+                Products: Evercode WT (Mini/standard/Mega/Penta), Evercode TCR,
+                Evercode BCR, Evercode Fixation, Evercode FFPE, Gene Select, CRISPR Detect
+                (e.g., "Parse Biosciences Evercode WT Mega", "Parse Biosciences Evercode TCR")
+              - Scale Biosciences: ScalePlex combinatorial indexing
+              - BD Rhapsody: antibody-based capture (v1, Enhanced Beads)
+              - SPLiT-Seq: split-pool ligation-based transcriptome sequencing
+              - Seq-Well / Microwell-Seq: nanowell-based capture
+              - sci-RNA-Seq / sci-RNA-Seq3: single-cell combinatorial indexing
+              - scifi-RNA-Seq: combinatorial fluidic indexing
+              - Quartz-Seq / Quartz-Seq2: plate-based
+              - STRT-Seq / STRT-Seq-2i: 5'-end counting
+              - VASA-Seq: total RNA single-cell
+              - mcSCRB-Seq / SCRB-Seq: molecular crowding
+              - SureCell: Illumina single-cell platform
+
+              Multi-omic platforms:
+              - 10x Multiome: 10x ATAC + Gene Expression
+              - SHARE-Seq / SHARE-Seq2: simultaneous chromatin + RNA
+              - SNARE-Seq / SNARE-Seq2: single-nucleus chromatin + RNA
+              - ISSAAC-Seq: simultaneous ATAC + RNA
+              - DOGMAseq: protein + RNA + ATAC tri-omic
+              - Paired-Seq: paired ATAC + RNA
+              - snmCT-Seq: methylation + RNA
+              - sn-m3C-Seq: methylation + Hi-C
+              - Pi-ATAC-Seq: protein-indexed ATAC
+
+              Spatial transcriptomics:
+              Sequencing-based:
+              - Visium / Visium HD: 10x spatial gene expression (include "HD" and "FFPE" if specified)
+              - Stereo-Seq: BGI, 0.22 µm resolution, large tissues
+              - Slide-Seq / Slide-SeqV2: bead-based spatial
+              - Seq-Scope / HDST / DBiT-Seq / Pixel-Seq / Open-ST: other sequencing spatial
+              - GeoMx DSP: NanoString, ROI-based digital spatial profiling
+              - Curio Seeker: tile-based spatial
+              Imaging-based:
+              - Xenium: 10x in situ gene expression (subcellular)
+              - CosMx SMI: NanoString spatial molecular imager (subcellular, up to 19K genes)
+              - MERFISH / MERSCOPE: multiplexed error-robust FISH (Vizgen)
+              - seqFISH / seqFISH+: sequential fluorescence in situ hybridization
+              - osmFISH / STARmap / STARmap PLUS / EEL FISH
+              - CODEX / PhenoCycler: protein spatial (Akoya)
+              - Molecular Cartography: Resolve Biosciences
+
+              NOT assays (return null):
+              - Sample prep methods: DNA extraction, library prep, labeling
+              - qRT-PCR, RT-PCR, qPCR, Western blot
+              - Whole-genome amplification (WGA)
+
+              OUTPUT:
+              - CRITICAL: Include platform name AND version/chemistry when present
+                (e.g., "10x 3' v3", "Smart-Seq2", "PIPseq v20", "Parse Biosciences Evercode WT")
+              - Generic assay name when no specific platform (e.g., "RNA-Seq", "ChIP-seq")
+              - null if unclear/missing
+
+              CRITICAL: For 10x kits, include both direction (3'/5') AND version when present.
+              CRITICAL: For single-cell vs single-nucleus, look for keywords: "nucleus", "nuclei",
+                        "nuclear", "snRNA", "snATAC" → sn-prefix; "cell", "scRNA" → sc-prefix.
+          
+
+cell_line_primary: |2
+
+  You are extracting a cell line name from sample-level metadata.
+
+  RETURN a cell line name when the data contains an established/immortalized cell line
+  (e.g., "K562", "HeLa", "MCF7", "HCT116", "A549", "HEK293T", "Jurkat").
+
+  RETURN null when:
+  - Values describe primary cells, sorted populations, or cell types
+    (e.g., "PBMC", "CD4+ T cells", "neuronal progenitors", "embryonic stem cells")
+    — those belong in cell_type, not cell_line
+  - Values are numeric, codes, URLs, or accession IDs
+
+  Return only the cell line name in title case, or null.
+
+cell_line_fallback: |2
+
+  Infer the cell line from the sample description and project context.
+  Only return established/immortalized cell line names (K562, HeLa, MCF7, etc.).
+  Do not return primary cell types, sorted populations, or tissue names.
+  Return only the cell line name in title case, or null.
+
+treatment_primary: |2
+
+  You are extracting a treatment, drug, or perturbation from sample-level metadata.
+
+  RETURN a treatment name when the data contains one (e.g., "LPS", "DMSO",
+  "doxycycline", "anti-PD-1", "5-FU", "Interferon gamma").
+
+  RETURN null when:
+  - Values are numeric, codes, URLs, or accession IDs
+  - No treatment can be determined
+
+  Return only the treatment name in title case, or null.
+
+treatment_fallback: |2
+
+  Infer the treatment, drug, or perturbation from the sample description and project context.
+  Return only the treatment name in title case, or null if it cannot be determined.
+
+development_stage_primary: |2
+
+  You are extracting a development/life stage from sample-level metadata.
+
+  RETURN a standardized development stage when the data clearly indicates one:
+  - "Embryonic" (embryo, embryonic day, E9.5, etc.)
+  - "Fetal" (fetal, gestational week, etc.)
+  - "Neonatal" (newborn, postnatal day P0-P7, neonate)
+  - "Infant" (1 month - 1 year)
+  - "Juvenile" (child, pediatric, 1-12 years)
+  - "Adolescent" (13-17 years)
+  - "Adult" (18-65 years, or simply "adult")
+  - "Aged" (elderly, >65 years, senescent)
+
+  You may infer from numeric age values:
+  - Age in embryonic/gestational days → "Embryonic" or "Fetal"
+  - Postnatal day (P0-P7) → "Neonatal"
+  - 0-1 years → "Infant"
+  - 1-12 years → "Juvenile"
+  - 13-17 years → "Adolescent"
+  - 18-65 years → "Adult"
+  - >65 years → "Aged"
+
+  RETURN null when no age or stage information is available.
+
+  Return only the development stage name in title case, or null.
+
+development_stage_fallback: |2
+
+  Infer the development or life stage from the sample description and project context.
+  Use standardized terms: Embryonic, Fetal, Neonatal, Infant, Juvenile, Adolescent, Adult, Aged.
+  Return only the stage name in title case, or null if it cannot be determined.
+
+sample_type_primary: |2
+
+  You are classifying the sample type from sample-level metadata.
+
+  RETURN one of these standardized sample types:
+  - "Primary Tissue" — fresh or frozen tissue directly from an organism
+  - "Cell Line" — established/immortalized cell line (e.g., HeLa, K562, MCF7)
+  - "Primary Cells" — cells isolated from tissue and cultured short-term
+  - "Organoid" — 3D cell culture derived from stem cells or tissue
+  - "Xenograft" — human tissue/cells grown in an animal host (PDX)
+  - "iPSC-Derived" — cells differentiated from induced pluripotent stem cells
+  - "ESC-Derived" — cells differentiated from embryonic stem cells
+  - "Stem Cells" — undifferentiated stem cells (iPSC, ESC, HSC, etc.)
+  - "Sorted Cells" — FACS/MACS-sorted cell populations
+  - "Whole Blood" — peripheral blood or whole blood samples
+  - "Body Fluid" — serum, plasma, CSF, urine, saliva, etc.
+  - "Single Cell" — individual cells isolated for single-cell analysis
+  - "Single Nucleus" — individual nuclei isolated for snRNA-seq/snATAC-seq
+
+  RETURN null when the sample type cannot be determined.
+
+  Return only the sample type name in title case, or null.
+
+sample_type_fallback: |2
+
+  Infer the sample type from the sample description and project context.
+  Use standardized terms: Primary Tissue, Cell Line, Primary Cells, Organoid,
+  Xenograft, iPSC-Derived, ESC-Derived, Stem Cells, Sorted Cells, Whole Blood,
+  Body Fluid, Single Cell, Single Nucleus.
+  Return only the sample type in title case, or null if it cannot be determined.
+
+genetic_modification_primary: |2
+
+  You are extracting genetic modification information from sample-level metadata.
+
+  RETURN a standardized genetic modification when the data clearly indicates one:
+  - "Wild Type" or "WT" — no genetic modification (normalize to "Wild Type")
+  - "Knockout" — gene knockout (include gene name if available, e.g., "TP53 Knockout")
+  - "Knockin" — gene knockin
+  - "Knockdown" — shRNA/siRNA knockdown (include gene if available)
+  - "Overexpression" — gene overexpression (include gene if available)
+  - "CRISPR KO" — CRISPR-mediated knockout (include gene if available)
+  - "CRISPRi" — CRISPR interference
+  - "CRISPRa" — CRISPR activation
+  - "Conditional KO" — Cre-lox or similar conditional knockout
+  - "Transgenic" — transgene insertion
+  - "Point Mutation" — specific point mutation (include details if available)
+  - "Heterozygous" / "Homozygous" — zygosity of mutation
+
+  RETURN null when:
+  - Values describe strain/background only (e.g., "C57BL/6") without modification
+  - Values are sample IDs, accession numbers, or sequencing metadata
+  - No genetic modification is indicated
+
+  Return only the modification description in title case, or null.
+
+genetic_modification_fallback: |2
+
+  Infer any genetic modification from the sample description and project context.
+  Use standardized terms: Wild Type, Knockout, Knockin, Knockdown, Overexpression,
+  CRISPR KO, CRISPRi, CRISPRa, Conditional KO, Transgenic, Point Mutation.
+  Include the gene name if available (e.g., "TP53 Knockout").
+  Return only the modification description in title case, or null if none indicated.

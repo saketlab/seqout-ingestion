@@ -1,0 +1,251 @@
+assay,category
+3' DGE,Bulk Transcriptomics
+3'-Seq,Bulk Transcriptomics
+3'UTR-Seq,Bulk Transcriptomics
+Bru-Seq,Bulk Transcriptomics
+BruUV-Seq,Bulk Transcriptomics
+CAGE,Bulk Transcriptomics
+CTS,Bulk Transcriptomics
+EST,Bulk Transcriptomics
+Full-length cDNA,Bulk Transcriptomics
+GRO-Seq,Bulk Transcriptomics
+MPSS,Bulk Transcriptomics
+NANTI-CAGE,Bulk Transcriptomics
+NET-Seq,Bulk Transcriptomics
+Nascent RNA-Seq,Bulk Transcriptomics
+Nuclear RNA-Seq,Bulk Transcriptomics
+PRO-Cap,Bulk Transcriptomics
+PRO-Seq,Bulk Transcriptomics
+QuantSeq,Bulk Transcriptomics
+RNA-Seq,Bulk Transcriptomics
+SAGE,Bulk Transcriptomics
+SLAM-Seq,Bulk Transcriptomics
+Smart-3SEQ,Bulk Transcriptomics
+TT-Seq,Bulk Transcriptomics
+Tag-Seq,Bulk Transcriptomics
+circRNA-Seq,Bulk Transcriptomics
+nRNA-Seq,Bulk Transcriptomics
+rRNA-Seq,Bulk Transcriptomics
+ssRNA-Seq,Bulk Transcriptomics
+CRISPR Screen,CRISPR Screen
+CRISPRa Screen,CRISPR Screen
+Digenome-Seq,CRISPR Screen
+shRNA Screen,CRISPR Screen
+CUT&Run,ChIP / Protein-DNA Binding
+CUT&Tag,ChIP / Protein-DNA Binding
+ChAP-Seq,ChIP / Protein-DNA Binding
+ChEC-Seq,ChIP / Protein-DNA Binding
+ChIC,ChIP / Protein-DNA Binding
+ChIP-Seq,ChIP / Protein-DNA Binding
+ChIP-chip,ChIP / Protein-DNA Binding
+ChIP-exo,ChIP / Protein-DNA Binding
+DAP-Seq,ChIP / Protein-DNA Binding
+DIP-Seq,ChIP / Protein-DNA Binding
+DamID,ChIP / Protein-DNA Binding
+nCUT&Tag,ChIP / Protein-DNA Binding
+reCUT&Run,ChIP / Protein-DNA Binding
+ATAC-Seq,Chromatin Accessibility
+DNase-Seq,Chromatin Accessibility
+FAIRE-Seq,Chromatin Accessibility
+KAS-Seq,Chromatin Accessibility
+MNase-Seq,Chromatin Accessibility
+MPRA,Chromatin Accessibility
+STARR-Seq,Chromatin Accessibility
+3C-Seq,Chromatin Conformation
+4C-Seq,Chromatin Conformation
+5C,Chromatin Conformation
+Capture Hi-C,Chromatin Conformation
+Capture-C,Chromatin Conformation
+ChIA-PET,Chromatin Conformation
+Hi-C,Chromatin Conformation
+Hi-C Capture,Chromatin Conformation
+HiChIP,Chromatin Conformation
+Micro-C,Chromatin Conformation
+PLAC-Seq,Chromatin Conformation
+TCC,Chromatin Conformation
+m3C-Seq,Chromatin Conformation
+snHi-C,Chromatin Conformation
+Bisulfite-Seq,DNA Methylation
+MBD-Seq,DNA Methylation
+MH-Seq,DNA Methylation
+MRE-Seq,DNA Methylation
+MeDIP-Seq,DNA Methylation
+Methylation Array,DNA Methylation
+Methylation Array (450K),DNA Methylation
+Methylation Array (EPIC),DNA Methylation
+Methylation-Seq,DNA Methylation
+NOMe-Seq,DNA Methylation
+RRBS,DNA Methylation
+WGBS,DNA Methylation
+GBS,Exome / Targeted Sequencing
+RAD-Seq,Exome / Targeted Sequencing
+Targeted Capture,Exome / Targeted Sequencing
+Targeted Sequencing,Exome / Targeted Sequencing
+WXS,Exome / Targeted Sequencing
+ddRAD-Seq,Exome / Targeted Sequencing
+Clone Sequencing,Genomics (Legacy)
+Finishing,Genomics (Legacy)
+BCR-Seq,Immune Repertoire
+TCR-Seq,Immune Repertoire
+scVDJ-Seq,Immune Repertoire
+Iso-Seq,Long-read Sequencing
+Long-read Sequencing,Long-read Sequencing
+Nanopore Sequencing,Long-read Sequencing
+PacBio HiFi,Long-read Sequencing
+PacBio Sequencing,Long-read Sequencing
+Synthetic Long Read,Long-read Sequencing
+16S rRNA Sequencing,Metagenomics
+18S rRNA Sequencing,Metagenomics
+Amplicon Sequencing,Metagenomics
+Amplicon-Seq,Metagenomics
+ITS Sequencing,Metagenomics
+Inverse rRNA,Metagenomics
+Metagenomics,Metagenomics
+Metatranscriptomics,Metagenomics
+Tn-Seq,Metagenomics
+Expression Array,Microarray
+Microarray,Microarray
+Protein Array,Microarray
+RNAi Microarray,Microarray
+SELEX,Microarray
+Tiling Array,Microarray
+ncRNA Microarray,Microarray
+AT-Seq,PARS / Structure
+PARS-Seq,PARS / Structure
+MeRIP-Seq,RNA Methylation
+icSHAPE,RNA Methylation
+m1A-Seq,RNA Methylation
+CHART-Seq,RNA-Protein Interaction
+CLIP-Seq,RNA-Protein Interaction
+ChAR-Seq,RNA-Protein Interaction
+ChIRP-Seq,RNA-Protein Interaction
+HITS-CLIP,RNA-Protein Interaction
+PAR-CLIP,RNA-Protein Interaction
+RIP-Seq,RNA-Protein Interaction
+RIP-chip,RNA-Protein Interaction
+eCLIP,RNA-Protein Interaction
+iCLIP,RNA-Protein Interaction
+iMARGI,RNA-Protein Interaction
+Pseudo-Seq,Ribosome Profiling
+Ribo-Seq,Ribosome Profiling
+GWAS,SNP / Genotyping
+Genotyping Array,SNP / Genotyping
+SNP Array,SNP / Genotyping
+Pi-ATAC-Seq,Single-cell Epigenomics
+STEM-Seq,Single-cell Epigenomics
+scATAC-Seq,Single-cell Epigenomics
+scBS-Seq,Single-cell Epigenomics
+scHi-C,Single-cell Epigenomics
+sci-ATAC-Seq,Single-cell Epigenomics
+sn-m3C-Seq,Single-cell Epigenomics
+snATAC-Seq,Single-cell Epigenomics
+snmCT-Seq,Single-cell Epigenomics
+CT-Seq,Single-cell Genomics
+scDNA-Seq,Single-cell Genomics
+scWGS,Single-cell Genomics
+sci-Seq,Single-cell Genomics
+CUT&Run + ATAC-Seq,Single-cell Multi-omics
+DOGMAseq,Single-cell Multi-omics
+DOGMAseq-DIG,Single-cell Multi-omics
+DOGMAseq-LLL,Single-cell Multi-omics
+ISSAAC-Seq,Single-cell Multi-omics
+Multiome,Single-cell Multi-omics
+Paired-Seq,Single-cell Multi-omics
+SHARE-Seq,Single-cell Multi-omics
+SHARE-Seq2,Single-cell Multi-omics
+SNARE-Seq,Single-cell Multi-omics
+SNARE-Seq2,Single-cell Multi-omics
+scHi-C + scRNA-Seq,Single-cell Multi-omics
+snMultiome,Single-cell Multi-omics
+BD Rhapsody,Single-cell Transcriptomics
+BD Rhapsody Enhanced Beads,Single-cell Transcriptomics
+BD Rhapsody v1,Single-cell Transcriptomics
+CEL-Seq,Single-cell Transcriptomics
+CEL-Seq2,Single-cell Transcriptomics
+CITE-Seq,Single-cell Transcriptomics
+Drop-Seq,Single-cell Transcriptomics
+MARS-Seq,Single-cell Transcriptomics
+MATQ-Seq,Single-cell Transcriptomics
+Microwell-Seq,Single-cell Transcriptomics
+PIPseq,Single-cell Transcriptomics
+PIPseq v10,Single-cell Transcriptomics
+PIPseq v2,Single-cell Transcriptomics
+PIPseq v20,Single-cell Transcriptomics
+PIPseq v3,Single-cell Transcriptomics
+Parse Biosciences,Single-cell Transcriptomics
+Parse Biosciences CRISPR Detect,Single-cell Transcriptomics
+Parse Biosciences Evercode,Single-cell Transcriptomics
+Parse Biosciences Evercode BCR,Single-cell Transcriptomics
+Parse Biosciences Evercode FFPE,Single-cell Transcriptomics
+Parse Biosciences Evercode Fixation,Single-cell Transcriptomics
+Parse Biosciences Evercode TCR,Single-cell Transcriptomics
+Parse Biosciences Evercode WT,Single-cell Transcriptomics
+Parse Biosciences Evercode WT Mega,Single-cell Transcriptomics
+Parse Biosciences Evercode WT Mini,Single-cell Transcriptomics
+Parse Biosciences Evercode WT Penta,Single-cell Transcriptomics
+Parse Biosciences Gene Select,Single-cell Transcriptomics
+Quartz-Seq,Single-cell Transcriptomics
+Quartz-Seq2,Single-cell Transcriptomics
+SCNT-Seq,Single-cell Transcriptomics
+SPLiT-Seq,Single-cell Transcriptomics
+STRT-Seq,Single-cell Transcriptomics
+STRT-Seq-2i,Single-cell Transcriptomics
+STRT-Seq-C1,Single-cell Transcriptomics
+Scale Biosciences,Single-cell Transcriptomics
+Scale Biosciences ScalePlex,Single-cell Transcriptomics
+Seq-Well,Single-cell Transcriptomics
+Smart-Seq,Single-cell Transcriptomics
+Smart-Seq2,Single-cell Transcriptomics
+Smart-Seq3,Single-cell Transcriptomics
+SugarSeq,Single-cell Transcriptomics
+SureCell,Single-cell Transcriptomics
+Tapestri,Single-cell Transcriptomics
+VASA-Seq,Single-cell Transcriptomics
+VASA-Seq-drop,Single-cell Transcriptomics
+inDrops,Single-cell Transcriptomics
+inDrops-2,Single-cell Transcriptomics
+mcSCRB-Seq,Single-cell Transcriptomics
+scCITE-Seq,Single-cell Transcriptomics
+scRNA-Seq,Single-cell Transcriptomics
+scRNA-Seq 3',Single-cell Transcriptomics
+scRNA-Seq 3' v2,Single-cell Transcriptomics
+scRNA-Seq 3' v2/v3,Single-cell Transcriptomics
+scRNA-Seq 3' v3,Single-cell Transcriptomics
+scRNA-Seq 5',Single-cell Transcriptomics
+sci-RNA-Seq,Single-cell Transcriptomics
+sci-RNA-Seq3,Single-cell Transcriptomics
+scifi-RNA-Seq,Single-cell Transcriptomics
+snRNA-Seq,Single-cell Transcriptomics
+Small RNA-Seq,Small RNA
+miRNA-Seq,Small RNA
+ncRNA-Seq,Small RNA
+CODEX,Spatial Transcriptomics
+CosMx SMI,Spatial Transcriptomics
+Curio Seeker,Spatial Transcriptomics
+DBiT-Seq,Spatial Transcriptomics
+EEL FISH,Spatial Transcriptomics
+GeoMx DSP,Spatial Transcriptomics
+HDST,Spatial Transcriptomics
+MERFISH,Spatial Transcriptomics
+MERSCOPE,Spatial Transcriptomics
+Molecular Cartography,Spatial Transcriptomics
+Open-ST,Spatial Transcriptomics
+PhenoCycler,Spatial Transcriptomics
+Pixel-Seq,Spatial Transcriptomics
+STARmap,Spatial Transcriptomics
+STARmap PLUS,Spatial Transcriptomics
+Seq-Scope,Spatial Transcriptomics
+Slide-Seq,Spatial Transcriptomics
+Slide-SeqV2,Spatial Transcriptomics
+Spatial Transcriptomics,Spatial Transcriptomics
+Stereo-Seq,Spatial Transcriptomics
+Visium,Spatial Transcriptomics
+Visium HD,Spatial Transcriptomics
+Xenium,Spatial Transcriptomics
+osmFISH,Spatial Transcriptomics
+seqFISH,Spatial Transcriptomics
+seqFISH+,Spatial Transcriptomics
+Array CGH,Structural / Copy Number
+Repli-Seq,Structural / Copy Number
+sBLISS,Structural / Copy Number
+WGS,Whole Genome Sequencing
