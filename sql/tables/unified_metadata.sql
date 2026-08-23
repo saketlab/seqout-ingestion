@@ -45,8 +45,21 @@ CREATE TABLE IF NOT EXISTS unified_metadata (
     country                  TEXT,
     country_mismatch         TEXT,
     geocode_score            TEXT,
-    is_single_cell           INTEGER DEFAULT 0,
+    -- Tri-state; no default. Default 0 would mark unmeasured rows as measured
+    -- negatives; see single_cell_status below.
+    --   1    = evidence says single-cell (read-derived OR study text)
+    --   0    = screened by preflightx/pentimento, call was negative
+    --   NULL = unmeasured
+    is_single_cell           INTEGER,
+    -- Spelled-out state for consumers; avoid `WHERE is_single_cell = 0` hiding
+    -- unmeasured rows.
+    --   measured_single_cell | measured_not_single_cell
+    --   text_indicates_single_cell | not_screened
+    single_cell_status       TEXT,
     single_cell_modality     TEXT,
+    -- single_cell_modality_evidence distinguishes text-guessed modalities from
+    -- measured ones.
+    single_cell_modality_evidence TEXT,
     single_cell_counts       TEXT DEFAULT '{}',
     single_cell_file_format  TEXT,
     sc_count_last_checked    TEXT

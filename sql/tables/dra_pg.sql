@@ -66,8 +66,8 @@ CREATE TABLE IF NOT EXISTS dra_runs (
     submission TEXT
 );
 
--- Full-text twin, mirroring gsa_studies_search. is_only_ddbj = 1 only: a
--- mirrored DRP is the same study as its SRA/ENA twin and would duplicate hits.
+-- Full-text twin, mirroring gsa_studies_search. is_only_ddbj = 1 keeps
+-- mirrored DRPs from duplicating their SRA/ENA twins.
 CREATE TABLE IF NOT EXISTS dra_studies_search (
     accession         TEXT PRIMARY KEY,
     study_title       TEXT,
@@ -93,9 +93,19 @@ CREATE INDEX IF NOT EXISTS idx_dra_studies_is_only_ddbj ON dra_studies (is_only_
 CREATE INDEX IF NOT EXISTS idx_dra_studies_published_at ON dra_studies (published_at);
 CREATE INDEX IF NOT EXISTS idx_dra_studies_bioproject ON dra_studies (bioproject_id);
 CREATE INDEX IF NOT EXISTS idx_dra_studies_submission ON dra_studies (submission);
+
+-- Reverse pmid -> study lookups in pysradb-server (PROJECTS_BY_PMID_SQL,
+-- SEARCH_AUTHOR_PROJECTS_SQL). One indexed arm per column lets each query use
+-- its index.
+CREATE INDEX IF NOT EXISTS idx_dra_studies_pubmed_pysradb ON dra_studies (pubmed_id_pysradb);
+-- Partial: only rows whose XREF_LINK is a PubMed link. The indexed expression
+-- must match _xref_pmid() in pysradb-server queries.py or the planner skips it.
+CREATE INDEX IF NOT EXISTS idx_dra_studies_xref_pmid
+    ON dra_studies (btrim(links->'XREF_LINK'->>'ID'))
+    WHERE upper(links->'XREF_LINK'->>'DB') = 'PUBMED';
 CREATE INDEX IF NOT EXISTS idx_dra_experiments_study ON dra_experiments (study);
 CREATE INDEX IF NOT EXISTS idx_dra_experiments_submission ON dra_experiments (submission);
--- samples @> ARRAY[...] full-scans 627k rows (280ms) without this.
+-- GIN index supports samples @> ARRAY[...] queries.
 CREATE INDEX IF NOT EXISTS idx_dra_experiments_samples ON dra_experiments USING GIN (samples);
 CREATE INDEX IF NOT EXISTS idx_dra_samples_submission ON dra_samples (submission);
 CREATE INDEX IF NOT EXISTS idx_dra_runs_experiment ON dra_runs (experiment);

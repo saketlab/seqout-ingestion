@@ -98,12 +98,16 @@ _META_EXCLUDE = (
 _META_EXTS = (".csv", ".tsv", ".txt")
 _EMBEDDED_METADATA_FORMATS = ("rds", "h5ad")
 
-# raw/unfiltered 10x matrices report the whole barcode whitelist as columns
-# rather than real cells; detected by exact whitelist size or a low nnz/cells
+# Raw/unfiltered 10x matrices report whole barcode whitelists as columns;
+# detect exact whitelist sizes or low nnz/cells.
 _WHITELIST_SIZES = frozenset(
     {737280, 6794880, 4526976, 3571200, 6390720, 1000000, 900000},
 )
 _MIN_NNZ_PER_CELL = 20
+# For matrices with fewer features than _MIN_NNZ_PER_CELL, judge filtered-vs-raw
+# by density relative to the feature count. 0.5 sits in the empty band between
+# the filtered cluster (>=0.8) and the raw tail (<0.2).
+_MIN_LOW_FEATURE_DENSITY = 0.5
 _MAX_TARS_SCANNED = 2
 _MAX_TAR_META_MEMBERS = 50
 _MAX_TAR_MEMBERS_WALKED = 4000
@@ -346,13 +350,20 @@ _OUT_DIR = Path("results")
 
 _DEFAULT_SOCKS = "10.195.102.16:1080"
 
-# hard per-accession wall-clock: download paths have no idle-stall timeout, so on
-# fire the item records 0 and counts as done, letting the run converge
+# Opt-in: fetch NCBI supplementary files over HTTPS. GEO records links as ftp://;
+# some subnets intercept port 21 with a proxy whose 403 ftplib reports as a
+# protocol error. The worker then records a matrix-free study.
+# ftp.ncbi.nlm.nih.gov serves the same paths over HTTPS. Off by default to
+# preserve existing job behaviour.
+_FORCE_HTTP = os.environ.get("SC_FORCE_HTTP", "") == "1"
+
+# hard per-accession wall-clock: download paths lack idle-stall timeouts; timed-out
+# items record 0 and count as done, letting the run converge
 _PER_ITEM_DEADLINE = int(os.environ.get("SC_ITEM_DEADLINE", "1800"))
 
 
 class _StallTimeoutError(BaseException):
-    """BaseException so the broad except Exception paths cannot swallow the alarm."""
+    """BaseException bypasses broad except Exception paths."""
 
 
 def _on_alarm(signum: int, frame: object) -> None:  # noqa: ARG001
@@ -406,8 +417,7 @@ def main() -> None:
     finally:
         signal.alarm(0)
 
-    # write via temp file so a crash mid-write can't leave a half-written output
-    # that yuj's resume would treat as completed
+    # Write via temp file so resume sees only complete outputs.
     tmp = out_path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(result, indent=2))
     tmp.replace(out_path)
@@ -441,10 +451,14 @@ def process_accession(
         max_bytes=_MAX_FILE_BYTES,
     )
 
-    def count_link(link: DownloadLink) -> tuple[int, int, str, str]:  # noqa: PLR0911
+    def count_link(  # noqa: PLR0911
+        link: DownloadLink, *, force_http: bool = False
+    ) -> tuple[int, int, str, str]:
         # EBI serves supplementary files over HTTPS only; ftp:// there times out
-        use_http = "ebi.ac.uk" in link.url
+        use_http = force_http or _FORCE_HTTP or "ebi.ac.uk" in link.url
         ftp_url = link.url.replace("https://", "ftp://", 1)
+        # ftp.ncbi.nlm.nih.gov serves the same paths over HTTPS; HTTP branches receive the converted URL.
+        http_url = link.url.replace("ftp://", "https://", 1)
 
         if link.type in {FileType.H5, FileType.H5ad}:
             dims = count_h5_dims_via_http(link.url, link.type)
@@ -465,7 +479,7 @@ def process_accession(
                 head = _MTX_HEAD_BYTES if link.type == FileType.Mtx else chunk_size
                 if use_http:
                     dest_path = download_http_head(
-                        link.url,
+                        http_url,
                         dest_path,
                         max_decompressed=head,
                         num_retries=retries,
@@ -488,7 +502,7 @@ def process_accession(
                     return (0, -1, "", "")
                 if use_http:
                     dest_path = download_file(
-                        link.url,
+                        http_url,
                         dest_path,
                         chunk_size=chunk_size,
                         num_workers=1,
@@ -558,7 +572,7 @@ def process_accession(
         if n_cells > s["cells"]:
             s["cells"] = n_cells
             s["cells_format"] = fmt
-            s["unfiltered"] = _is_unfiltered(n_cells, nnz, src)
+            s["unfiltered"] = _is_unfiltered(n_cells, nnz, n_genes, src)
         if n_genes > s["genes"]:
             s["genes"] = n_genes
             s["genes_format"] = fmt
@@ -568,9 +582,15 @@ def process_accession(
             s["rds_class"] = rds_class
 
     for link in dl_links:
-        # a per-GSM tar holds one matrix per sample; stream member-by-member so each
-        # attributes to its own GSM instead of collapsing to a study max
-        if link.type == FileType.Tar and "ebi.ac.uk" not in link.url:
+        # A per-GSM tar holds one matrix per sample; stream members separately so
+        # each attributes to its own GSM.
+        # Under SC_FORCE_HTTP this FTP streamer is skipped; HTTPS handling below does
+        # the same work on hosts where port 21 is intercepted.
+        if (
+            link.type == FileType.Tar
+            and "ebi.ac.uk" not in link.url
+            and not _FORCE_HTTP
+        ):
             members = count_tar_members_via_stream(
                 link.url, chunk_size, timeout=timeout, socks_proxy=_read_proxy()
             )
@@ -583,7 +603,23 @@ def process_accession(
                         key = _sample_key(link.url, accession)
                     _merge(key, m_cells, m_genes, m_fmt, "", m_nnz, mname)
                 continue
-        n_cells, n_genes, fmt, rds_class = count_link(link)
+        # A blocked ftp download and a genuinely empty file both return no cells, so
+        # ftp zeroes are retried over https before being trusted. The except path
+        # matters because intercepted port 21 raises before a return-value check.
+        retryable = not _FORCE_HTTP and "ebi.ac.uk" not in link.url
+        try:
+            n_cells, n_genes, fmt, rds_class = count_link(link)
+        except Exception:
+            if not retryable:
+                raise
+            logger.debug("ftp path raised for %s; retrying over https", link.url)
+            n_cells, n_genes, fmt, rds_class = 0, -1, "", ""
+        if n_cells <= 0 and retryable:
+            try:
+                n_cells, n_genes, fmt, rds_class = count_link(link, force_http=True)
+            except Exception:
+                logger.debug("https retry also failed for %s", link.url)
+                n_cells, n_genes, fmt, rds_class = 0, -1, "", ""
         nnz = last_mtx_nnz() if fmt == FileType.Mtx.value else -1
         _merge(
             _sample_key(link.url, accession),
@@ -615,9 +651,14 @@ def process_accession(
     return _build_result(accession, source, aliases, samples, metadata)
 
 
-def _is_unfiltered(cells: int, nnz: int, src: str) -> bool:
+def _is_unfiltered(cells: int, nnz: int, genes: int, src: str) -> bool:
     if cells in _WHITELIST_SIZES:
         return True
+    if 0 < genes < _MIN_NNZ_PER_CELL:
+        # nnz/cells is bounded by feature count. HTO and ADT libraries carry 2-14
+        # features, so compare against achievable density: filtered low-feature
+        # matrices are near-dense, raw ones are mostly empty droplets.
+        return nnz > 0 and cells > 0 and nnz < cells * genes * _MIN_LOW_FEATURE_DENSITY
     if nnz > 0 and cells > 0 and nnz < cells * _MIN_NNZ_PER_CELL:
         return True
     low = src.rsplit("/", 1)[-1].lower()
@@ -866,8 +907,8 @@ def _build_result(
     samples: dict[str, dict[str, Any]],
     metadata: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    # single_cell_count = max(per-GSM sum, largest study-level file), so a
-    # combined matrix alongside per-sample ones cannot double count
+    # single_cell_count = max(per-GSM sum, largest study-level file), avoiding
+    # double counts when combined and per-sample matrices coexist.
     gsm = [s for s in samples.values() if s["sample"].startswith("GSM")]
     study = [s for s in samples.values() if not s["sample"].startswith("GSM")]
     gsm_sum = sum(s["cells"] for s in gsm)

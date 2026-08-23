@@ -18,12 +18,23 @@ ENA_DB_FILE := env("ENA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ena/db/ | 
 AE_DB_FILE := env("AE_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ae/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/ae/db/$latest/ae_metadata_$latest.db\""))
 GSA_DB_FILE := env("GSA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa/db/$latest/gsa_metadata_$latest.db\""))
 GSA_HUMAN_DB_FILE := env("GSA_HUMAN_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa_human/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa_human/db/$latest/gsa_human_metadata_$latest.db\""))
-# tolerant of a missing dir: these do not exist until the first ingest
+# tolerate missing dirs before first ingest
 DRA_DB_FILE := env("DRA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/dra/db/ 2>/dev/null | sort -r | head -1); if [ -n \"$latest\" ]; then echo \"" + DATA_DIR + "/dra/db/$latest/dra_metadata_$latest.db\"; fi"))
 GEA_DB_FILE := env("GEA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gea/db/ 2>/dev/null | sort -r | head -1); if [ -n \"$latest\" ]; then echo \"" + DATA_DIR + "/gea/db/$latest/gea_metadata_$latest.db\"; fi"))
 
 AGE_SOURCE_DB_FILE := env("AGE_SOURCE_DB_FILE", "/data/share/saket_dump/enrichment/enriched_metadata_v4_combined.sqlite")
 AGE_NORM_DB_FILE := env("AGE_NORM_DB_FILE", DATA_DIR + "/age/age_norm.sqlite3")
+
+SC_EVIDENCE_DB_FILE := env("SC_EVIDENCE_DB_FILE", DATA_DIR + "/sc_evidence/single_cell_evidence.db")
+SC_DB_DIR := env("SC_DB_DIR", env("HOME") + "/sc_db")
+SC_DB_FILE := env("SC_DB_FILE", SC_DB_DIR + "/single_cell.db")
+SC_QUEUE_CSV_FILE := env("SC_QUEUE_CSV_FILE", SC_DB_DIR + "/sc_work_queue.csv")
+GEO_COMBINED_DB_FILE := env("GEO_COMBINED_DB_FILE", DATA_DIR + "/combined/geo_metadata_combined.db")
+AE_COMBINED_DB_FILE := env("AE_COMBINED_DB_FILE", DATA_DIR + "/combined/ae_metadata_combined.db")
+NCOUNT_EXTRA_DB_FILE := env("NCOUNT_EXTRA_DB_FILE", shell("ls -1 " + justfile_directory() + "/data/ncount/*.db 2>/dev/null | sort -r | head -1"))
+ENA_DELTA_DB_FILE := env("ENA_DELTA_DB_FILE", "")
+# Read by enriched_assay_library_col: model assay calls from enrichment.
+ENRICHED_DB_FILE := env("ENRICHED_DB_FILE", "/data/share/saket_dump/enrichment/enriched_metadata_v4_combined.sqlite")
 
 UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_catalog/unified_catalog.db")
 UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified_metadata/unified_metadata.db")
@@ -54,6 +65,8 @@ _all_db_args := "--sra-db-file " + SRA_DB_FILE + " --geo-db-file " + GEO_DB_FILE
 [private]
 _gsa_db_args := "--gsa-db-file " + GSA_DB_FILE + " --gsa-human-db-file " + GSA_HUMAN_DB_FILE + " "
 [private]
+_sc_extra_db_args := (if ENA_DELTA_DB_FILE != "" { "--ena-delta-db-file " + ENA_DELTA_DB_FILE + " " } else { "" }) + (if ENRICHED_DB_FILE != "" { "--enriched-db-file " + ENRICHED_DB_FILE + " " } else { "" })
+[private]
 _ddbj_db_args := "--dra-db-file " + DRA_DB_FILE + " --gea-db-file " + GEA_DB_FILE + " "
 [private]
 _transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --read-batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
@@ -69,10 +82,7 @@ ingest_sra *flags:
         --write-batch-size {{ BATCH_SIZE }} \
         {{ flags }}
 
-# DDBJ DRA. Ingests every public study in the window and stamps is_only_ddbj=1 on those
-# SRA/ENA hold no mirror of (checked against the sqlite dumps; --pg-url uses postgres).
-#   just ingest_dra --novelty-filter   # ingest only the DDBJ-exclusive set
-#   just ingest_dra --dry-run          # show the split, download nothing
+[group("ingest")]
 ingest_dra *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest dra \
         {{ _ingest_args }} \
@@ -80,7 +90,7 @@ ingest_dra *flags:
         --ena-db-file {{ ENA_DB_FILE }} \
         {{ flags }}
 
-# Full DDBJ DRA history -- every public study ever released (~18.8k). Long-running.
+[group("ingest")]
 ingest_dra_all *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest dra \
         --output-dir {{ DATA_DIR }} \
@@ -92,8 +102,7 @@ ingest_dra_all *flags:
         --ena-db-file {{ ENA_DB_FILE }} \
         {{ flags }}
 
-# DDBJ GEA (expression). No novelty filter -- nothing in GEA is mirrored into
-# GEO or ArrayExpress, so all ~735 public experiments are ingested.
+[group("ingest")]
 ingest_gea *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest gea \
         {{ _ingest_args }} \
@@ -149,8 +158,6 @@ backfill_download_links *flags:
         --timeout {{ TIMEOUT }} \
         {{ flags }}
 
-# fastq links for the novel DRA runs, from DDBJ's own fastqlist manifest
-# (ena has never seen them, so backfill_download_links cannot find their fastqs)
 [group("backfill")]
 backfill_dra_download_links *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} backfill dra-download-links \
@@ -162,10 +169,6 @@ backfill_dra_download_links *flags:
         --timeout {{ TIMEOUT }} \
         {{ flags }}
 
-# Everything DDBJ needs between ingest and transfer, in order:
-#   1. pm-ids              -- DRP -> pmid, via the bioproject (no SRA/ENA mirror to elink)
-#   2. pm-meta             -- those pmids -> pubmed_metadata + citation counts
-#   3. dra-download-links  -- fastq urls from DDBJ's own manifest
 [group("backfill")]
 backfill_ddbj *flags:
     just backfill_pm_ids {{ flags }}
@@ -255,8 +258,44 @@ sc_enrich_yuj_setup *flags:
         --geo-db-file {{ GEO_DB_FILE }} \
         --ae-db-file {{ AE_DB_FILE }} \
         --output-dir {{ DATA_DIR }}/yuj_setup \
-        --machines-csv-file {{ DATA_DIR }}/yuj_machines.csv \
         {{ flags }}
+
+[group("sc_evidence")]
+sc_evidence_build *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_evidence build \
+        --sc-evidence-db-file {{ SC_EVIDENCE_DB_FILE }} \
+        {{ _all_db_args }} \
+        {{ _gsa_db_args }} \
+        {{ _ddbj_db_args }} \
+        {{ _sc_extra_db_args }} \
+        --batch-size {{ BATCH_SIZE }} \
+        {{ flags }}
+
+[group("sc_evidence")]
+sc_evidence_coverage *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_evidence coverage \
+        --sc-evidence-db-file {{ SC_EVIDENCE_DB_FILE }} \
+        {{ _all_db_args }} \
+        {{ _gsa_db_args }} \
+        {{ _ddbj_db_args }} \
+        {{ _sc_extra_db_args }} \
+        {{ flags }}
+
+[group("sc_evidence")]
+sc_db_build *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_db build \
+        --sc-db-file {{ SC_DB_FILE }} \
+        --sc-evidence-db-file {{ SC_EVIDENCE_DB_FILE }} \
+        --pg-url "$PG_URL" \
+        --geo-db-file {{ GEO_COMBINED_DB_FILE }} \
+        --ae-db-file {{ AE_COMBINED_DB_FILE }} \
+        --ncount-extra-db-file {{ NCOUNT_EXTRA_DB_FILE }} \
+        --queue-csv-file {{ SC_QUEUE_CSV_FILE }} \
+        {{ flags }}
+
+[group("sc_evidence")]
+sc_db_summary *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_db summary --sc-db-file {{ SC_DB_FILE }} {{ flags }}
 
 [group("transfer")]
 transfer_postgres *flags:
@@ -266,8 +305,6 @@ transfer_postgres *flags:
         {{ _gsa_db_args }} \
         {{ flags }}
 
-# Project the pentimento SQLite into the pentimento_* pg tables the API serves.
-# Idempotent -- a rerun over unchanged data is a no-op.
 [group("pentimento")]
 transfer_pentimento *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer pentimento \
@@ -275,21 +312,45 @@ transfer_pentimento *flags:
         --pentimento-db-file {{ PENTIMENTO_DB_FILE }} \
         {{ flags }}
 
+# DDBJ DRA and GEA into the dra_* / gea_* tables. Separate from transfer_postgres
+# because _all_db_args carries only sra/geo/ena/ae.
+[group("transfer")]
+transfer_ddbj *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ddbj \
+        --pg-url "$PG_URL" \
+        {{ _ddbj_db_args }} \
+        --download-links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --read-batch-size {{ BATCH_SIZE }} \
+        {{ flags }}
+
+# Backfill scientific_name on the run tables from each archive's own metadata.
+[group("transfer")]
+transfer_ena_organisms *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ena-organisms \
+        --pg-url "$PG_URL" --ena-db-file {{ ENA_DB_FILE }} {{ flags }}
+
+[group("transfer")]
+transfer_dra_organisms *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer dra-organisms \
+        --pg-url "$PG_URL" --dra-db-file {{ DRA_DB_FILE }} {{ flags }}
+
+[group("transfer")]
+transfer_gea_organisms *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer gea-organisms \
+        --pg-url "$PG_URL" --gea-db-file {{ GEA_DB_FILE }} {{ flags }}
+
 [group("transfer")]
 transfer_parquet *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer parquet \
         {{ _transfer_args }} \
         {{ flags }}
 
-# Rebuild the Neo4j ontology graph from scratch. Rarely run -- see docs/ontology_graph.md.
-# Needs $NEO4J_PASSWORD, and $NEO4J_URI pointing at the server (prod is behind an SSH tunnel).
 [group("ontology")]
 ontology_build *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology build \
         --output-dir {{ DATA_DIR }} \
         {{ flags }}
 
-# The stages of ontology_build, for resuming a run that died partway.
 [group("ontology")]
 ontology_download *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology download --output-dir {{ DATA_DIR }} {{ flags }}
@@ -371,14 +432,13 @@ embed_labels *flags:
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
 
-# Add levels coarser than the Leiden root (agglomerates it; nests over existing levels)
 [group("embed")]
 embed_cluster_leiden_coarse *flags:
     {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed cluster-leiden-coarse \
         --chroma-db-dir {{ CHROMA_DB_DIR }} \
         {{ flags }}
 
-# Phase 1 of labelling (run once): cache TF-IDF keywords. Reads chroma; the slow part.
+# Phase 1 of labelling: cache TF-IDF keywords. 
 [group("embed")]
 embed_precompute_keywords *flags:
     {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed precompute-keywords \
@@ -386,7 +446,7 @@ embed_precompute_keywords *flags:
         --keywords-dir {{ KEYWORDS_DIR }} \
         {{ flags }}
 
-# Phase 2 of labelling (repeatable): LLM-label from the cache. No chroma, resumes cleanly.
+# Phase 2 of labelling: LLM-label from the cache.
 [group("embed")]
 embed_label_from_keywords *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} embed label-from-keywords \
@@ -403,7 +463,6 @@ transfer_embed *flags:
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
 
-# Overwrite EVoC with Leiden in Postgres so the apps adopt it (needs $PG_URL tunnel)
 [group("transfer")]
 transfer_leiden_swap *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer leiden-swap \
@@ -446,14 +505,11 @@ pentimento_build *flags:
         --preflightx-db-file {{ PREFLIGHTX_DB_FILE }} \
         --preflightx-csv-dir {{ PREFLIGHTX_CSV_DIR }} \
         --quant-dir {{ VIRUS_QUANT_DIR }} \
+        --quant-archive-db-file {{ QUANT_ARCHIVE_DB_FILE }} \
         --benchmark-file {{ PREFLIGHTX_BENCHMARK_FILE }} \
         --sra-db-file {{ SRA_DB_FILE }} \
         {{ flags }}
 
-# Running preflight ourselves. Three stages, each separately resumable: pick the
-# studies, scan the reads (network-bound, scatter this one across the fleet with
-# yuj), load the result. `preflight_ingest` needs NO quant and NO enrichment DB --
-# that is what makes a fresh scan usable on its own.
 PREFLIGHT_MANIFEST_DIR := env("PREFLIGHT_MANIFEST_DIR", DATA_DIR + "/pentimento/preflight/manifests")
 PREFLIGHT_ANNOTATED_DIR := env("PREFLIGHT_ANNOTATED_DIR", DATA_DIR + "/pentimento/preflight/annotated")
 
@@ -465,7 +521,6 @@ preflight_manifest *flags:
         --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         {{ flags }}
 
-# Streams remote FASTQ; hours, not minutes. Pass --in-dir to run one host's slice.
 [group("pentimento")]
 preflight_run *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight run \
@@ -481,13 +536,228 @@ preflight_ingest *flags:
         --sra-db-file {{ SRA_DB_FILE }} \
         {{ flags }}
 
+PREFLIGHTX_VERSION := env("PREFLIGHTX_VERSION", "v0.3.1")
+PREFLIGHTX_TARGET := env("PREFLIGHTX_TARGET", "x86_64-unknown-linux-gnu")
+
+[group("backfill")]
+fetch_preflightx:
+    mkdir -p {{ QUANT_DIR }}/bin
+    cd {{ QUANT_DIR }}/bin && \
+      gh release download {{ PREFLIGHTX_VERSION }} --repo saketlab/preflightx \
+        --pattern 'preflightx-{{ PREFLIGHTX_VERSION }}-{{ PREFLIGHTX_TARGET }}.*' \
+        --clobber && \
+      sha256sum -c preflightx-{{ PREFLIGHTX_VERSION }}-{{ PREFLIGHTX_TARGET }}.sha256 && \
+      tar xzf preflightx-{{ PREFLIGHTX_VERSION }}-{{ PREFLIGHTX_TARGET }}.tar.gz
+    {{ QUANT_DIR }}/bin/preflightx --version
+
+GAPS_DIR := env("GAPS_DIR", QUANT_DIR + "/gaps")
+MAX_SAMPLES := env("MAX_SAMPLES", "500")
+FLEET_SRC := env("FLEET_SRC", env("HOME") + "/fleet.csv")
+FLEET_LOCAL := "yuj/fleet.local.csv"  # yuj/*/yuj.yaml refer to it as ../fleet.local.csv
+
+[group("backfill")]
+gaps *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento gaps \
+        --pg-url "$PG_URL" \
+        --out-dir {{ GAPS_DIR }} \
+        --max-samples {{ MAX_SAMPLES }} \
+        --links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        {{ flags }}
+
+[private]
+_fleet:
+    @mkdir -p yuj
+    @command cp -f {{ FLEET_SRC }} {{ FLEET_LOCAL }} && chmod 600 {{ FLEET_LOCAL }}
+    @echo "fleet copied to {{ FLEET_LOCAL }} (edit this, never {{ FLEET_SRC }})"
+
+[group("backfill")]
+backfill_preflight *flags: _fleet
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight manifest \
+        --out-dir {{ QUANT_DIR }}/preflight_manifests_v2 \
+        --links-db-file {{ DOWNLOAD_LINKS_DB_FILE }} \
+        --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        --accession-file {{ GAPS_DIR }}/sex-assay.txt {{ flags }}
+    command cp -f {{ GAPS_DIR }}/sex-assay.txt yuj/preflight/studies.txt
+    cd yuj/preflight && yuj scatter && yuj run
+
+[group("backfill")]
+backfill_collect: _fleet
+    cd yuj/preflight && yuj pull
+    cd yuj/quant && yuj pull
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento preflight ingest \
+        --db-file {{ PENTIMENTO_DB_FILE }} \
+        --preflightx-csv-dir {{ QUANT_DIR }}/preflight_annotated \
+        --sra-db-file {{ SRA_DB_FILE }}
+
+QUANT_DIR := env("QUANT_DIR", env("HOME") + "/quant")
+
+QUANT_ARCHIVE_DB_FILE := env("QUANT_ARCHIVE_DB_FILE", QUANT_DIR + "/quant_archive.db")
+
+[group("pentimento")]
+quant_archive *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} pentimento quant-archive \
+        --quant-dir {{ VIRUS_QUANT_DIR }} \
+        --archive-db-file {{ QUANT_ARCHIVE_DB_FILE }} \
+        {{ flags }}
+
 PENTIMENTO_PARQUET_DIR := env("PENTIMENTO_PARQUET_DIR", DATA_DIR + "/pentimento/parquet")
 
-# Mirror the Pentimento tables to parquet (one file per table). Pass --resume to
-# continue a killed export; finished files are complete by construction.
 [group("pentimento")]
 pentimento_parquet *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} pentimento export-parquet \
         --db-file {{ PENTIMENTO_DB_FILE }} \
         --output-dir {{ PENTIMENTO_PARQUET_DIR }} \
+        {{ flags }}
+
+GARD_DB_FILE := env("GARD_DB_FILE", QUANT_DIR + "/gard/gard.db")
+NORD_DB_FILE := env("NORD_DB_FILE", QUANT_DIR + "/nord/nord.db")
+NORD_CSV_FILE := env("NORD_CSV_FILE", QUANT_DIR + "/nord/rare_diseases.csv")
+INHERITANCE_DB_FILE := env("INHERITANCE_DB_FILE", QUANT_DIR + "/inheritance/inheritance.db")
+GARD_ONTOLOGY_DIR := env("GARD_ONTOLOGY_DIR", QUANT_DIR + "/ontology")
+
+PG_SSH_HOST := env("PG_SSH_HOST", "sramap@167.114.208.177")
+PG_SOCKET_PORT := env("PG_SOCKET_PORT", "15433")
+PG_SOCKET_URL := "postgresql://sramap@127.0.0.1:" + PG_SOCKET_PORT + "/pysradb"
+SERVER_REPO := env("SERVER_REPO", justfile_directory() + "/../pysradb-server")
+
+[private]
+_pg_tunnel:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! (exec 3<>/dev/tcp/127.0.0.1/{{ PG_SOCKET_PORT }}) 2>/dev/null; then
+        echo "opening tunnel 127.0.0.1:{{ PG_SOCKET_PORT }} -> {{ PG_SSH_HOST }}"
+        ssh -f -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
+            -L {{ PG_SOCKET_PORT }}:/var/run/postgresql/.s.PGSQL.5432 {{ PG_SSH_HOST }}
+    fi
+
+[group("gard")]
+gard_fetch *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} gard fetch \
+        --output-db-file {{ GARD_DB_FILE }} \
+        --ontology-dir {{ GARD_ONTOLOGY_DIR }} \
+        {{ flags }}
+
+[group("gard")]
+gard_transfer *flags: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer gard \
+        --pg-url "{{ PG_SOCKET_URL }}" \
+        --gard-db-file {{ GARD_DB_FILE }} \
+        {{ flags }}
+
+[group("gard")]
+gard_inheritance *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} gard inheritance \
+        --gard-db-file {{ GARD_DB_FILE }} \
+        {{ flags }}
+
+[group("gard")]
+gard_index: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 \
+        -f sql/indexes/ontology_ancestors_pg.sql
+
+[group("disease")]
+disease_matview collection: _pg_tunnel
+    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
+        bash scripts/create_rare_disease_matview.sh {{ collection }}
+
+[group("disease")]
+alias_matview: _pg_tunnel
+    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
+        bash scripts/create_disease_alias_matview.sh
+
+[group("disease")]
+inheritance_matview: _pg_tunnel
+    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
+        bash scripts/create_disease_inheritance_matview.sh
+
+[group("gard")]
+downloads_matview: _pg_tunnel
+    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
+        bash scripts/create_study_download_matview.sh
+
+[group("gard")]
+gard_matview: _pg_tunnel (disease_matview "gard")
+
+[group("disease")]
+disease_all: gard_fetch gard_inheritance gard_transfer \
+             nord_fetch nord_load nord_transfer \
+             inheritance_fetch inheritance_transfer \
+             gard_index alias_matview inheritance_matview downloads_matview \
+             (disease_matview "gard") (disease_matview "nord")
+    @echo "disease stack rebuilt: /disease/{rare,nord}/{summary,facets,projects}"
+
+[group("gard")]
+gard_all: gard_fetch gard_inheritance gard_transfer gard_index alias_matview inheritance_matview downloads_matview gard_matview
+    @echo "rare-disease stack rebuilt: /disease/rare/{summary,facets,projects}"
+
+[group("nord")]
+nord_fetch *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} nord fetch \
+        --output-csv-file {{ NORD_CSV_FILE }} \
+        --ontology-dir {{ GARD_ONTOLOGY_DIR }} \
+        {{ flags }}
+
+[group("nord")]
+nord_load *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} nord load \
+        --csv-file {{ NORD_CSV_FILE }} \
+        --output-db-file {{ NORD_DB_FILE }} \
+        {{ flags }}
+
+[group("nord")]
+nord_transfer *flags: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer nord \
+        --pg-url "{{ PG_SOCKET_URL }}" \
+        --nord-db-file {{ NORD_DB_FILE }} \
+        {{ flags }}
+
+[group("nord")]
+nord_matview: _pg_tunnel (disease_matview "nord")
+
+[group("nord")]
+nord_all: nord_fetch nord_load nord_transfer gard_index alias_matview inheritance_matview downloads_matview nord_matview
+    @echo "nord stack rebuilt: /disease/nord/{summary,facets,projects}"
+
+[group("inheritance")]
+inheritance_fetch *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} inheritance fetch \
+        --output-db-file {{ INHERITANCE_DB_FILE }} \
+        --ontology-dir {{ GARD_ONTOLOGY_DIR }} \
+        {{ flags }}
+
+[group("inheritance")]
+inheritance_transfer *flags: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer inheritance \
+        --pg-url "{{ PG_SOCKET_URL }}" \
+        --inheritance-db-file {{ INHERITANCE_DB_FILE }} \
+        {{ flags }}
+
+[group("inheritance")]
+inheritance_all: inheritance_fetch inheritance_transfer inheritance_matview
+    @echo "inheritance rebuilt into disease_inheritance_all; run disease_all to roll it up"
+
+
+ENRICH_WORK_DIR := env("ENRICH_WORK_DIR", DATA_DIR + "/enrich")
+ENRICH_MODEL := env("ENRICH_MODEL", "rnj-1")
+
+[group("enrich")]
+enrich_batch ACCESSIONS *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} enrich batch \
+        --accession-file {{ ACCESSIONS }} \
+        --work-dir {{ ENRICH_WORK_DIR }} \
+        --model {{ ENRICH_MODEL }} \
+        --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        {{ flags }}
+
+[group("enrich")]
+enrich_prefetch ACCESSIONS CACHE *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} enrich prefetch \
+        --accession-file {{ ACCESSIONS }} --cache-file {{ CACHE }} {{ flags }}
+
+[group("enrich")]
+enrich_ingest CSV_DIR DB *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} enrich ingest \
+        --csv-dir {{ CSV_DIR }} --db-file {{ DB }} \
+        --unified-db-file {{ UNIFIED_METADATA_DB_FILE }} \
         {{ flags }}

@@ -1,5 +1,3 @@
--- Pentimento: one SQLite joining cell counts, preflightx calls, links and quant.
-
 CREATE TABLE IF NOT EXISTS study_ncount (
     study_accession          TEXT PRIMARY KEY,
     source                   TEXT,
@@ -8,9 +6,8 @@ CREATE TABLE IF NOT EXISTS study_ncount (
     cells                    INTEGER,
     -- Reported "cells" is the matrix COLUMN count. When the count is an exact
     -- multiple of a 10x barcode whitelist (737280 v2, 6794880 v3) the matrix is
-    -- unfiltered and those columns are barcodes, not cells: 896 studies carried
-    -- 4.27 B of a 7.59 B nominal total this way. Never sum cells without
-    -- filtering on this flag.
+    -- unfiltered and those columns are barcodes, not cells. Filter on this
+    -- flag before summing cells.
     cells_unfiltered         INTEGER NOT NULL DEFAULT 0,
     single_cell_file_format  TEXT,
     n_samples                INTEGER,
@@ -39,8 +36,8 @@ CREATE TABLE IF NOT EXISTS run_preflightx (
     sample_accession      TEXT,   -- SRS/ERS/DRS
     gsm_accession         TEXT,   -- GEO sample when resolvable, else NULL
     study_accession       TEXT,
-    -- read-derived calls (preflightx). Confidence columns exist only in the
-    -- enrichment DB route; the annotated-CSV route leaves them NULL.
+    -- read-derived calls (preflightx). The run-grained CSV route leaves
+    -- confidence/evidence NULL until an experiment-grained route overlays it.
     species               TEXT,
     species_called        TEXT,
     species_confidence    TEXT,   -- 'low'|'medium'|'high', NOT numeric
@@ -53,25 +50,42 @@ CREATE TABLE IF NOT EXISTS run_preflightx (
     sex                   TEXT,
     sex_verdict           TEXT,
     sex_confidence        TEXT,   -- 'low'|'medium'|'high', NOT numeric
-    -- Evidence behind the sex call. y_hits/xist_hits are meaningless without
-    -- sex_reads_scanned: 21 Y-unique reads out of 200 k is not 21 out of 2 k.
+    -- sex_reads_scanned gives the denominator for y_hits/xist_hits; raw counts are
+    -- depth-dependent.
+--
     sex_reads_scanned     INTEGER,
     y_hits                INTEGER,
     xist_hits             INTEGER,
     y_xist_ratio          REAL,
-    -- 'experimental' | 'unsupported'. Some graded experiments were called with
-    -- a panel not validated for their species; the verdict still stands, and
-    -- this is the column saying not to trust it.
+    -- 'experimental' | 'unsupported'. Flags a verdict produced with a panel
+    -- unvalidated for that species.
     sex_panel_status      TEXT,
     sex_mixed_suspected   INTEGER,
-    -- Reads used by the deep sex pass, 0/NULL when only the cheap pass ran.
-    -- Sex abstains ~80% of the time at the shallow depth, so this separates
-    -- "looked hard and found nothing" from "barely looked".
+--
+--
+    -- Deep sex-pass read depth; 0/NULL means cheap pass only.
     deep_n_reads          INTEGER,
     assay                 TEXT,
     assay_display         TEXT,   -- human-readable chemistry, e.g. "10x 3' v3"
     assay_is_single_cell  INTEGER,
-    preflightx_source     TEXT,   -- 'db' | 'csv' -- the two routes can disagree
+    -- Cell vs nucleus from intron fraction and mitochondrial %. sc_enrich reads
+    -- author wording; this field is read-derived. Nuclei retain unspliced
+    -- transcripts and lose cytoplasmic mitochondria. Use modality_reads_scanned
+    -- with intron_frac/mito_pct.
+    modality               TEXT,   -- 'single-cell'|'single-nucleus'|'ambiguous'|'unknown'
+    modality_confidence    TEXT,   -- 'low'|'medium'|'high', NOT numeric
+    intron_frac            REAL,
+    mito_pct               REAL,
+    modality_reads_scanned INTEGER,
+    -- Read geometry. bulk_vs_sc is called off R1 length structure, so it is
+    -- independent of assay_is_single_cell (which comes from barcode whitelist
+    -- hits); disagreement is informative.
+    bulk_vs_sc             TEXT,   -- 'single_cell'|'bulk'|'bulk_or_5prime_broken'|'uncertain'
+    bulk_vs_sc_confidence  TEXT,
+    -- `end` is a SQL keyword, hence read_end.
+    read_end               TEXT,   -- "3'"|"5'"|'full-length'|'ambiguous'|'unknown'
+    read_end_confidence    TEXT,
+    preflightx_source     TEXT,   -- 'db' | 'csv'; routes can disagree
     library_layout        TEXT,
     fastq_ftp             TEXT,
     fastq_bytes           TEXT,
@@ -86,26 +100,31 @@ CREATE TABLE IF NOT EXISTS microbe_quant (
     organism        TEXT NOT NULL,
     ref_accession   TEXT,
     reads           INTEGER,
+    -- weighted k-mer count (ka:f mean abundance)
+    kmer_mass       REAL,
+    n_unitigs       INTEGER,
     ref_bp          INTEGER,
     covered_bp      INTEGER,
     breadth_frac    REAL,
     total_reads     INTEGER,
-    -- The calibrated viral gate: small genome AND majority tiled. Applying it to
-    -- bacteria is meaningless -- only 0.1% of bacterial references are <= 50 kb,
-    -- so it returns ~0 BY CONSTRUCTION and must never be read as "no bacteria".
+    -- The calibrated viral gate requires a small genome and majority tiling;
+    -- bacterial refs exceed the viral-size gate.
+--
     is_validated_viral    INTEGER NOT NULL DEFAULT 0,
-    -- Bacteria get an absolute-coverage screen instead. Deliberately NOT called
-    -- "validated" -- it is a screening heuristic pending a size-aware gate.
+--
+    -- Non-endogenous breadth screen for expression-data HPV follow-up evidence.
+    is_viral_evidence     INTEGER NOT NULL DEFAULT 0,
+    -- Loose bacterial screen for follow-up evidence.
     is_bacterial_evidence INTEGER NOT NULL DEFAULT 0,
+    is_validated_bacterial INTEGER NOT NULL DEFAULT 0,
     -- Set when the organism is near-universal across unrelated studies
-    -- (reagent kitome / skin flora), e.g. E. coli in 69% of all runs.
+    -- (reagent kitome / skin flora), e.g. E. coli across unrelated runs.
     is_background         INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (run_accession, organism)
 );
 
--- Which organisms each is_* flag covers, and the exact gate behind it, for the
--- same reason background_taxa exists: a boolean that cannot be traced back to a
--- rule is not evidence. Rebuilt from pentimento.flags.FLAG_PANEL every build.
+-- Flag panel: organism set and gate behind each is_* column. Rebuilt from
+-- pentimento.flags.FLAG_PANEL every build.
 CREATE TABLE IF NOT EXISTS microbe_flag_panel (
     flag      TEXT NOT NULL,
     organism  TEXT NOT NULL,
@@ -113,21 +132,18 @@ CREATE TABLE IF NOT EXISTS microbe_flag_panel (
     PRIMARY KEY (flag, organism)
 ) WITHOUT ROWID;
 
--- run_microbe_flags is created by pentimento.flags: its columns come from
--- FLAG_PANEL, so declaring them here too would let the two drift apart.
+-- run_microbe_flags is created by pentimento.flags from FLAG_PANEL.
 
+--
 CREATE TABLE IF NOT EXISTS background_taxa (
     organism    TEXT PRIMARY KEY,
     runs        INTEGER,
     prevalence  REAL
 );
+--
 
--- Per-run rollup of the microbe table, one row per run. Driven from
--- quant_provenance rather than microbe_quant, so a run measured and found empty
--- still appears with its depth. Filtering background before the grouping
--- dropped a large share of the runs carrying any microbe row, which then read
--- as "no data" in sample_master, destroying the not-measured against
--- measured-nothing distinction quant_provenance exists to preserve.
+-- Per-run microbe rollup driven from quant_provenance, preserving measured-empty
+-- depth before background filtering.
 CREATE VIEW IF NOT EXISTS run_microbe_summary AS
 SELECT
     qp.run_accession,
@@ -182,16 +198,16 @@ LEFT JOIN sample_ncount       sn ON sn.sample_accession = COALESCE(p.gsm_accessi
 LEFT JOIN run_microbe_summary ms ON ms.run_accession    = p.run_accession;
 
 
--- How each viral/bacterial call was produced. Kept per run because depth and
--- read length vary per run and both change what a breadth number means: 0.5 off
--- 700 k reads is far weaker evidence than 0.5 off 700 M.
+-- How each viral/bacterial call was produced. Depth and read length change what
+-- breadth means.
+--
 CREATE TABLE IF NOT EXISTS quant_provenance (
     run_accession    TEXT PRIMARY KEY,
     status           TEXT,     -- ok | download_failed <stage> | absent_from_logan
     total_reads      INTEGER,  -- __total_reads__
     read_length      INTEGER,  -- __read_length__
     source_url       TEXT,     -- Logan unitig object actually fetched
-    kmer_size        INTEGER,  -- k used to build the unitigs (ka:f: is mean k-mer abundance)
+    kmer_size        INTEGER,  -- k-mer size for unitig construction (ka:f mean abundance)
     min_nmatch       INTEGER,
     min_identity     REAL,
     aligner          TEXT,
@@ -213,21 +229,18 @@ CREATE TABLE IF NOT EXISTS preflightx_provenance (
     updated_at           TEXT
 );
 
--- preflightx's own cross-run vote per experiment, plus how much it looked at to
--- reach it. Read from the .provenance.json files beside the annotated CSVs.
+-- preflightx cross-run vote per experiment, with scan depth from provenance JSON.
 --
--- The counts carry the weight: 'unknown' off 2 runs at 20 k reads and the same
--- verdict off 2 deep runs at 400 k are different findings, and sex abstains
--- ~80% of the time at the shallow depth. preflightx_provenance was supposed to
--- record this and does not, with params_json NULL throughout.
 --
--- The raw JSON is not stored: it projects to ~10.2 GB, larger than all of
--- Pentimento. Only its structure is kept.
+--
+--
+--
+--
 CREATE TABLE IF NOT EXISTS preflightx_vote (
     experiment_accession TEXT PRIMARY KEY,
     study_accession      TEXT,
-    -- '' in the source means "did not call" and is stored as NULL. 72.9% of
-    -- experiments carry a non-empty vote; the rest genuinely abstained.
+--
+    -- '' in the source means abstain and is stored as NULL.
     vote_species         TEXT,
     vote_sex             TEXT,
     vote_assay           TEXT,
@@ -237,23 +250,17 @@ CREATE TABLE IF NOT EXISTS preflightx_vote (
     deep_n_reads         INTEGER    -- reads per run in the deep pass
 ) WITHOUT ROWID;
 
--- How accurate the read-derived calls are, benchmarked against archive metadata
--- against archive metadata. Long form, one row per experiment x field, so the
--- summary is a GROUP BY and a fourth benchmarked field needs no migration.
+-- Read-call benchmark, long form: one row per experiment x field. correct is
+-- tri-state; NULL means comparison unavailable, distinct from wrong. Sex ground
+-- truth is literal 'NA', so sex predictions are retained for audit.
 --
--- correct is tri-state, and NULL carries meaning: the comparison could not be
--- made because one side abstained or there is no ground truth, which differs
--- from a wrong answer. Sex is why this matters: ground truth is the literal
--- string 'NA' on every row, so sex has predictions and zero evaluable ones,
--- making its accuracy unmeasured rather than low.
 CREATE TABLE IF NOT EXISTS preflightx_benchmark (
     accession   TEXT NOT NULL,   -- study
     experiment  TEXT NOT NULL,
     field       TEXT NOT NULL,   -- organism | assay | sex
-    -- Raw beside normalised: a disagreement can be re-judged without trusting
-    -- the normaliser, and assay needs that -- most of its "errors" are the two
-    -- vocabularies differing in GRAIN (library strategy vs chemistry), not the
-    -- call being wrong.
+--
+    -- Raw and normalised values stay side by side for audit; assay disagreements
+    -- are often vocabulary-grain differences.
     gt_raw      TEXT,
     pred_raw    TEXT,
     gt_norm     TEXT,
@@ -261,19 +268,15 @@ CREATE TABLE IF NOT EXISTS preflightx_benchmark (
     correct     INTEGER,
     PRIMARY KEY (accession, experiment, field)
 ) WITHOUT ROWID;
-
--- Per-field provenance for the stated author or LLM-derived metadata,
--- GSM-grained, covering every sample in the enrichment DB rather than only
--- those linked into Pentimento. "Author-provided" is not a column of its own:
--- it is <field>_source = 'llm_primary' with a non-empty <field>_column. The
--- _original_* variants record the pre-normalisation value, so a disagreement
--- between stated and read-derived traces to the exact source column.
 --
--- STORED NORMALISED. The natural long form repeats a handful of strings tens of
--- millions of times: field has 15 distinct values, source a similar handful,
--- and column names are drawn from a small vocabulary. Interned into prov_dict
--- they become 1-2 byte integers. Use the sample_field_provenance_v view for
--- text-valued queries.
+
+-- Per-field provenance for author or LLM-derived metadata, one GSM row per
+-- field across the enrichment DB. "Author-provided" is <field>_source =
+-- 'llm_primary' plus non-empty <field>_column; _original_* keeps the
+-- pre-normalisation source.
+--
+-- Stored normalised: repeated field/source/column text is interned into
+-- prov_dict. Query sample_field_provenance_v for text.
 CREATE TABLE IF NOT EXISTS prov_dict (
     id     INTEGER PRIMARY KEY,
     kind   TEXT NOT NULL,   -- 'field' | 'source' | 'column'
@@ -294,7 +297,7 @@ CREATE TABLE IF NOT EXISTS sample_field_provenance (
     PRIMARY KEY (sample, field_id)
 ) WITHOUT ROWID;
 
--- Text-valued view over the normalised table; query this, not the raw table.
+-- Text-valued view over the normalised table for callers.
 CREATE VIEW IF NOT EXISTS sample_field_provenance_v AS
 SELECT p.study_accession,
        p.sample,

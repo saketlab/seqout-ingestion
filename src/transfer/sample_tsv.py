@@ -1,23 +1,8 @@
 """
-Fold sample-level text into each study's search tsv.
+Fold sample-level text into each study search tsv.
 
-A study is otherwise unfindable by terms appearing only in its samples. Sample
-text is deduped and added at weight D, surfacing a study without outranking a
-real title hit.
-
-A generated column cannot reference other tables, so sample text is materialized
-into a per-study sample_tsv column that the study tsv appends: via trigger for
-geo_series, via the generated expression for sra_studies and
-arrayexpress_experiments.
-
-sample_tsv joins:
-  GEO  geo_samples.accession = ANY(geo_series.samples_ref)
-  SRA  sra_experiments.study = sra_studies.accession
-       AND sra_samples.accession = ANY(sra_experiments.samples)      (two-hop)
-  AE   arrayexpress_samples.experiment_accession = arrayexpress_experiments.accession
-
-Re-runnable: sample_tsv is SET rather than appended, and the schema steps are
-guarded so they run at most once.
+Sample text is deduped at weight D and materialized before study tsv expressions
+append it. GEO uses a trigger; SRA and ArrayExpress use generated expressions.
 """
 
 import logging
@@ -27,19 +12,16 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 
-# compound cell-line names ("HepG2/C3A", "Hep-G2") parse as a single path-like
-# lexeme, so a query for "hepg2" never matches. Translating '/' and '-' to
-# spaces before to_tsvector makes the parts their own lexemes. The query side is
-# untranslated, but the english config already splits hyphenated query terms.
+# Compound cell-line names ("HepG2/C3A", "Hep-G2") parse as one path-like
+# lexeme. Translating '/' and '-' before to_tsvector gives parts their own
+# lexemes; the english query config already splits hyphenated terms.
 def _norm(text_expr: str) -> str:
     return f"translate({text_expr}, '/-', '  ')"
 
 
-# accession-only titles carry no search value and are dropped, keeping the
-# description. string_agg(DISTINCT ...) collapses replicate samples so
-# to_tsvector's position lists stay bounded, and left() caps the aggregate at
-# 400 KB: a few studies have tens of thousands of unique samples whose combined
-# text builds a tsvector past the hard 1 MB limit.
+# Accession-only titles are dropped so the description carries search value.
+# string_agg(DISTINCT ...) collapses replicate samples, and left() caps oversized
+# aggregates before to_tsvector.
 _SAMPLE_TSV_EXPR = (
     "setweight(to_tsvector('english', "
     + _norm(
@@ -63,9 +45,8 @@ WHERE g.accession = sub.accession
 """.format(
     expr=_SAMPLE_TSV_EXPR.format(
         title_expr="CASE WHEN btrim(s.title) = s.accession THEN NULL ELSE s.title END",
-        # 'lax $[*]' tolerates Characteristics being an array, a lone object, or
-        # absent. Protocol fields carry incidental mentions ("HepG2 conditioned
-        # media") rather than the subject, so they are left out.
+        # 'lax $[*]' tolerates Characteristics as an array, lone object or absent.
+        # Protocol fields carry incidental mentions, so subject text excludes them.
         desc=(
             "concat_ws(' ', s.description,"
             " (SELECT string_agg(DISTINCT concat_ws(' ', ch->>'Source',"
@@ -137,9 +118,9 @@ END $$;
 """
 
 
-# SRA/AE tsv are GENERATED ALWAYS and PG16 has no ALTER ... SET EXPRESSION, so
-# the column is dropped and re-added, taking its GIN index with it. The base
-# expression must match the live schema exactly, plus the sample_tsv tail.
+# Generated SRA/AE tsv columns need drop-and-add on PG16, taking their GIN
+# indexes with them. The base expression must match live schema plus
+# sample_tsv tail.
 def _weighted(col: str, weight: str) -> str:
     """One tsv term: setweight(to_tsvector(normalized COALESCE(col)), weight)."""
     col_expr = _norm("COALESCE(" + col + ", '')")
@@ -190,9 +171,9 @@ def _ensure_sample_tsv_columns(cur: psycopg.Cursor) -> None:
 
 def _tsv_up_to_date(cur: psycopg.Cursor, table: str) -> bool:
     """
-    True once the generated tsv folds in sample_tsv, pub_tsv and translate().
+    Return true once generated tsv folds in sample_tsv, pub_tsv and translate().
 
-    All three markers must be present, so a table left at an older definition is
+    All three markers must be present; incomplete generated definitions are
     redefined.
     """
     cur.execute(
@@ -211,8 +192,7 @@ def _redefine_generated_tsv(
     """
     Re-add the GENERATED tsv column with the sample_tsv tail.
 
-    Rebuilds its GIN index and rewrites the study table, which is small; never
-    the sample tables.
+    Rebuilds the study-table GIN index; sample tables are untouched.
     """
     if _tsv_up_to_date(cur, table):
         logger.info("%s.tsv already up to date; skipping redefine", table)
@@ -229,49 +209,47 @@ def _redefine_generated_tsv(
 
 def sample_tsv_transfer(pg_url: str) -> None:
     """
-    Populate per-study sample_tsv and wire it into each study's search tsv.
+    Populate per-study sample_tsv and wire it into study search tsvs.
 
-    Heavy: aggregates over geo_samples, sra_samples and arrayexpress_samples,
-    with statement_timeout disabled for the duration. Run as a one-time
-    migration, then as an ingest step whenever samples change.
+    Aggregates over sample tables with statement_timeout disabled. Run once as a
+    migration, then whenever samples change.
     """
-    with psycopg.connect(pg_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET statement_timeout = 0")
+    with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0")
 
-            _ensure_sample_tsv_columns(cur)
+        _ensure_sample_tsv_columns(cur)
+        conn.commit()
+
+        # GEO trigger goes first, so the populate step that fires it rebuilds
+        # tsv with sample text in a single pass
+        cur.execute(_GEO_TRIGGER_FN)
+        conn.commit()
+
+        for name, sql in (
+            ("geo_series", _GEO_POPULATE),
+            ("sra_studies", _SRA_POPULATE),
+            ("arrayexpress_experiments", _AE_POPULATE),
+        ):
+            logger.info("populating sample_tsv for %s ...", name)
+            cur.execute(sql)
+            logger.info("  %s rows updated", cur.rowcount)
             conn.commit()
 
-            # GEO trigger goes first, so the populate step that fires it rebuilds
-            # tsv with sample text in a single pass
-            cur.execute(_GEO_TRIGGER_FN)
-            conn.commit()
+        # Populate skipped GEO series with no matching samples; the translate-normalized
+        # trigger needs a forced refresh for them.
+        logger.info("touching sample-less geo_series to rebuild tsv ...")
+        cur.execute(
+            "UPDATE geo_series SET sample_tsv = sample_tsv WHERE sample_tsv IS NULL"
+        )
+        logger.info("  %s rows touched", cur.rowcount)
+        conn.commit()
 
-            for name, sql in (
-                ("geo_series", _GEO_POPULATE),
-                ("sra_studies", _SRA_POPULATE),
-                ("arrayexpress_experiments", _AE_POPULATE),
-            ):
-                logger.info("populating sample_tsv for %s ...", name)
-                cur.execute(sql)
-                logger.info("  %s rows updated", cur.rowcount)
-                conn.commit()
-
-            # the populate skipped GEO series with no matching samples, so the
-            # translate-normalized trigger never re-fired for them
-            logger.info("touching sample-less geo_series to rebuild tsv ...")
-            cur.execute(
-                "UPDATE geo_series SET sample_tsv = sample_tsv WHERE sample_tsv IS NULL"
-            )
-            logger.info("  %s rows touched", cur.rowcount)
-            conn.commit()
-
-            _redefine_generated_tsv(
-                cur, "sra_studies", _SRA_TSV_EXPR, "sra_studies_fts_idx"
-            )
-            conn.commit()
-            _redefine_generated_tsv(
-                cur, "arrayexpress_experiments", _AE_TSV_EXPR, "ae_experiments_fts_idx"
-            )
-            conn.commit()
+        _redefine_generated_tsv(
+            cur, "sra_studies", _SRA_TSV_EXPR, "sra_studies_fts_idx"
+        )
+        conn.commit()
+        _redefine_generated_tsv(
+            cur, "arrayexpress_experiments", _AE_TSV_EXPR, "ae_experiments_fts_idx"
+        )
+        conn.commit()
     logger.info("sample_tsv transfer done")

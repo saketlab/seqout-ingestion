@@ -7,10 +7,12 @@ CREATE INDEX IF NOT EXISTS idx_microbe_quant_class    ON microbe_quant (class);
 CREATE INDEX IF NOT EXISTS idx_microbe_quant_organism ON microbe_quant (organism);
 CREATE INDEX IF NOT EXISTS idx_microbe_quant_viral    ON microbe_quant (is_validated_viral) WHERE is_validated_viral = 1;
 CREATE INDEX IF NOT EXISTS idx_microbe_quant_bact     ON microbe_quant (is_bacterial_evidence) WHERE is_bacterial_evidence = 1;
--- idx_sfp_field intentionally omitted: field has 15 distinct values across
--- 18M rows, so the index cost 321 MB and could never be selective.
+CREATE INDEX IF NOT EXISTS idx_microbe_quant_bactval  ON microbe_quant (is_validated_bacterial) WHERE is_validated_bacterial = 1;
+-- idx_sfp_field intentionally omitted: field_id is low-cardinality and the
+-- predicate is broad.
+--
 CREATE INDEX IF NOT EXISTS idx_pfxprov_study  ON preflightx_provenance (study_accession);
 CREATE INDEX IF NOT EXISTS idx_quantprov_stat ON quant_provenance (status);
--- sample is the leading PK column of a WITHOUT ROWID table, so no separate
--- sample index is needed. field_id is low-cardinality and never selective.
+-- sample is the leading PK column of a WITHOUT ROWID table. field_id is
+-- low-cardinality.
 CREATE INDEX IF NOT EXISTS idx_sfp_study ON sample_field_provenance (study_accession);

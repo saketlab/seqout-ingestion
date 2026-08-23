@@ -1,19 +1,8 @@
 """
-Resolve the DOI in a GEO series' <Citation> to a PubMed PMID.
+Resolve GEO <Citation> DOI values to PubMed PMIDs.
 
-GEO records some papers only as a <Citation> DOI, never a <Pubmed-ID> (ingest
-captures that raw text in geo_series.citation). This backfill pulls the DOI out
-of that free text and resolves it to a PMID via NCBI esearch <doi>[DOI], the
-authoritative index lookup, NOT the SRA->PubMed elink used for pubmed_id_pysradb
-(which returns *citing* papers). The result lands in geo_series.pubmed_id_citation
-(json array), carried to Postgres as text[].
-
-GEO-only: citation lives on geo_series alone. Resumable: every processed row is
-stamped citation_pmid_checked, so a normal run skips it; --process-all re-checks
-(useful when a DOI later gets a PubMed record). Idempotent.
-
-Usage:
-  ... backfill citation-pmids --geo-db-file geo.db --ncbi-keys-file keys.txt
+Uses NCBI esearch <doi>[DOI]; SRP elink returns citing papers and is wrong for
+this field. Stamps citation_pmid_checked and writes pubmed_id_citation as JSON.
 """
 
 import json
@@ -36,7 +25,7 @@ logger = logging.getLogger(__name__)
 ESEARCH = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 _DOI_RE = re.compile(r"10\.\d{4,9}/[^\s\"<>]+")
 _TRAIL = ".,;:)]}>'\""
-# ~10 req/s per NCBI api_key; one distinct key per worker, so throttle per worker.
+# NCBI api_key limits are per key; throttle per worker.
 _MIN_INTERVAL = 0.11
 
 _MISSING_SQL = (
@@ -81,7 +70,7 @@ def _esearch_doi(doi: str, api_key: str, retries: int, timeout: int) -> list[str
                 data = json.loads(r.read())
             time.sleep(_MIN_INTERVAL)
             return data.get("esearchresult", {}).get("idlist", []) or []
-        except Exception:  # noqa: BLE001 - transient net/parse: back off and retry
+        except Exception:
             time.sleep(min(2**attempt, 30))
     logger.warning("esearch gave up on doi %s", doi)
     return []
@@ -139,10 +128,10 @@ def backfill_citation_pmids(
     ncbi_keys_file: Path,
     num_workers: int,
     batch_size: int,
-    is_dry_run: bool,  # noqa: FBT001
+    is_dry_run: bool,
     retries: int,
     timeout: int,
-    process_all: bool = False,  # noqa: FBT001, FBT002
+    process_all: bool = False,  # noqa: FBT002
 ) -> None:
     query = _MISSING_SQL
     if not process_all:

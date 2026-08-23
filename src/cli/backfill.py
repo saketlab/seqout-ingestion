@@ -142,7 +142,17 @@ def download_links(
     retries: int = typer.Option(20),
     timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
     limit: int | None = typer.Option(None),
+    accession_file: Path | None = typer.Option(
+        None,
+        "--accession-file",
+        help="studies to backfill, one per line; replaces the source-db scan",
+    ),
 ) -> None:
+    """
+    FASTQ links for study runs, from ENA and/or NCBI.
+
+    `--accession-file` skips source DB scans for pinned snapshots.
+    """
     backfill_download_links(
         base_output_dir,
         sra_db_file,
@@ -156,6 +166,7 @@ def download_links(
         retries,
         timeout,
         limit,
+        accession_file,
     )
 
 

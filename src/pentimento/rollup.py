@@ -33,6 +33,15 @@ PICKED_COLUMNS: tuple[tuple[str, str, str | None], ...] = (
     ("assay", "TEXT", None),
     ("assay_display", "TEXT", None),
     ("assay_is_single_cell", "INTEGER", None),
+    ("modality", "TEXT", "modality_confidence"),
+    ("modality_confidence", "TEXT", "modality_confidence"),
+    ("intron_frac", "REAL", "modality_confidence"),
+    ("mito_pct", "REAL", "modality_confidence"),
+    ("modality_reads_scanned", "INTEGER", "modality_confidence"),
+    ("bulk_vs_sc", "TEXT", "bulk_vs_sc_confidence"),
+    ("bulk_vs_sc_confidence", "TEXT", "bulk_vs_sc_confidence"),
+    ("read_end", "TEXT", "read_end_confidence"),
+    ("read_end_confidence", "TEXT", "read_end_confidence"),
 )
 
 
@@ -40,8 +49,20 @@ def _flag_names() -> list[str]:
     return [f for f, _, _, _ in FLAG_PANEL]
 
 
+# assay/assay_display/assay_is_single_cell are one call. Identical WHERE and
+# ORDER BY make one run supply the whole group, avoiding cross-run splices.
+_ASSAY_GROUP = ("assay", "assay_display", "assay_is_single_cell")
+_ASSAY_PICK = (
+    "WHERE r.gsm_accession = s.sample_accession "
+    "AND COALESCE(r.assay, r.assay_display) IS NOT NULL "
+    "ORDER BY (r.assay_is_single_cell IS NOT NULL) DESC, r.run_accession"
+)
+
+
 def _pick_sql(field: str, confidence: str | None) -> str:
     """Value of field from this sample's best-supported run."""
+    if field in _ASSAY_GROUP:
+        return f"(SELECT r.{field} FROM run_preflightx r {_ASSAY_PICK} LIMIT 1)"  # noqa: S608
     # preflightx grades confidence 'low'/'medium'/'high'; ordering that column
     # DESC sorts alphabetically and puts 'medium' first, so rank it explicitly
     order = (
@@ -59,18 +80,16 @@ def _pick_sql(field: str, confidence: str | None) -> str:
 
 _SEX_VALUES = ("male", "female", "unknown", "uncertain")
 _ASSAY_MAX_LEN = 60
+# Length cap for newer verdicts: shifted prose is long, and a closed
+# vocabulary would NULL later preflightx values.
+_VERDICT_MAX_LEN = 32
 
 
 def sanitise_calls(conn: sqlite3.Connection) -> dict[str, int]:
     """
-    NULL out field-shifted garbage before it can render as a species name.
+    NULL out field-shifted garbage before it can render as species.
 
-    ~34 of the annotated preflightx CSVs carry embedded newlines inside a quoted
-    description, which shifts every following column by one with no parse error.
-    Residue survives into run_preflightx: 823 rows hold 209 distinct non-species
-    values in species_called (an MD5, a PMID, a date, prose from abstracts), and
-    sex_verdict carries whole sentences. Only these columns are poisoned, so the
-    fields are nulled and the row kept.
+    Embedded newlines can shift following columns; only call fields are nulled.
     """
     # SQLite stores embedded NUL happily; Postgres rejects the whole batch, and
     # 15 of them sit in study_accession and 3 in run_accession, i.e. join keys
@@ -95,10 +114,14 @@ def sanitise_calls(conn: sqlite3.Connection) -> dict[str, int]:
             "AND species_called NOT GLOB '[A-Z][a-z]*_[a-z]*'"
         ),
         "sex_verdict": f"sex_verdict NOT IN {_SEX_VALUES}",
-        # a blank is short enough to pass the length test and then renders as
-        # "no assay" when the truth is "not measured"; loaders map '' to NULL at
-        # source and this is the backstop
+        # Blank strings pass the length test and render as "no assay"; loaders map
+        # '' to NULL, and this is the backstop.
         "assay": f"LENGTH(assay) > {_ASSAY_MAX_LEN} OR TRIM(assay) = ''",
+        "modality": f"LENGTH(modality) > {_VERDICT_MAX_LEN} OR TRIM(modality) = ''",
+        "bulk_vs_sc": (
+            f"LENGTH(bulk_vs_sc) > {_VERDICT_MAX_LEN} OR TRIM(bulk_vs_sc) = ''"
+        ),
+        "read_end": f"LENGTH(read_end) > {_VERDICT_MAX_LEN} OR TRIM(read_end) = ''",
     }
     nul_tests = {c: f"instr({c}, char(0)) > 0" for c in nul_cols}
 
@@ -141,6 +164,44 @@ def sanitise_calls(conn: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
+def _warn_study_scope_dropped(conn: sqlite3.Connection) -> None:
+    """
+    Count scope=study rows discarded by the sample rollup.
+
+    These pooled-matrix studies are real single-cell data; logging lets
+    `pentimento study-scope-gaps` recover them by run accession.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*), COALESCE(SUM(cells), 0) FROM sample_ncount "
+        "WHERE scope = 'study'",
+    ).fetchone()
+    if row and row[0]:
+        logger.warning(
+            "%d study-scope rows (%d cells) are not sample-grained and were not "
+            "written to pentimento_sample; recover them with "
+            "`pentimento study-scope-gaps`",
+            row[0],
+            row[1],
+        )
+
+
+def _matrix_vetoes_not_single_cell(conn: sqlite3.Connection) -> int:
+    """
+    Let deposited cell x gene matrices outrank absent barcode signal.
+
+    `assay_is_single_cell = 0` means no barcode structure in reads. Plate and
+    no-whitelist chemistries can still be single-cell. Return NULL, not 1, to
+    preserve the read-derived boundary. Applies to 1,506 samples, 1,459 over
+    2,000 cells.
+    """
+    cur = conn.execute(
+        "UPDATE pentimento_sample SET assay_is_single_cell = NULL "
+        "WHERE assay_is_single_cell = 0 AND cells > 0 AND genes > 0"
+    )
+    logger.info("matrix vetoed %d not-single-cell calls", cur.rowcount)
+    return cur.rowcount
+
+
 def build_rollups(
     conn: sqlite3.Connection,
     sra_db_file: Path | None = None,
@@ -175,9 +236,39 @@ def build_rollups(
             n_flags               INTEGER,
             hpv_top_type          TEXT,
             hpv_ambiguous         INTEGER,
+            has_viral_reads       INTEGER,
+            has_viral_evidence    INTEGER,
+            has_bacterial_reads   INTEGER,
+            viral_kmer_mass       REAL,
+            bacterial_kmer_mass   REAL,
             PRIMARY KEY (study_accession, sample_accession)
         ) WITHOUT ROWID
         """,
+    )
+
+    # Pre-filter to validated rows. Grouping every non-background row was
+    # slower than the correlated subqueries this replaces.
+    conn.execute("DROP TABLE IF EXISTS _run_microbe")
+    conn.execute(
+        """
+        CREATE TABLE _run_microbe AS
+        SELECT run_accession,
+               MAX(is_validated_viral)     AS any_viral,
+               MAX(is_viral_evidence)      AS any_viral_ev,
+               MAX(is_validated_bacterial) AS any_bact,
+               SUM(CASE WHEN is_validated_viral = 1 OR is_viral_evidence = 1
+                        THEN kmer_mass END) AS viral_mass,
+               SUM(CASE WHEN is_validated_bacterial = 1
+                        THEN kmer_mass END) AS bact_mass
+        FROM microbe_quant
+        WHERE is_background = 0
+          AND (is_validated_viral = 1 OR is_viral_evidence = 1
+               OR is_validated_bacterial = 1)
+        GROUP BY run_accession
+        """,
+    )
+    conn.execute(
+        "CREATE INDEX idx_run_microbe_run ON _run_microbe (run_accession)",
     )
 
     # MAX over the sample's runs gives the intended tri-state, since it ignores
@@ -198,7 +289,9 @@ def build_rollups(
             study_accession, sample_accession, cells, genes, nnz, file_format,
             unfiltered, n_runs, n_runs_measurable,
             {picked_names}, calls_ambiguous,
-            {flag_names}, n_flags, hpv_top_type, hpv_ambiguous
+            {flag_names}, n_flags, hpv_top_type, hpv_ambiguous,
+            has_viral_reads, has_viral_evidence, has_bacterial_reads,
+            viral_kmer_mass, bacterial_kmer_mass
         )
         SELECT
             s.study_accession,
@@ -220,10 +313,21 @@ def build_rollups(
              WHERE p2.gsm_accession = s.sample_accession
                AND f2.hpv_top_type IS NOT NULL
              ORDER BY f2.hpv_breadth DESC LIMIT 1),
-            MAX(f.hpv_ambiguous)
+            MAX(f.hpv_ambiguous),
+            -- `measurable` gates the ABSENCE claim, not the presence one:
+            -- gating positives too hid 21 samples carrying real viral mass
+            CASE WHEN MAX(g.any_viral) = 1 THEN 1
+                 WHEN COALESCE(MAX(f.measurable), 0) = 0 THEN NULL ELSE 0 END,
+            CASE WHEN MAX(g.any_viral_ev) = 1 THEN 1
+                 WHEN COALESCE(MAX(f.measurable), 0) = 0 THEN NULL ELSE 0 END,
+            CASE WHEN MAX(g.any_bact) = 1 THEN 1
+                 WHEN COALESCE(MAX(f.measurable), 0) = 0 THEN NULL ELSE 0 END,
+            SUM(g.viral_mass),
+            SUM(g.bact_mass)
         FROM sample_ncount s
         LEFT JOIN run_preflightx    p ON p.gsm_accession = s.sample_accession
         LEFT JOIN run_microbe_flags f ON f.run_accession = p.run_accession
+        LEFT JOIN _run_microbe      g ON g.run_accession = p.run_accession
         -- scope='study' rows are studies deposited without a per-sample
         -- breakdown, keyed by its own accession. A 'GSE%' prefix test missed the
         -- same case keyed by SRP/E-MTAB/CRA.
@@ -231,12 +335,14 @@ def build_rollups(
         GROUP BY s.study_accession, s.sample_accession
         """,  # noqa: S608
     )
+    _warn_study_scope_dropped(conn)
+    _matrix_vetoes_not_single_cell(conn)
     conn.execute(
         "CREATE INDEX idx_pent_sample_sample ON pentimento_sample (sample_accession)",
     )
 
-    # all three routes: only GSM names which sample a run belongs to, and each
-    # reaches studies the others miss
+    # All three routes matter: only GSM names sample-run membership, and each
+    # reaches studies the others miss.
     conn.execute("DROP TABLE IF EXISTS _study_run")
     conn.execute(
         """

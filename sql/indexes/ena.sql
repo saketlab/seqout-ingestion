@@ -2,7 +2,6 @@ CREATE INDEX IF NOT EXISTS idx_ena_studies_scientific_name ON ena_studies(scient
 CREATE INDEX IF NOT EXISTS idx_ena_studies_first_public ON ena_studies(first_public);
 CREATE INDEX IF NOT EXISTS idx_ena_studies_geo_accession ON ena_studies(geo_accession);
 CREATE INDEX IF NOT EXISTS idx_ena_studies_tax_id ON ena_studies(tax_id);
-CREATE INDEX IF NOT EXISTS idx_ena_studies_organisms_gin ON ena_studies USING gin(organisms);
 
 CREATE INDEX IF NOT EXISTS idx_ena_exp_experiment ON ena_experiments(experiment_accession);
 CREATE INDEX IF NOT EXISTS idx_ena_exp_study ON ena_experiments(study_accession);

@@ -1,29 +1,7 @@
 """
-Rebuild the GSA search table so its tsv indexes metadata one join away.
+Rebuild GSA search tsv with BioProject, organism and sample text.
 
-The open GSA (CRA*) study record is almost always empty: ~93% have no
-study_title of their own. The descriptive text sits on the linked BioProject
-(gsa_projects), the organism on gsa_studies.scientific_name, and the biology on
-gsa_samples, none of which were searchable before.
-
-A GENERATED column cannot reference other tables, so the cross-table text is
-materialized onto gsa_studies_search first and the tsv reads it from there:
-project_title and project_summary from gsa_projects by project_name, organisms
-from gsa_studies.scientific_name, and sample_tsv aggregated per study from the
-gsa_samples title, description, tissue, disease and cell_type at weight D.
-
-This module is the canonical schema: the Postgres search table was built ad-hoc
-and has no DDL file, and sql/tables/gsa.sql covers only the SQLite side.
-
-  gsa_studies_search(
-    accession PK, study_title, study_description, study_name, center_name,
-    project_name, project_title, project_summary, organisms text[],
-    last_updated, first_public, sample_tsv tsvector,
-    tsv tsvector GENERATED ALWAYS AS (<_TSV_EXPR>) STORED
-  )  -- GIN index gsa_studies_search_fts_idx on (tsv)
-
-Re-runnable: materialized columns are SET rather than appended, and the redefine
-step is guarded so it runs only when the live tsv is out of date.
+Search text materializes onto gsa_studies_search before generated tsv reads it.
 """
 
 import logging
@@ -35,9 +13,8 @@ logger = logging.getLogger(__name__)
 _FTS_INDEX = "gsa_studies_search_fts_idx"
 
 
-# compound names ("HepG2/C3A", "Hep-G2") tokenize as one path-like lexeme, so a
-# query for a part never matches; '/' and '-' become spaces before to_tsvector,
-# the same rule as transfer.sample_tsv
+# Compound names ("HepG2/C3A", "Hep-G2") tokenize as one path-like lexeme.
+# Replace '/' and '-' with spaces before to_tsvector, matching sample_tsv.
 def _norm(text_expr: str) -> str:
     return f"translate({text_expr}, '/-', '  ')"
 
@@ -81,8 +58,7 @@ _POPULATE_SAMPLE_TSV = (
 
 
 # generated tsv: study text, BioProject text and organism, sample text at D.
-# concat_ws is only STABLE and a GENERATED column expression must be IMMUTABLE,
-# hence || COALESCE.
+# concat_ws is STABLE while generated columns need IMMUTABLE; use || COALESCE.
 def _join(*cols: str) -> str:
     return " || ' ' || ".join(f"COALESCE({c}, '')" for c in cols)
 
@@ -96,8 +72,8 @@ _TSV_EXPR = (
     + "), 'B') || "
     "setweight(to_tsvector('english', "
     + _norm(
-        # array_to_string is only STABLE and fails immutability; GSA studies
-        # carry a single organism, and subscripting is immutable
+        # array_to_string is STABLE and fails immutability; GSA studies carry one
+        # organism, and subscripting is immutable.
         _join("study_name", "project_name", "center_name", "organisms[1]")
     )
     + "), 'C') || "
@@ -107,7 +83,7 @@ _TSV_EXPR = (
 
 def _tsv_up_to_date(cur: psycopg.Cursor) -> bool:
     """
-    True once the generated tsv folds in both BioProject title and sample text.
+    Return true once generated tsv folds in both BioProject title and sample text.
 
     Both markers must be present, so a re-run of an up-to-date DB is a no-op.
     """
@@ -124,8 +100,8 @@ def _redefine_tsv(cur: psycopg.Cursor) -> None:
     """
     Re-add the GENERATED tsv with the enriched expression.
 
-    PG16 has no ALTER ... SET EXPRESSION, and DROP COLUMN takes the dependent
-    GIN index with it, so the index is recreated by name.
+    PG16 requires dropping and recreating the generated column expression; the
+    dependent GIN index is recreated by name.
     """
     if _tsv_up_to_date(cur):
         logger.info("gsa_studies_search.tsv already up to date; skipping redefine")
@@ -147,23 +123,22 @@ def gsa_search_tsv_transfer(pg_url: str) -> None:
     already being loaded. Heavy (aggregates gsa_samples); statement_timeout
     is disabled for the duration.
     """
-    with psycopg.connect(pg_url) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SET statement_timeout = 0")
+    with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0")
 
-            cur.execute(_ENSURE_COLUMNS)
-            conn.commit()
+        cur.execute(_ENSURE_COLUMNS)
+        conn.commit()
 
-            logger.info("populating BioProject title/summary + organism ...")
-            cur.execute(_POPULATE_PROJECT)
-            logger.info("  %s rows updated", cur.rowcount)
-            conn.commit()
+        logger.info("populating BioProject title/summary + organism ...")
+        cur.execute(_POPULATE_PROJECT)
+        logger.info("  %s rows updated", cur.rowcount)
+        conn.commit()
 
-            logger.info("populating sample_tsv from gsa_samples ...")
-            cur.execute(_POPULATE_SAMPLE_TSV)
-            logger.info("  %s rows updated", cur.rowcount)
-            conn.commit()
+        logger.info("populating sample_tsv from gsa_samples ...")
+        cur.execute(_POPULATE_SAMPLE_TSV)
+        logger.info("  %s rows updated", cur.rowcount)
+        conn.commit()
 
-            _redefine_tsv(cur)
-            conn.commit()
+        _redefine_tsv(cur)
+        conn.commit()
     logger.info("gsa search tsv transfer done")

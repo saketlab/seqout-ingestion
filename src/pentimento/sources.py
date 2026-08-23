@@ -6,8 +6,18 @@ import contextlib
 import csv
 import json
 import logging
+import re
 import sqlite3
 from typing import TYPE_CHECKING, Any
+
+from pentimento.flags import (
+    BACT_BREADTH,
+    BACT_COV_BP,
+    ENDOGENOUS_BREADTH,
+    FLAG_PANEL,
+    VIRAL_BREADTH,
+)
+from pentimento.preflight import NO_STRUCTURAL_CALLS, structural_calls
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -15,12 +25,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# the >=0.50 breadth rule is calibrated on this size class
 SMALL_BP = 50_000
-VIRAL_BREADTH = 0.50
-# bacteria: absolute covered bases plus a small relative floor, see pentimento.sql
+
+# Mouse genomes carry MLV/MMTV-like loci and vectors carry HIV1/HTLV1 sequence.
+# Excluded from evidence tier; derived from FLAG_PANEL so gate and badge agree.
+ENDOGENOUS_RX = re.compile(
+    "|".join(rx for _, _, rx, gate in FLAG_PANEL if gate == ENDOGENOUS_BREADTH)
+)
+
+# Strict viral validation gate; expression-data HPV follow-up uses the evidence tier.
+VIRAL_VALIDATED_BREADTH = ENDOGENOUS_BREADTH
+
+# Loose bacterial screen behind is_bacterial_evidence.
 BACT_MIN_COV_BP = 20_000
 BACT_MIN_BREADTH = 0.005
+BACT_CLASSES = frozenset({"pathogen", "culture"})
 PROGRESS_EVERY = 5_000
 
 # quantifier settings, recorded per run so a call can be re-derived later; these
@@ -30,10 +49,22 @@ QUANT_MIN_NMATCH = 40
 QUANT_MIN_IDENTITY = 0.95
 QUANT_ALIGNER = "minimap2 -x sr --secondary=no"
 QUANT_SOURCE_TMPL = "https://s3.amazonaws.com/logan-pub/u/{acc}/{acc}.unitigs.fa.zst"
-VIRAL_GATE_RULE = "class=virus AND 0 < ref_bp <= 50000 AND breadth_frac >= 0.50"
+# f-strings are stored in quant_provenance as the exact rule record.
+VIRAL_GATE_RULE = (
+    f"class=virus AND 0 < ref_bp <= {SMALL_BP} "
+    f"AND breadth_frac >= {VIRAL_VALIDATED_BREADTH}"
+)
+VIRAL_EVIDENCE_GATE_RULE = (
+    f"class=virus AND 0 < ref_bp <= {SMALL_BP} AND breadth_frac >= {VIRAL_BREADTH} "
+    f"AND NOT host-endogenous/vector-derived"
+)
 BACT_GATE_RULE = (
-    "class=pathogen AND ref_bp > 50000 AND covered_bp >= 20000 "
-    "AND breadth_frac >= 0.005"
+    f"class=pathogen AND ref_bp > {SMALL_BP} AND covered_bp >= {BACT_MIN_COV_BP} "
+    f"AND breadth_frac >= {BACT_MIN_BREADTH}"
+)
+BACT_VALID_GATE_RULE = (
+    f"class in (pathogen,culture) AND ref_bp > {SMALL_BP} "
+    f"AND covered_bp >= {BACT_COV_BP} AND breadth_frac >= {BACT_BREADTH}"
 )
 
 # quant.csv shape: name,reads,kmer_mass,n_unitigs,ref_bp,covered_bp,breadth_frac,class
@@ -41,8 +72,8 @@ QUANT_NCOL = 8
 ORGANISM_PART = 1
 REFACC_PART = 2
 
-# 10x barcode whitelist sizes; a cell count that is an exact multiple of one of
-# these is an unfiltered matrix whose columns are barcodes rather than cells
+# 10x barcode whitelist sizes; exact multiples indicate unfiltered matrices
+# with barcode columns.
 WHITELIST_SIZES = (737_280, 6_794_880)
 
 VALID_CLASSES = frozenset(
@@ -71,16 +102,8 @@ def _as_text(value: Any) -> str | None:
     """
     Normalise a text column, mapping empty to NULL.
 
-    Two separate failures live here. First, preflightx grades confidence
-    'low'/'medium'/'high', NOT numerically: an earlier version ran these through
-    _as_float, so float("high") raised and every one of the 9,807 graded calls
-    was silently discarded -- the column read as 100% NULL while looking
-    correctly typed.
-
-    Second, '' is not a value. The enrichment DB spells "no call" as NULL for
-    some columns and as the EMPTY STRING for others, and a blank that survives
-    into Pentimento both renders as an empty cell and, because the route overlay
-    COALESCEs, overwrites a real call another route measured.
+    preflightx confidence grades are text. Empty strings are null calls; letting
+    blanks survive would display empty cells and overwrite measured calls.
     """
     if value is None:
         return None
@@ -106,11 +129,10 @@ def load_ncount_projects(
     ncount_dirs: list[Path],
 ) -> Iterator[tuple[Any, ...]]:
     """
-    Yield per-study rows from the ncount result JSONs.
+    Yield per-study rows from ncount result JSONs.
 
-    Reads the per-sample JSON dumps (one file per study). unfiltered is
-    trusted from the JSON when present, and otherwise derived from the barcode
-    whitelist test, because older dumps predate that field.
+    Reads one per-sample JSON dump per study. Missing `unfiltered` values derive
+    from the barcode whitelist test.
     """
     for root in ncount_dirs:
         if not root.is_dir():
@@ -182,14 +204,24 @@ def load_ncount_samples(ncount_dirs: list[Path]) -> Iterator[tuple[Any, ...]]:
                 )
 
 
+def _structural_from_report_json(report_json: Any) -> tuple[Any, ...]:
+    """structural_calls() from a stored report_json blob; NULLs when unusable."""
+    if not report_json:
+        return NO_STRUCTURAL_CALLS
+    try:
+        report = json.loads(report_json)
+    except (TypeError, ValueError):
+        return NO_STRUCTURAL_CALLS
+    if not isinstance(report, dict):
+        return NO_STRUCTURAL_CALLS
+    return structural_calls(report)
+
+
 def load_preflightx_db(db_file: Path) -> Iterator[tuple[Any, ...]]:
     """
-    Yield experiment-grained preflightx calls from the enrichment SQLite.
+    Yield experiment-grained preflightx calls from enrichment SQLite.
 
-    This route is the only one carrying confidence columns, but it is a strict
-    and STALE subset of the annotated CSVs (14,539 vs 44,857 studies observed).
-    Rows are tagged preflightx_source='db' so a consumer can tell which route
-    a call came from when the two disagree.
+    Pinned route carrying confidence columns.
     """
     if not db_file.is_file():
         logger.warning("preflightx db missing, skipping: %s", db_file)
@@ -197,8 +229,17 @@ def load_preflightx_db(db_file: Path) -> Iterator[tuple[Any, ...]]:
     uri = f"file:{db_file}?immutable=1"
     with sqlite3.connect(uri, uri=True) as conn:
         conn.row_factory = sqlite3.Row
+        # report_json is where modality and read geometry survive, and older
+        # snapshots predate the column; SELECTing it blind would crash the whole
+        # build on a DB that is otherwise perfectly usable
+        columns = {
+            r[1] for r in conn.execute("PRAGMA table_info(preflightx_experiments)")
+        }
+        report_json = (
+            "report_json" if "report_json" in columns else "NULL AS report_json"
+        )
         cur = conn.execute(
-            """
+            f"""
             SELECT study_accession, experiment_accession, species, sex, assay,
                    assay_display, assay_is_single_cell,
                    sex_verdict, sex_confidence, sex_reads_scanned,
@@ -206,9 +247,9 @@ def load_preflightx_db(db_file: Path) -> Iterator[tuple[Any, ...]]:
                    sex_mixed_suspected, deep_n_reads,
                    species_called, species_confidence, species_hit_reads,
                    species_hit_fraction, species_runner_up, species_margin,
-                   species_ambiguous, species_mislabel
+                   species_ambiguous, species_mislabel, {report_json}
             FROM preflightx_experiments
-            """
+            """  # noqa: S608
         )
         for row in cur:
             # the table spells "no value" as both NULL and '', and the overlay
@@ -238,43 +279,29 @@ def load_preflightx_db(db_file: Path) -> Iterator[tuple[Any, ...]]:
                 _as_text(row["assay"]),
                 _as_text(row["assay_display"]),
                 _as_int(row["assay_is_single_cell"]),
+                # modality/geometry stay inside stored reports on a minority of rows;
+                # other rows yield NULL, meaning unmeasured.
+                *_structural_from_report_json(row["report_json"]),
             )
+
+
+def _col(row: dict[str, str], name: str) -> str | None:
+    """One call column; absent or empty values become NULL."""
+    return (row.get(name) or "").strip() or None
 
 
 def load_preflightx_csvs(
     annotated_dir: Path, source: str = "csv"
 ) -> Iterator[tuple[Any, ...]]:
     """
-    Yield RUN-grained preflightx calls from the annotated CSVs.
+    Yield run-grained preflightx calls from annotated CSVs.
 
-    These CSVs are the richer of the two routes and, importantly, they are
-    already run-grained: each row carries run_accession, the GEO sample
-    (GSM) and canonical_accession (GSE). That makes them a complete spine on
-    their own -- no ENA lookup is needed to reach a GSM, which matters because
-    the on-disk ENA snapshot is a delta that covers almost none of this corpus.
-
-    Column names are preflightx_species / preflightx_sex /
-    preflightx_assay. Measured population over 4,000 files: run_accession
-    83.1%, sample/GSM 16.9%, preflightx_species 34.4%, preflightx_sex 38.4%,
-    preflightx_assay 19.9% -- i.e. most rows carry an identifier but no call, so
-    rows are emitted whenever a run is present and the call columns are simply
-    left NULL.
-
-    ~1,277 files are header-only stubs and a few carry embedded newlines inside a
-    quoted description; rows without a run accession are dropped rather than
-    trusted.
-
-    source tags the route. The older `mukesh_*_preflight/annotated` dirs have
-    this exact 63-column schema and are read by this same function, but they ship
-    with ZERO .provenance.json files -- their calls can never be traced back to
-    the reads behind them -- so they are tagged 'csv_legacy' and a consumer can
-    exclude un-provenanced calls without guessing which dir a row came from.
+    Rows carry run_accession, GSM and GSE; header stubs are skipped.
     """
     if not annotated_dir.is_dir():
         logger.warning("preflightx csv dir missing, skipping: %s", annotated_dir)
         return
-    # iterdir() because this directory holds ~83k entries and a glob on it hits
-    # the argument-list limit in adjacent tooling. Progress is logged since this
+    # iterdir avoids glob argument-list limits in adjacent tooling.
     n_files = 0
     for path in sorted(annotated_dir.iterdir()):
         if path.suffix != ".csv" or path.name.endswith(".provenance.json"):
@@ -295,9 +322,17 @@ def load_preflightx_csvs(
                         (row.get("sample") or "").strip() or None,
                         (row.get("canonical_accession") or "").strip()
                         or study_from_name,
-                        (row.get("preflightx_species") or "").strip() or None,
-                        (row.get("preflightx_sex") or "").strip() or None,
-                        (row.get("preflightx_assay") or "").strip() or None,
+                        _col(row, "preflightx_species"),
+                        _col(row, "preflightx_species_confidence"),
+                        _col(row, "preflightx_sex"),
+                        _col(row, "preflightx_sex_confidence"),
+                        _col(row, "preflightx_assay"),
+                        _col(row, "preflightx_modality"),
+                        _col(row, "preflightx_modality_confidence"),
+                        _col(row, "preflightx_bulk_vs_sc"),
+                        _col(row, "preflightx_bulk_vs_sc_confidence"),
+                        _col(row, "preflightx_end"),
+                        _col(row, "preflightx_end_confidence"),
                         (row.get("sex") or "").strip() or None,
                         (row.get("assay") or "").strip() or None,
                         source,
@@ -308,16 +343,18 @@ def load_preflightx_csvs(
 
 def load_microbe_quant(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
     """
-    Yield per-(run, organism) rows from the quantifier's *.quant.csv.
+    Yield per-(run, organism) rows from quantifier *.quant.csv.
 
-    Read single-threaded on purpose. Fanning this out with N writers into one
-    stream splices records together above PIPE_BUF -- observed as fused fields
-    like BruceSRR3562463 -- which then survive a naive column check.
+    Read single-threaded; multiple writers to one stream have spliced records above
+    PIPE_BUF, e.g. BruceSRR3562463.
     """
     if not quant_dir.is_dir():
         logger.warning("quant dir missing, skipping: %s", quant_dir)
         return
     n_files = 0
+    # Drop 6-column files with no covered_bp/breadth_frac; missing gates are
+    # counted so the loss is visible.
+    n_short = 0
     for path in quant_dir.rglob("*.quant.csv"):
         n_files += 1
         if n_files % PROGRESS_EVERY == 0:
@@ -328,10 +365,13 @@ def load_microbe_quant(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
         try:
             with path.open(newline="", encoding="utf-8", errors="replace") as fh:
                 for rec in csv.reader(fh):
+                    if rec and not rec[0].startswith("__") and rec[0] != "virus":
+                        n_short += len(rec) < QUANT_NCOL
                     if len(rec) < QUANT_NCOL or rec[0] == "virus":
                         continue
                     if rec[0] == "__total_reads__":
-                        total_reads = _as_int(rec[1]) or 0
+                        # Empty __total_reads__ keeps total_reads NULL; ENA omitted the answer.
+                        total_reads = _as_int(rec[1])
                         continue
                     if rec[0] == "__run__":
                         continue
@@ -346,16 +386,24 @@ def load_microbe_quant(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
                     ref_bp = _as_int(rec[4]) or 0
                     covered = _as_int(rec[5]) or 0
                     breadth = _as_float(rec[6]) or 0.0
-                    viral = (
-                        klass == "virus"
-                        and 0 < ref_bp <= SMALL_BP
+                    small_virus = klass == "virus" and 0 < ref_bp <= SMALL_BP
+                    viral = small_virus and breadth >= VIRAL_VALIDATED_BREADTH
+                    viral_ev = (
+                        small_virus
                         and breadth >= VIRAL_BREADTH
+                        and not ENDOGENOUS_RX.match(organism)
                     )
                     bact = (
                         klass == "pathogen"
                         and ref_bp > SMALL_BP
                         and covered >= BACT_MIN_COV_BP
                         and breadth >= BACT_MIN_BREADTH
+                    )
+                    bact_valid = (
+                        klass in BACT_CLASSES
+                        and ref_bp > SMALL_BP
+                        and covered >= BACT_COV_BP
+                        and breadth >= BACT_BREADTH
                     )
                     rows.append(
                         (
@@ -364,37 +412,39 @@ def load_microbe_quant(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
                             organism,
                             ref_acc,
                             _as_int(rec[1]) or 0,
+                            _as_float(rec[2]) or 0.0,
+                            _as_int(rec[3]) or 0,
                             ref_bp,
                             covered,
                             breadth,
-                            0,  # total_reads patched below
                             int(viral),
+                            int(viral_ev),
                             int(bact),
+                            int(bact_valid),
                         )
                     )
         except OSError:
             logger.warning("unreadable quant csv: %s", path)
             continue
-        # __total_reads__ usually appears before the hits, but patching after
-        # the fact keeps the depth correct when a file lists it late
+        # Append new fields by name. A positional patch shifted fields when a column
+        # was added.
         for row in rows:
-            yield (*row[:8], total_reads, *row[9:])
+            yield (*row, total_reads)
+    if n_short:
+        logger.warning(
+            "quant: %d rows dropped as pre-breadth 6-column format (of %d files)",
+            n_short,
+            n_files,
+        )
 
 
 def load_quant_provenance(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
     """
-    Yield per-run provenance for the microbial quantification.
+    Yield per-run microbial quantification provenance.
 
-    Depth and read length are recorded per run because they change what a breadth
-    number MEANS -- breadth 0.5 off 700 k reads is not the evidence that breadth
-    0.5 off 700 M reads is -- and the thresholds are stored alongside so a call
-    can be re-derived without reading the shell script that produced it.
-
-    status comes from the sidecar <RUN>.status file when present (values
-    seen: ok, download_failed <stage>, absent_from_logan), else from the
-    __status__ row inside the quant CSV. A run that failed to download still
-    gets a row, so "not measured" stays distinguishable from "measured, nothing
-    found" -- the distinction the whole bacterial story turns on.
+    Depth and read length are per-run because breadth 0.5 off 700 k reads is not
+    breadth 0.5 off 700 M. Failed downloads still get rows, preserving
+    unmeasured versus measured-empty.
     """
     if not quant_dir.is_dir():
         return
@@ -447,11 +497,10 @@ def load_quant_provenance(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
 
 def load_status_only(quant_dir: Path, known: set[str]) -> Iterator[tuple[Any, ...]]:
     """
-    Yield provenance rows for runs that have a .status file but no quant CSV.
+    Yield provenance rows for .status files whose run lacks a quant CSV.
 
-    These are the attempted-but-unmeasured runs (download failures, absent from
-    Logan). Without them the corpus silently looks smaller than it was, and an
-    absence gets read as a negative result.
+    These attempted-but-unmeasured runs preserve corpus scope and stay distinct
+    from negative results.
     """
     if not quant_dir.is_dir():
         return

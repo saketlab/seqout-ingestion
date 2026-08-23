@@ -112,9 +112,14 @@ def backfill_download_links(
     retries: int,
     timeout: int,
     limit: int | None = None,
+    accession_file: Path | None = None,
 ) -> None:
-    if not sra_db_file and not ena_db_file and not dra_db_file:
-        msg = "expected at least one of --sra-db-file, --ena-db-file or --dra-db-file"
+    # Source DBs only enumerate studies; explicit accession lists replace them.
+    if not accession_file and not sra_db_file and not ena_db_file and not dra_db_file:
+        msg = (
+            "expected --accession-file, or at least one of --sra-db-file, "
+            "--ena-db-file or --dra-db-file"
+        )
         raise ValueError(msg)
 
     output_dir = base_output_dir / "download_links"
@@ -132,39 +137,63 @@ def backfill_download_links(
     raw_mapping: dict[Datasource, Path | None] = {
         Datasource.Sra: sra_db_file,
         Datasource.Ena: ena_db_file,
-        # only resolves for DRPs ena/ncbi also hold; the ddbj-exclusive ones get
-        # their fastqs from backfill.dra_download_links.
+        # DDBJ-exclusive DRPs get FASTQs from backfill.dra_download_links.
         Datasource.Dra: dra_db_file,
     }
     mapping: dict[Datasource, Path] = {
         k: v for k, v in raw_mapping.items() if v is not None
     }
 
-    study_accessions: set[str] = set()
-    for datasource, db_file in mapping.items():
-        query = STUDY_QUERIES[datasource]
-        with sqlite_connect(db_file) as conn:
-            rows = conn.execute(query).fetchall()
-        accessions = [r[0] for r in rows]
-        study_accessions.update(accessions)
-        logger.info("%s: %d studies", datasource.value, len(accessions))
+    if accession_file:
+        # Explicit accession list is the target; skip the full source scan.
+        # File order stays intact so --limit consumes the first N lines.
+        target = list(
+            dict.fromkeys(
+                ln.strip()
+                for ln in accession_file.read_text().splitlines()
+                if ln.strip()
+            )
+        )
+        logger.info("accession file: %d studies", len(target))
+    else:
+        study_accessions: set[str] = set()
+        for datasource, db_file in mapping.items():
+            query = STUDY_QUERIES[datasource]
+            with sqlite_connect(db_file) as conn:
+                rows = conn.execute(query).fetchall()
+            accessions = [r[0] for r in rows]
+            study_accessions.update(accessions)
+            logger.info("%s: %d studies", datasource.value, len(accessions))
+        target = sorted(study_accessions)
 
-    target = sorted(study_accessions)
     if limit is not None:
         target = target[:limit]
 
+    # Resume per leg. A partial ncbi/ena landing leaves the other leg eligible.
+    leg_done_sql = {
+        # ena fills fastq_ftp; missing fastq_ftp means ena has not run.
+        "ena": "SELECT DISTINCT study_accession FROM run_download_links "
+        "WHERE COALESCE(fastq_ftp, '') <> ''",
+        # ncbi fills ncbi_fetched_at
+        "ncbi": "SELECT DISTINCT study_accession FROM run_download_links "
+        "WHERE ncbi_fetched_at IS NOT NULL",
+        # 'both' completes when both legs landed; use their intersection.
+        "both": "SELECT study_accession FROM run_download_links "
+        "GROUP BY study_accession "
+        "HAVING count(*) FILTER (WHERE COALESCE(fastq_ftp, '') <> '') > 0 "
+        "AND count(*) FILTER (WHERE ncbi_fetched_at IS NOT NULL) > 0",
+    }
     with sqlite_connect(output_db_file, busy_timeout=120000) as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT study_accession FROM run_download_links"
-        ).fetchall()
+        rows = conn.execute(leg_done_sql[source]).fetchall()
         existing = {r[0] for r in rows}
 
     if existing:
         before = len(target)
         target = [a for a in target if a not in existing]
         logger.info(
-            "skipping %d studies already present in run_download_links",
+            "skipping %d studies whose '%s' leg already landed",
             before - len(target),
+            source,
         )
 
     logger.info("total studies to process: %d", len(target))

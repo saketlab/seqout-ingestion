@@ -1,11 +1,8 @@
 """
-Generate human-readable cluster labels (TF-IDF keywords + local LLM).
+Generate cluster labels from TF-IDF keywords and a local LLM.
 
-For each clustering level, groups documents by cluster, extracts the top TF-IDF
-keywords, and asks a local OpenAI-compatible LLM (e.g. Qwen3 via llama.cpp/vLLM)
-for a short 2-5 word label. Writes one CSV per level with the label plus the 2D
-centroid (the anchor where the frontend draws the label). Coarsest levels are
-processed first and each CSV resumes, so a re-run picks up where it left off.
+Writes one CSV per clustering level with label and 2D centroid. Coarsest levels
+run first; existing CSV rows make reruns resumable.
 """
 
 import csv
@@ -70,8 +67,7 @@ def _detect_levels(sample_meta: dict, prefix: str = "cluster_l") -> list[str]:
     """
     Clustering keys for prefix, ordered coarsest to finest.
 
-    For EVoC (cluster_l) the flat cluster_id is prepended; other clusterings
-    such as leiden_l expose hierarchical layers only.
+    EVoC prepends flat cluster_id before hierarchical layers.
     """
     layer_keys = sorted(
         (k for k in sample_meta if k.startswith(prefix)),
@@ -130,14 +126,12 @@ def _label_cluster(
     client: OpenAI, model: str, extra_body: dict, keywords: list[str], size: int
 ) -> str | None:
     """
-    Return the cluster's label, or None if the LLM could not be reached.
+    Return the cluster label, or None for retryable LLM failures.
 
-    None means "unknown, try again": callers must skip the row rather than write
-    a placeholder, since the resume logic treats a written row as done and would
-    bake a transient 503 in as permanent bad data.
+    None leaves resume eligible; placeholder rows would persist transient 503s.
     """
     if not keywords:
-        return "unknown"  # nothing cached to label from; a retry can't do better
+        return "unknown"  # no cached text to label; retry has the same input
 
     prompt = (
         f"Top TF-IDF keywords from a cluster of {size} biomedical / genomics "
@@ -209,10 +203,9 @@ def _label_batch(
     client: OpenAI, model: str, extra_body: dict, batch: list[tuple]
 ) -> list[list]:
     """
-    Label a whole batch in one request, one CSV row per item in input order.
+    Label one batch, one CSV row per item in input order.
 
-    batch items are (cid, kw, size, cx, cy). Any cluster missing from the reply
-    is re-labelled individually.
+    Missing reply rows are re-labelled individually.
     """
     lines = []
     for i, (_cid, kw, size, _cx, _cy) in enumerate(batch):
@@ -245,7 +238,7 @@ def _label_batch(
                     if 1 <= n <= len(batch):
                         parsed[n] = m.group(2).strip().strip('"').strip("'")
             break
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             if attempt < MAX_RETRIES - 1:
                 time.sleep(backoff)
                 backoff *= 2
@@ -256,6 +249,7 @@ def _label_batch(
     for i, (cid, kw, size, cx, cy) in enumerate(batch):
         label = parsed.get(i + 1)
         if not label:  # dropped/misaligned -> label this one on its own
+            # Label this dropped/misaligned item on its own.
             label = _label_cluster(client, model, extra_body, kw, size)
         if label is None:  # LLM unreachable; skip so a re-run retries this cluster
             continue
@@ -320,7 +314,7 @@ def _process_level(
             cid = kw_futures[kf]
             try:
                 kw = kf.result()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 kw = []
             info = clusters[cid]
             client, model, extra_body, _ = workers[rotation[rr % len(rotation)]]
@@ -367,10 +361,9 @@ def generate_labels(
                 "extra_body": LLAMACPP_EXTRA,
             },
         ]
-    # max_retries=0: the SDK's fast auto-retries stack on top of _label_cluster's
-    # retry loop and snowball into a request storm under load, so it handles
-    # backoff alone. The generous timeout keeps a slow generation from being
-    # cancelled and retried, which only doubles server load.
+    # max_retries=0 leaves backoff to _label_cluster. SDK retries stack on top
+    # of that loop and snowball under load; the long timeout avoids duplicate slow
+    # generations.
     workers = [
         (
             OpenAI(
@@ -444,7 +437,7 @@ def _precompute_level(
             cid = kw_futures[kf]
             try:
                 kw = kf.result()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 kw = []
             info = clusters[cid]
             writer.writerow(
@@ -566,12 +559,8 @@ def label_from_keywords(
     """
     LLM-label from cached keywords_<level>.csv.
 
-    Needs no chroma, TF-IDF or doc reload, so it starts in seconds and resumes
-    cleanly.
-
-    Defaults to the single llama.cpp server; pass endpoints, each
-    {base_url, model, concurrency, extra_body}, to fan out across several
-    backends or GPUs, weighted by concurrency.
+    Starts quickly because chroma, TF-IDF and document reload are already done.
+    Multiple endpoints fan out work by configured concurrency.
     """
     if endpoints is None:
         endpoints = [

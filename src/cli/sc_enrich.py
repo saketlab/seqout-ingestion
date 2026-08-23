@@ -23,10 +23,15 @@ def counter_setup(
     geo_db_file: Path = typer.Option(...),
     ae_db_file: Path = typer.Option(...),
     output_dir: Path = typer.Option(...),
-    machines_csv_file: Path = typer.Option(...),
     batch_size: int = typer.Option(500),
     check_all: bool = typer.Option(
         default=False, help="check all records regardless of sc_count_last_checked"
+    ),
+    accession_list_file: Path = typer.Option(
+        None,
+        help="Count exactly these accessions instead of the is_single_cell=1 set. "
+        "Needed for studies the FTS classifier never flagged: the default universe "
+        "IS that flag set, so anything outside it can never be reached.",
     ),
 ) -> None:
     yuj_setup(
@@ -34,7 +39,7 @@ def counter_setup(
         geo_db_file,
         ae_db_file,
         output_dir,
-        machines_csv_file,
         batch_size,
         check_all=check_all,
+        accession_list_file=accession_list_file,
     )

@@ -17,8 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# a taxon seen in more than this share of all runs is reagent/skin background
-# rather than infection; E. coli reaches 0.69 across this corpus
+# Taxa seen in more than this share of all runs are reagent/skin background;
+# E. coli reaches 0.69 across this corpus.
 BACKGROUND_PREVALENCE = 0.20
 BATCH_SIZE = 20_000
 
@@ -38,10 +38,11 @@ _INSERTS: dict[str, str] = {
     """,
     "microbe_quant": """
         INSERT OR REPLACE INTO microbe_quant (
-            run_accession, class, organism, ref_accession, reads, ref_bp,
-            covered_bp, breadth_frac, total_reads, is_validated_viral,
-            is_bacterial_evidence
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            run_accession, class, organism, ref_accession, reads, kmer_mass,
+            n_unitigs, ref_bp, covered_bp, breadth_frac,
+            is_validated_viral, is_viral_evidence, is_bacterial_evidence,
+            is_validated_bacterial, total_reads
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """,
     "quant_provenance": """
         INSERT OR REPLACE INTO quant_provenance (
@@ -53,9 +54,12 @@ _INSERTS: dict[str, str] = {
     "_pfx_run": """
         INSERT OR REPLACE INTO _pfx_run (
             run_accession, experiment_accession, gsm_accession, study_accession,
-            pfx_species, pfx_sex, pfx_assay, stated_sex, stated_assay,
-            preflightx_source
-        ) VALUES (?,?,?,?,?,?,?,?,?,?)
+            pfx_species, pfx_species_confidence, pfx_sex, pfx_sex_confidence,
+            pfx_assay, pfx_modality, pfx_modality_confidence,
+            pfx_bulk_vs_sc, pfx_bulk_vs_sc_confidence,
+            pfx_read_end, pfx_read_end_confidence,
+            stated_sex, stated_assay, preflightx_source
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """,
     "preflightx_vote": """
         INSERT OR REPLACE INTO preflightx_vote (
@@ -74,7 +78,7 @@ _INSERTS: dict[str, str] = {
 # The enrichment DB and the provenance JSONs carry identical columns, so they
 # share a staging shape and an overlay UPDATE. They need separate tables only
 # because order matters: JSON first, then the DB overwrites it wherever it has a
-# graded answer. The route tag arrives as _apply_exp_route's source argument.
+# graded answer.
 _PFX_EXP_COLUMNS = (
     "experiment_accession",
     "study_accession",
@@ -100,6 +104,15 @@ _PFX_EXP_COLUMNS = (
     "assay",
     "assay_display",
     "assay_is_single_cell",
+    "modality",
+    "modality_confidence",
+    "intron_frac",
+    "mito_pct",
+    "modality_reads_scanned",
+    "bulk_vs_sc",
+    "bulk_vs_sc_confidence",
+    "read_end",
+    "read_end_confidence",
 )
 # creation and drop order are irrelevant here; authority order is the order
 # _apply_exp_route is called in, json then db (see _stage_preflightx)
@@ -118,8 +131,18 @@ CREATE TABLE IF NOT EXISTS _pfx_run (
     gsm_accession        TEXT,
     study_accession      TEXT,
     pfx_species          TEXT,
+    pfx_species_confidence TEXT,
     pfx_sex              TEXT,
+    pfx_sex_confidence   TEXT,
     pfx_assay            TEXT,
+    -- the CSV route now carries these too, so a run reaches the spine with its
+    -- modality already called instead of waiting for an experiment-grained overlay
+    pfx_modality             TEXT,
+    pfx_modality_confidence  TEXT,
+    pfx_bulk_vs_sc           TEXT,
+    pfx_bulk_vs_sc_confidence TEXT,
+    pfx_read_end             TEXT,
+    pfx_read_end_confidence  TEXT,
     stated_sex           TEXT,
     stated_assay         TEXT,
     preflightx_source    TEXT
@@ -154,7 +177,16 @@ CREATE TABLE IF NOT EXISTS {table} (
     deep_n_reads         INTEGER,
     assay                TEXT,
     assay_display        TEXT,
-    assay_is_single_cell INTEGER
+    assay_is_single_cell INTEGER,
+    modality               TEXT,
+    modality_confidence    TEXT,
+    intron_frac            REAL,
+    mito_pct               REAL,
+    modality_reads_scanned INTEGER,
+    bulk_vs_sc             TEXT,
+    bulk_vs_sc_confidence  TEXT,
+    read_end               TEXT,
+    read_end_confidence    TEXT
 )
 """
 
@@ -177,11 +209,9 @@ def _executemany_multi(
     batch_size: int = BATCH_SIZE,
 ) -> dict[str, int]:
     """
-    Stream (table, row) pairs into several tables from ONE iterator.
+    Stream (table, row) pairs into several tables from one iterator.
 
-    The provenance JSONs feed two tables and sit on NFS; iterating them once per
-    destination doubled the slowest leg of the build to read the same bytes
-    twice.
+    Provenance JSON feeds two tables from NFS, so one pass avoids duplicate reads.
     """
     batches: dict[str, list[tuple[Any, ...]]] = {}
     totals: dict[str, int] = {}
@@ -212,22 +242,11 @@ def _stage_preflightx(
     legacy_csv_dirs: list[Path] | None = None,
 ) -> None:
     """
-    Stage all three preflightx routes.
+    Stage CSV, JSON and enrichment-DB preflightx routes.
 
-    csv   RUN grain -- the spine. Verdicts only, no evidence.
-    json  EXPERIMENT grain -- verdicts, evidence AND confidence grades, from the
-          .provenance.json files beside those CSVs. By far the widest source: on
-          a 600-file sample, 99.6% of the experiments it reports evidence for
-          are absent from the DB's graded set.
-    db    EXPERIMENT grain -- the same measurements, curated into the pinned
-          enrichment snapshot. A strict, stale subset (9,552 graded).
-
-    db is applied LAST, so it wins on any experiment it covers. Not because it
-    knows more -- both routes carry the same 'low'/'medium'/'high' grades, and
-    the JSON route grades ~34x more runs -- but because it is the vetted, pinned
-    snapshot the previous Pentimento served. Ordering it last means adding the JSON
-    route fills gaps without silently changing a call that was already on
-    display.
+    CSV is the run-grained spine. JSON adds experiment-grained evidence and
+    confidence; 99.6% of a 600-file sample was absent from the DB graded set.
+    The pinned DB subset (9,552 graded rows) is applied last.
     """
     conn.execute("DROP TABLE IF EXISTS _pfx_run")
     conn.execute(_PFX_RUN_STAGING)
@@ -266,20 +285,51 @@ def _expand_to_runs(conn: sqlite3.Connection) -> None:
     Populate run_preflightx from the CSV route, which is already run-grained.
 
     The annotated CSVs carry run_accession, the GEO sample (GSM) and the GSE
-    directly, so they ARE the spine -- no external lookup is needed to reach a
-    sample. That matters: the earlier design went through ena_experiments, whose
-    on-disk snapshot is a delta overlapping this corpus by zero rows.
+    directly, so they are the spine; no external lookup is needed to reach a
+    sample.
     """
+    # Use ON CONFLICT DO UPDATE. SQLite REPLACE is DELETE-then-INSERT and nulls
+    # columns omitted here; preflight ingest runs against a finished DB.
     conn.execute(
         """
-        INSERT OR REPLACE INTO run_preflightx (
+        INSERT INTO run_preflightx (
             run_accession, experiment_accession, gsm_accession, study_accession,
-            species_called, sex_verdict, assay, sex, preflightx_source
+            species_called, species_confidence, sex_verdict, sex_confidence,
+            assay, modality, modality_confidence, bulk_vs_sc,
+            bulk_vs_sc_confidence, read_end, read_end_confidence,
+            sex, preflightx_source
         )
         SELECT run_accession, experiment_accession, gsm_accession,
-               study_accession, pfx_species, pfx_sex,
-               COALESCE(pfx_assay, stated_assay), stated_sex, preflightx_source
+               study_accession, pfx_species, pfx_species_confidence,
+               pfx_sex, pfx_sex_confidence,
+               COALESCE(pfx_assay, stated_assay),
+               pfx_modality, pfx_modality_confidence,
+               pfx_bulk_vs_sc, pfx_bulk_vs_sc_confidence,
+               pfx_read_end, pfx_read_end_confidence,
+               stated_sex, preflightx_source
         FROM _pfx_run
+        -- WHERE true is REQUIRED, not decoration: with INSERT..SELECT the
+        -- SQLite parser cannot tell whether ON begins the upsert or a join's
+        -- ON clause, and fails with `near "DO": syntax error`. A WHERE clause
+        -- terminates the SELECT and resolves it (SQLite upsert docs).
+        WHERE true
+        ON CONFLICT(run_accession) DO UPDATE SET
+            experiment_accession  = excluded.experiment_accession,
+            gsm_accession         = excluded.gsm_accession,
+            study_accession       = excluded.study_accession,
+            species_called        = excluded.species_called,
+            species_confidence    = excluded.species_confidence,
+            sex_verdict           = excluded.sex_verdict,
+            sex_confidence        = excluded.sex_confidence,
+            assay                 = excluded.assay,
+            modality              = excluded.modality,
+            modality_confidence   = excluded.modality_confidence,
+            bulk_vs_sc            = excluded.bulk_vs_sc,
+            bulk_vs_sc_confidence = excluded.bulk_vs_sc_confidence,
+            read_end              = excluded.read_end,
+            read_end_confidence   = excluded.read_end_confidence,
+            sex                   = excluded.sex,
+            preflightx_source     = excluded.preflightx_source
         """
     )
     conn.commit()
@@ -287,41 +337,96 @@ def _expand_to_runs(conn: sqlite3.Connection) -> None:
     logger.info("run_preflightx from csv route: %d rows", n)
 
 
+# assay/assay_display/assay_is_single_cell are one call. Per-column COALESCE can
+# splice routes into contradictions, so the flag anchors the group.
+_ASSAY_ANCHOR = "assay_is_single_cell"
+_ASSAY_SOURCE = {
+    "assay": "COALESCE(e.assay, e.assay_display)",
+    "assay_display": "COALESCE(e.assay_display, e.assay)",
+    _ASSAY_ANCHOR: f"e.{_ASSAY_ANCHOR}",
+}
+
+
+# One closed vocabulary plus a derived flag makes legacy assay rows complete.
+_ATAC = "ATAC (chromatin accessibility)"
+# The closed vocabulary lists chemistries; bare negative assay rows stay
+# neutral.
+_COMPLETABLE = (
+    _ATAC,
+    "Drop-seq",
+    "10x Chromium 3' v1",
+    "10x Chromium 3' v2",
+    "10x Chromium 3' v3",
+    "10x Chromium 3' v4 (GEM-X)",
+    "10x Chromium 3' v2 or 10x Chromium 5' v1",
+    "10x Chromium 5' v1",
+    "10x Chromium 5' v2",
+    "10x Chromium 5' v3",
+)
+
+
+def _complete_legacy_assay(conn: sqlite3.Connection, staging: str) -> int:
+    """
+    Fill display and flag on rows carrying only bare assay strings.
+
+    Run after overlays: missing flag keeps legacy strings below graded calls.
+    Unknown assay vocabulary stays neutral.
+    """
+    marks = ",".join("?" * len(_COMPLETABLE))
+    cur = conn.execute(
+        f"""
+        UPDATE {staging}
+        SET assay_display = COALESCE(NULLIF(assay_display, ''), assay),
+            assay_is_single_cell =
+                CASE WHEN COALESCE(NULLIF(assay_display, ''), assay) = ?
+                     THEN 0 ELSE 1 END
+        WHERE (assay_is_single_cell IS NULL OR assay_is_single_cell = '')
+          AND COALESCE(NULLIF(assay_display, ''), assay) IN ({marks})
+        """,  # noqa: S608
+        (_ATAC, *_COMPLETABLE),
+    )
+    conn.commit()
+    logger.info("%s: completed %d legacy assay rows", staging, cur.rowcount)
+    return cur.rowcount
+
+
+# true when the overlay will take this route's assay: graded calls win, and
+# empty target assay slots accept a supplied string
+_ASSAY_TAKEN = (
+    f"e.{_ASSAY_ANCHOR} IS NOT NULL "
+    f"OR (p.{_ASSAY_ANCHOR} IS NULL "
+    "AND (e.assay IS NOT NULL OR e.assay_display IS NOT NULL))"
+)
+
+
+def _overlay_assignment(col: str) -> str:
+    if col not in _ASSAY_SOURCE:
+        return f"{col} = COALESCE(e.{col}, p.{col})"
+    return (
+        f"{col} = CASE WHEN e.{_ASSAY_ANCHOR} IS NOT NULL THEN {_ASSAY_SOURCE[col]} "
+        f"WHEN p.{_ASSAY_ANCHOR} IS NULL THEN COALESCE(e.{col}, p.{col}) "
+        f"ELSE p.{col} END"
+    )
+
+
 def _apply_exp_route(conn: sqlite3.Connection, staging: str, source: str) -> None:
     """
     Overlay an experiment-grained route onto the run-grained spine.
 
-    Applied as an UPDATE rather than an INSERT so it enriches the existing rows
-    without changing the spine. Rows it touches are re-tagged with the route that
-    produced them -- the routes are refreshed independently and disagree, so
-    which one a value came from is itself a fact worth keeping.
-
-    CALL ORDER IS THE AUTHORITY ORDER (see _stage_preflightx), but every column
-    is COALESCEd: a route fills what it knows and NEVER blanks what it does not.
-    An unconditional SET
-    looked equivalent and was not -- `_pfx_exp` holds all 224,851 experiments
-    while only 9,552 of them carry any evidence, so the later DB route wrote
-    NULL over the JSON route's real hit counts on the other 215,299.
-
-    The WHERE clause is the other half of the same rule: a staging row with
-    nothing in it must not touch the spine at all.
-
-    preflightx_source names the route that produced the READ-DERIVED CALLS, so a
-    route only claims it when it supplied one. `species` is excluded from that
-    test because it is the DECLARED organism, not a call -- and on 56,203
-    experiments a declared species is the DB route's ONLY contribution, which
-    would otherwise have it stamping 'db' on rows whose species, sex and assay
-    calls all came from the JSON route.
+    UPDATE enriches existing rows and tags the route. Columns fill by COALESCE;
+    the assay trio overlays as a unit. Empty staging rows leave the spine untouched.
     """
-    # generated from the shared column list, so a column added to the routes
-    # cannot be left out of the overlay
+    # Shared column-list generation keeps new route columns in every overlay.
     skip = {"experiment_accession", "study_accession", "sex", "preflightx_source"}
     payload = [c for c in _PFX_EXP_COLUMNS if c not in skip]
-    assignments = ",\n            ".join(
-        f"{c} = COALESCE(e.{c}, p.{c})" for c in payload
-    )
+    assignments = ",\n            ".join(_overlay_assignment(c) for c in payload)
     carries_value = " OR ".join(f"e.{c} IS NOT NULL" for c in payload)
-    carries_call = " OR ".join(f"e.{c} IS NOT NULL" for c in payload if c != "species")
+    # A route claims fields it supplied. The assay group contributes under the
+    # same condition _overlay_assignment uses, leaving rejected legacy rows unlabeled.
+    carries_call = " OR ".join(
+        [f"e.{c} IS NOT NULL" for c in payload if c not in {"species", *_ASSAY_SOURCE}]
+        + [f"({_ASSAY_TAKEN})"]
+    )
     conn.execute(
         f"""
         UPDATE run_preflightx AS p
@@ -358,13 +463,12 @@ def _attach_fastq(conn: sqlite3.Connection, links_db_file: Path) -> None:
     """
     Fill fastq/SRA columns by joining the links DB on run_accession.
 
-    run_accession is indexed in run_download_links; experiment_accession is NOT,
-    and joining on that made SQLite rescan all ~34.8 M rows per outer row and
-    never finish. Joining on the indexed key keeps this to one pass.
+    The indexed run key keeps this to one pass.
     """
     if not links_db_file.is_file():
-        logger.warning("links db missing; fastq columns stay NULL: %s", links_db_file)
-        return
+        # Required link DB protects transfer upserts from blanking fastq/SRA columns.
+        msg = f"links db missing: {links_db_file}"
+        raise FileNotFoundError(msg)
     conn.execute("ATTACH DATABASE ? AS links", (f"file:{links_db_file}?immutable=1",))
     try:
         conn.execute(
@@ -394,33 +498,47 @@ def _attach_fastq(conn: sqlite3.Connection, links_db_file: Path) -> None:
 
 
 def _load_benchmark(conn: sqlite3.Connection, csv_file: Path | None) -> None:
-    """Load the accuracy benchmark and log what it says about the calls."""
+    """Load the internal metadata comparison and log its summary."""
     if csv_file is None:
         return
     _executemany(conn, "preflightx_benchmark", benchmark.load_benchmark(csv_file))
     conn.commit()
-    logger.info("preflightx accuracy: %s", json.dumps(benchmark.summarise(conn)))
+    logger.info("preflightx comparison: %s", json.dumps(benchmark.summarise(conn)))
 
 
-def _load_quant(conn: sqlite3.Connection, quant_dir: Path | None) -> None:
+def _load_quant(
+    conn: sqlite3.Connection,
+    quant_dir: Path | None,
+    quant_archive_db_file: Path | None = None,
+) -> None:
     """
-    Load the microbial quantification, if there is any.
+    Load microbial quantification when supplied.
 
-    quant_dir is optional on purpose: preflightx and the microbial panel are
-    independent measurements of the same runs, and a study can carry read-derived
-    species/sex/assay calls with nothing ever quantified against the panel. Every
-    consumer downstream already reaches the flags through a LEFT JOIN or a
-    correlated subquery, so skipping this leaves them NULL -- "not measured" --
-    rather than 0, which would claim a clean result nobody measured.
+    Quant is optional; preflightx calls and the microbial panel are independent.
+    Skipping quant leaves downstream LEFT JOIN values NULL, preserving unmeasured.
     """
-    if quant_dir is None:
+    if quant_dir is None and quant_archive_db_file is None:
         logger.info("no quant dir; building a preflight-only Pentimento")
         return
-    logger.info("loading microbial quantification")
-    _executemany(conn, "microbe_quant", sources.load_microbe_quant(quant_dir))
-    # quant provenance first: _flag_background needs the measured-run count as
-    # its denominator, and run_microbe_summary is driven from this table
-    _load_quant_provenance(conn, quant_dir)
+    # archive first, directory second: a directory holding a newer scan of an
+    # archived run must win on conflict
+    if quant_archive_db_file is not None:
+        from pentimento.quant_archive import load_archive
+
+        load_archive(conn, quant_archive_db_file)
+    if quant_dir is not None:
+        logger.info("loading microbial quantification")
+        if quant_archive_db_file is not None:
+            # Clear these runs first so the rescan is authoritative.
+            from pentimento.quant_archive import clear_runs, runs_in_dir
+
+            clear_runs(conn, runs_in_dir(quant_dir))
+        _executemany(conn, "microbe_quant", sources.load_microbe_quant(quant_dir))
+        # quant provenance first: _flag_background needs the measured-run count
+        # as its denominator, and run_microbe_summary is driven from this table
+        _load_quant_provenance(conn, quant_dir)
+    # Judge background over the union of both routes; a partial corpus distorts
+    # near-universal-across-unrelated-studies calls.
     _flag_background(conn)
 
 
@@ -429,8 +547,7 @@ def _load_quant_provenance(conn: sqlite3.Connection, quant_dir: Path) -> None:
     logger.info("loading quant provenance")
     _executemany(conn, "quant_provenance", sources.load_quant_provenance(quant_dir))
     known = {r[0] for r in conn.execute("SELECT run_accession FROM quant_provenance")}
-    # runs attempted but never measured (download failed, or absent from Logan);
-    # keeping them preserves "not measured" against "measured, nothing found"
+    # Attempted runs preserve the distinction from measured-empty.
     _executemany(conn, "quant_provenance", sources.load_status_only(quant_dir, known))
 
 
@@ -489,19 +606,10 @@ _PROV_FIELDS = (
 
 def _load_field_provenance(conn: sqlite3.Connection) -> None:
     """
-    Pivot provenance_samples into normalised long form, for ALL samples.
+    Pivot provenance_samples into normalised long form for all samples.
 
-    The source table is ~14 M rows x ~100 sparse columns, one column triplet per
-    field. Stored wide it is mostly NULL and cannot be queried by field; stored
-    long with raw strings it repeats a 15-value vocabulary tens of millions of
-    times. So: long form, with field/source/column interned into prov_dict and
-    the fact table WITHOUT ROWID.
-
-    No sample restriction. An earlier version narrowed by study, and a second
-    narrowed by linked sample -- which GREW the table (18.1 M -> 25.4 M rows)
-    because Pentimento spans ~1.1 M GSMs, far more than the 88 k with cell counts.
-    Carrying every sample is both simpler and what makes the provenance usable
-    for samples that have no counts yet.
+    Long form interns field/source/column into prov_dict. Full sample coverage
+    keeps provenance usable for samples awaiting counts.
     """
     conn.execute("DELETE FROM prov_dict")
     conn.executemany(
@@ -573,15 +681,8 @@ def _link_gsm(
     """
     Resolve run -> SRS -> GSM.
 
-    This needs an external mapping and cannot come from the annotated CSVs. Those
-    are long-format with a record_type column, and a row is EITHER a run
-    record or a sample record -- measured co-occurrence of run_accession and
-    sample in the same row is exactly zero -- so the file never states which GSM a
-    run belongs to.
-
-    SRA carries the full chain (sra_runs -> sra_experiments -> sra_samples, whose
-    alias is the GSM). ENA is tried as a fallback but its on-disk snapshot is
-    a delta covering almost none of this corpus.
+    Annotated CSV rows are run or sample records, so they omit the run-to-GSM
+    edge. SRA carries the full chain; ENA fallback is a sparse delta.
     """
     if sra_db_file and sra_db_file.is_file():
         conn.execute("ATTACH DATABASE ? AS sra", (f"file:{sra_db_file}?immutable=1",))
@@ -705,6 +806,7 @@ def build_pentimento(
     preflightx_csv_dir: Path,
     quant_dir: Path | None = None,
     benchmark_file: Path | None = None,
+    quant_archive_db_file: Path | None = None,
     legacy_csv_dirs: list[Path] | None = None,
     ena_db_file: Path | None = None,
     sra_db_file: Path | None = None,
@@ -725,21 +827,21 @@ def build_pentimento(
     logger.info("loading per-sample cell counts")
     _executemany(conn, "sample_ncount", sources.load_ncount_samples(ncount_dirs))
 
-    _load_quant(conn, quant_dir)
+    _load_quant(conn, quant_dir, quant_archive_db_file)
     _load_benchmark(conn, benchmark_file)
 
     logger.info("staging preflightx calls")
     _stage_preflightx(conn, preflightx_db_file, preflightx_csv_dir, legacy_csv_dirs)
     _expand_to_runs(conn)
     _add_quantified_runs(conn)
-    # must precede the experiment-grained routes: this backfills
-    # experiment_accession from the links DB, the key both routes join on, and
-    # run afterwards the evidence silently never lands
+    # Run before experiment-grained routes: it backfills experiment_accession from
+    # the links DB, the key both routes join on.
     _attach_fastq(conn, links_db_file)
-    # json then db: the DB route is the only graded one and must win where it
-    # has an answer, while the JSON route covers ~100x more experiments
+    # json then db: the vetted pinned snapshot wins where it has an answer.
+    # The JSON route supplies the broader experiment set.
     _apply_exp_route(conn, "_pfx_json", "json")
     _apply_exp_route(conn, "_pfx_exp", "db")
+    _complete_legacy_assay(conn, "run_preflightx")
     _link_gsm(conn, ena_db_file, sra_db_file)
 
     _load_provenance(conn, preflightx_db_file)
@@ -747,9 +849,8 @@ def build_pentimento(
     conn.execute("DROP TABLE IF EXISTS _pfx_run")
     for table in _PFX_EXP_STAGING:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
-    # index and ANALYZE before the derived stages: every source table is loaded
-    # by here, and the pivot and rollup join on microbe_quant.organism and
-    # run_preflightx.gsm_accession, which nothing else covers
+    # Index and ANALYZE after source loads; derived stages join on
+    # microbe_quant.organism and run_preflightx.gsm_accession.
     exec_query_from_file("indexes/pentimento.sql", conn=conn)
     conn.execute("ANALYZE")
     conn.commit()
@@ -787,16 +888,10 @@ def ingest_preflight(
     sra_db_file: Path | None = None,
 ) -> dict[str, int]:
     """
-    Load a preflight run into an existing Pentimento DB without rebuilding it.
+    Load a preflight run into an existing Pentimento DB.
 
-    The point of this entry is INDEPENDENCE. A fresh scan reaches Pentimento with
-    no microbial quantification, no enrichment DB and no multi-hour rebuild --
-    the CSV route plus the provenance JSONs are between them a complete spine
-    (run, GSM and study all come off the CSVs) and the only source of evidence.
-
-    Deliberately NOT run here: `_attach_fastq` and `_flag_background`, which
-    need the links DB and quant respectively and belong to a full build. GSM
-    linkage runs only if an SRA db is offered.
+    CSV plus provenance JSONs provide the run/GSM/study spine. Fastq attachment
+    and background flagging remain full-build steps.
     """
     conn.execute("DROP TABLE IF EXISTS _pfx_run")
     conn.execute(_PFX_RUN_STAGING)
@@ -810,13 +905,12 @@ def ingest_preflight(
     n_json = _executemany_multi(conn, provenance_json.load(preflightx_csv_dir))
     _expand_to_runs(conn)
     _apply_exp_route(conn, "_pfx_json", "json")
+    _complete_legacy_assay(conn, "run_preflightx")
     if sra_db_file:
         _link_gsm(conn, None, sra_db_file)
-    # also runs here, not only in build_rollups: this path populates
-    # run_preflightx from the CSV route whose embedded-newline corruption the
-    # sanitiser exists to clean, and transfer pentimento reads run_preflightx
-    # directly, so a preflight ingest then transfer would ship field-shifted
-    # species and sex straight to Postgres
+    # Sanitise here as well as build_rollups. This path populates run_preflightx
+    # from CSVs with known embedded-newline corruption, and transfer reads
+    # run_preflightx directly.
     sanitise_calls(conn)
     conn.execute("DROP TABLE IF EXISTS _pfx_run")
     conn.execute("DROP TABLE IF EXISTS _pfx_json")

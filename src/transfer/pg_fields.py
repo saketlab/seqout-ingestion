@@ -309,7 +309,9 @@ _UNIFIED_METADATA_SELECT_COLS = [
     "country_mismatch",
     "geocode_score",
     "is_single_cell",
+    "single_cell_status",
     "single_cell_modality",
+    "single_cell_modality_evidence",
 ]
 _UNIFIED_METADATA_INSERT_COLS = [
     *_UNIFIED_METADATA_SELECT_COLS,
@@ -375,21 +377,28 @@ _UNIFIED_METADATA_CENTERS_SELECT_COLS = [
 _UNIFIED_METADATA_CENTERS_INSERT_COLS = _UNIFIED_METADATA_CENTERS_SELECT_COLS
 
 
+def overwrite_update(table: str, payload_cols: list[str]) -> str:
+    """
+    Build SET ... WHERE for an overwriting upsert, guard included.
+
+    Use when incoming data is rebuilt whole and NULL is factual. The IS DISTINCT
+    FROM guard prevents unchanged conflicts from creating dead tuples.
+    """
+    if not payload_cols:
+        return ""
+    updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in payload_cols)
+    guard = " OR ".join(
+        f"{table}.{c} IS DISTINCT FROM EXCLUDED.{c}" for c in payload_cols
+    )
+    return f"SET {updates} WHERE {guard}"
+
+
 def non_nulling_update(table: str, payload_cols: list[str]) -> str:
     """
-    Build the SET ... WHERE ... of an upsert that never nulls a column.
+    Build SET ... WHERE for an upsert that preserves existing non-NULLs.
 
-    A bare c = EXCLUDED.c erases whatever postgres already holds whenever the
-    incoming row has NULL there. Ingest writes a fresh per-window sqlite db each
-    run, so a re-transfer routinely carries columns a later backfill had filled in
-    -- postgres must keep those, hence COALESCE.
-
-    The guard is not an optimisation. Postgres cannot see that
-    COALESCE(x, ...) = x, so without it every conflicting row is rewritten
-    even when nothing changed, leaving dead tuples across the whole table
-    (same reasoning as ddbj._upsert's fill_gaps_only branch).
-
-    Returns "" when there is nothing to update; callers use DO NOTHING then.
+    COALESCE protects later backfills from per-window SQLite retransfers. The
+    IS DISTINCT FROM guard prevents unchanged conflicts from creating dead tuples.
     """
     if not payload_cols:
         return ""

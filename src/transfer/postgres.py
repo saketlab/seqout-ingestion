@@ -19,6 +19,7 @@ from psycopg.types.json import Jsonb
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
+from geo_samples_ref import load_samples_ref
 from helpers import batch_query_in, sqlite_connect
 from transfer.gsa import gsa_transfer_tasks
 from transfer.pg_fields import (
@@ -610,11 +611,20 @@ def _geo_series_batch_modifier(
 
         for value in batch:
             accession = value["accession"]
-            relations = _ensure_list(_convert_to_json(value["relation"]))
-            samples_ref = _ensure_list(_convert_to_json(value["samples_ref"]))
-            supp = _ensure_list(_convert_to_json(value["supplementary_data"]))
+            relations = _ensure_list(
+                _convert_to_json_lenient(value["relation"], accession, "relation"),
+            )
+            supp = _ensure_list(
+                _convert_to_json_lenient(
+                    value["supplementary_data"],
+                    accession,
+                    "supplementary_data",
+                ),
+            )
 
-            samples = [v if isinstance(v, str) else v["@ref"] for v in samples_ref]
+            # Postgres geo_series.samples_ref is text[] of plain accessions.
+            # Normalise SQLite to match, and swallow the corrupt row.
+            samples = load_samples_ref(value["samples_ref"])
             alias = next(
                 (
                     str(x["@target"]).split("?term=", 1)[-1]
@@ -786,13 +796,15 @@ def _geo_series_batch_modifier(
             )
 
             modified = dict(value)
-            modified["pubmed_id"] = _convert_to_json(modified["pubmed_id"])
-            modified["citation"] = _convert_to_json(modified["citation"])
-            modified["pubmed_id_citation"] = _convert_to_json(
-                modified["pubmed_id_citation"]
-            )
+            acc = meta["accession"]
+            json_cols = ("pubmed_id", "citation", "pubmed_id_citation", "series_type")
+            for column in json_cols:
+                modified[column] = _convert_to_json_lenient(
+                    modified[column],
+                    acc,
+                    column,
+                )
             modified["samples_ref"] = meta["samples"]
-            modified["series_type"] = _convert_to_json(modified["series_type"])
             modified["relation"] = [Jsonb(x) for x in meta["relations"]]
             modified["supplementary_data"] = [Jsonb(x) for x in meta["supp"]]
             modified["bioproject_id"] = bioproject_id
@@ -925,8 +937,8 @@ def _sra_studies_batch_modifier(
             ):
                 sample_organism[sample_acc] = org
 
-        # some studies have samples but no experiments linking them, so an
-        # empty study-level join means no evidence and must not blank the field
+        # Samples can miss experiment links; empty study-level joins preserve
+        # the field.
         submission_organisms: dict[str, set[str]] = defaultdict(set[str])
         if all_submissions:
             conn = _get_conn(sra_db_file)
@@ -1112,7 +1124,9 @@ def _unified_metadata_batch_modifier(batch: list[dict]) -> list[dict]:
         ):
             value[col] = Jsonb(_convert_to_json(value[col]))
 
-        value["is_single_cell"] = bool(value["is_single_cell"])
+        # Preserve NULL so unscreened stays distinct from measured-and-not-single-cell.
+        if value["is_single_cell"] is not None:
+            value["is_single_cell"] = bool(value["is_single_cell"])
         cc = value.get("country_code")
         if cc:
             try:
@@ -1591,15 +1605,10 @@ def _transfer_study_publications(
             total=len(groups),
         )
 
-        # orphan cleanup: upserts leave rows for studies whose pmid was later
-        # removed or corrected at source. groups is every current (accession,
-        # source), so anything else in the table is stale.
-        #
-        # Off by default and it must stay that way: "stale" only means anything
-        # if the sqlite buffers hold the whole history. Against a fresh or
-        # partial DATA_DIR (a new machine, a cleared cache, a failed
-        # backfill_pm_meta) this deletes every publication row postgres holds
-        # for a study outside the run. Enable it deliberately, with a dump.
+        # Orphan cleanup: `groups` is every current (accession, source), and
+        # anything outside it is deleted. Off by default, because a partial
+        # DATA_DIR would delete publication rows outside the run. Enable only
+        # with a full dump.
         if not prune:
             logger.info(
                 "skipping study_publications orphan cleanup "
@@ -1675,8 +1684,8 @@ def _transfer_cross_refs(
                     ),
                 )
 
-            # target_accession is the PK index's second column, so the reverse
-            # lookup the pentimento resolver does per page cannot use it
+            # target_accession is the PK index's second column, so pentimento resolver's
+            # reverse lookup misses the index.
             for table, _ in tables:
                 cur.execute(
                     cast(
@@ -1843,3 +1852,21 @@ def _ensure_list(value: Any) -> list:
 
 def _convert_to_json(value: str | None) -> Any:
     return json.loads(value) if value else None
+
+
+def _convert_to_json_lenient(value: str | None, accession: str, column: str) -> Any:
+    """
+    Lenient JSON conversion for corrupt SQLite cells.
+
+    GEO snapshot GSE228457 has another series' text across JSON columns; strict
+    decoding aborts transfer. Return NULL for the bad cell and re-ingest to repair.
+    """
+    try:
+        return _convert_to_json(value)
+    except ValueError:
+        logger.warning(
+            "%s.%s is not valid JSON, transferred as NULL (corrupt row?)",
+            accession,
+            column,
+        )
+        return None

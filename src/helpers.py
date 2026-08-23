@@ -212,6 +212,8 @@ def _download_simple(
 
                 if pbar:
                     pbar.close()
+
+                return
         except Exception as exc:
             if not _is_retryable(exc) or attempt == num_retries - 1:
                 raise
@@ -242,12 +244,14 @@ def _download_multipart(
     max_wait: int,
     with_pbar: bool,
 ) -> None:
-    with httpx.Client() as client:
+    with httpx.Client(follow_redirects=True) as client:
 
         def _head() -> httpx.Response:
-            r = client.get(url, timeout=timeout)
-            r.raise_for_status()
-            return r
+            # Streamed GET because some publishers reject HEAD. The body is left unread
+            # and the context closes it after one round trip.
+            with client.stream("GET", url, timeout=timeout) as r:
+                r.raise_for_status()
+                return r
 
         r = _with_retry(_head, num_retries, max_wait, f"head {url}")
         content_length = int(r.headers.get("Content-Length", -1))
@@ -299,7 +303,7 @@ def _download_multipart(
             bytes_this_attempt = 0
             try:
                 with (
-                    httpx.Client() as chunk_client,
+                    httpx.Client(follow_redirects=True) as chunk_client,
                     chunk_client.stream(
                         "GET",
                         url,
@@ -354,6 +358,8 @@ def _download_multipart(
                     wait,
                 )
                 time.sleep(wait)
+            else:
+                return
 
     worker_chunk_size = content_length // num_workers
 
@@ -383,7 +389,7 @@ def _download_multipart(
 
 
 class FileTooLargeError(Exception):
-    """File exceeds max_bytes, skipped without downloading (not a matrix)."""
+    """File exceeds max_bytes; skipped before matrix detection."""
 
 
 def download_file_ftp(
@@ -613,10 +619,9 @@ def download_ftp_head(
     socks_proxy: str | None = None,
 ) -> Path:
     """
-    Fetch only the first max_decompressed bytes of a file's content.
+    Fetch the first max_decompressed bytes of a file.
 
-    Gunzips a .gz stream and aborts once enough is written; dest_path gets the
-    decompressed head, so the sniff/count path is unchanged.
+    Gunzips .gz streams and aborts after writing the decompressed head.
     """
     dest_path.parent.mkdir(exist_ok=True, parents=True)
     parsed = urlparse(url)
@@ -671,10 +676,9 @@ def download_ftp_head(
 
 class HttpRangeReader(io.RawIOBase):
     """
-    A seekable read-only file over HTTP range requests.
+    Seekable read-only file over HTTP range requests.
 
-    Lets h5py read an .h5/.h5ad shape while fetching only the byte ranges HDF5
-    touches, instead of downloading the whole file.
+    Lets h5py inspect .h5/.h5ad shape by fetching only touched byte ranges.
     """
 
     def __init__(self, client: httpx.Client, url: str, size: int) -> None:  # noqa: D107

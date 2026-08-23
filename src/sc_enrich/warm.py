@@ -23,27 +23,43 @@ from typing import TYPE_CHECKING, Any, cast
 
 import h5py
 
-try:  # optional 'rds' extra: only the .rds readers need R / rpy2 / pyreadr
+# See sc_enrich/deep/_process.py for why these are two separate try blocks:
+# pyreadr reads most .rds unaided; rpy2 handles system-R objects. Coupled
+# imports make R-free hosts decline all .rds work.
+try:  # reads most .rds unaided
     import pyreadr
-    import rpy2.robjects as ro
     from pyreadr.custom_errors import LibrdataError
 except ImportError:
-    _R_HINT = (
-        "reading .rds files needs the optional 'rds' extra (rpy2 + pyreadr and a "
-        "system R install). install with: uv sync --extra rds"
+    _PYREADR_HINT = (
+        "reading .rds files needs pyreadr. install with: uv pip install pyreadr"
     )
 
     class LibrdataError(Exception):  # placeholder so except LibrdataError resolves
         pass
 
+    class _MissingPyreadr:
+        def __getattr__(self, _name: str) -> object:
+            raise ImportError(_PYREADR_HINT)
+
+    pyreadr = _MissingPyreadr()  # type: ignore[assignment]
+
+try:  # fallback for S4/Seurat objects; needs system R
+    import rpy2.robjects as ro
+except ImportError:
+    _R_HINT = (
+        "this .rds needs the rpy2 fallback, which requires a system R install. "
+        "install with: uv sync --extra rds"
+    )
+
     class _MissingR:  # any attribute access raises the friendly hint
         def __getattr__(self, _name: str) -> object:
             raise ImportError(_R_HINT)
 
-    pyreadr = ro = _MissingR()  # type: ignore[assignment]
+    ro = _MissingR()  # type: ignore[assignment]
 
 from tqdm import tqdm
 
+from geo_samples_ref import load_samples_ref
 from helpers import batch_query_in, download_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
@@ -224,23 +240,8 @@ def sc_counter(
         rows = []
 
     for accession, samples_ref_json in rows:
-        if not samples_ref_json:
-            continue
-
-        samples_ref = json.loads(samples_ref_json)
-        for v in samples_ref:
-            if isinstance(v, dict):
-                gsm_to_gse[v["@ref"]] = accession
-            elif isinstance(v, str):
-                gsm_to_gse[v] = accession
-            else:
-                msg = (
-                    "samples_ref of geo_series table is "
-                    "of either list[str] of list[dict] type"
-                )
-                raise TypeError(
-                    msg,
-                )
+        for gsm in load_samples_ref(samples_ref_json):
+            gsm_to_gse[gsm] = accession
 
     download_links_mapping: dict[str, list[DownloadLink]] = defaultdict(
         list[DownloadLink],

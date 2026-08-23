@@ -3,6 +3,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 
+from geo_samples_ref import load_samples_ref
 from helpers import batch_query_in, sqlite_connect
 from sc_enrich.deep._process import _classify_file
 from sc_enrich.deep.counter_common import DownloadLink, FileType
@@ -113,15 +114,8 @@ def yuj_setup(
     )
 
     for accession, samples_ref_json in rows:
-        if not samples_ref_json:
-            continue
-
-        samples_ref = json.loads(samples_ref_json)
-        for v in samples_ref:
-            if isinstance(v, dict):
-                gsm_to_gse[v["@ref"]] = accession
-            elif isinstance(v, str):
-                gsm_to_gse[v] = accession
+        for gsm in load_samples_ref(samples_ref_json):
+            gsm_to_gse[gsm] = accession
 
     all_gsms = list(gsm_to_gse.keys())
     if all_gsms:
@@ -177,8 +171,7 @@ def yuj_setup(
         if len(download_links_mapping.get(accession, [])) > 0:
             continue
 
-        # series-level supplementary: capture every countable file, not just
-        # tarballs (many studies put the matrix straight on the series)
+        # series-level supplementary: capture every countable file, including direct matrix files
         supl_data = json.loads(supl_data_json)
         for item in supl_data:
             url = item.get("#text")

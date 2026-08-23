@@ -9,6 +9,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
+from geo_samples_ref import load_samples_ref
 from helpers import exec_query_from_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
@@ -301,10 +302,9 @@ def _scan_geo(db_file: Path) -> SourceMap:
         FROM geo_series WHERE samples_ref IS NOT NULL""",
     ).fetchall()
 
-    series_to_samples = {
-        item[0]: [v if isinstance(v, str) else v["@ref"] for v in json.loads(item[1])]
-        for item in rows
-    }
+    # samples_ref is a JSON array of GSM strings; see src/geo_samples_ref.py.
+    # Use the helper so a corrupt row returns [] and the unifier continues.
+    series_to_samples = {item[0]: load_samples_ref(item[1]) for item in rows}
 
     for series_acc, samples in series_to_samples.items():
         for sample_acc in samples:
@@ -646,11 +646,10 @@ def _scan_ae(db_file: Path) -> SourceMap:
 
 def _scan_gea(db_file: Path) -> SourceMap:
     """
-    DDBJ GEA (expression).
+    DDBJ GEA expression records.
 
-    A GEA accession *is* one experiment, so num_experiments counts the distinct
-    raw DRA experiments backing it rather than reusing the sample count as _scan_ae
-    does.
+    A GEA accession is one experiment, so num_experiments counts distinct raw
+    DRA experiments backing it.
     """
     m = SourceMap()
     conn = sqlite_connect(db_file)
@@ -697,8 +696,7 @@ def _scan_gea(db_file: Path) -> SourceMap:
         if contact_aff and contact_aff.strip():
             m.center[accession] = [contact_aff.strip()]
 
-        # microarray samples carry no library_strategy; study_type is their only
-        # assay signal
+        # microarray study_type supplies the assay signal when library_strategy is empty
         study_type = str(study_type_val).strip() if study_type_val else ""
         if study_type and not library_count.get(accession):
             library_count[accession][study_type] += 1
@@ -851,9 +849,8 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
     m.num_experiments = dict(exp_count)
     m.num_samples = dict(sample_count)
 
-    # --- GSA-Human / HRA (every study is human) ---
-    # open studies have real per-study experiment and sample rows from fetched
-    # workbooks; controlled studies carry only the study-level row
+    # GSA-Human / HRA: controlled studies carry the study-level row.
+    # Open GSA studies have per-study experiment and sample workbook rows.
     conn = sqlite_connect(gsa_human_db_file)
     hra_library: dict[str, Counter[str]] = defaultdict(Counter[str])
     for study, strategy in conn.execute(
@@ -889,8 +886,7 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
         m.organism[acc] = {
             "Homo sapiens": n_individuals if n_individuals is not None else 1,
         }
-        # controlled studies have no fetched experiment rows, so they fall back
-        # to the study-level string
+        # controlled studies use the study-level string when experiment rows are unavailable
         if acc in hra_library:
             m.library[acc] = dict(hra_library[acc])
         elif lib := (strategy or study_type or "").strip():

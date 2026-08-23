@@ -1,4 +1,4 @@
-"""Ingest the preflightx accuracy benchmark: how good the calls actually are."""
+"""Ingest the internal preflightx comparison against archive metadata."""
 
 from __future__ import annotations
 
@@ -16,16 +16,15 @@ logger = logging.getLogger(__name__)
 
 FIELDS = ("organism", "assay", "sex")
 
-# An abstention is NOT a wrong answer. preflightx saying "unknown" must not be
-# scored as an error, or the accuracy measures coverage instead of correctness.
+# Score "unknown" as a no-call. Counting it as a disagreement turns the
+# comparison into a coverage measure.
 _NOCALL = re.compile(
     r"^$|^na$|unknown|undetermined|ambiguous|not determined|inconclusive"
 )
 _MIXED = re.compile(r"mixed|pooled")
 
-# (pattern, canonical) applied in order; the first match wins. Anything
-# unmatched keeps its raw value, so a novel vocabulary shows up as a
-# disagreement rather than being silently folded into a neighbour.
+# (pattern, canonical) applied in order; first match wins. Unmatched values
+# keep their raw vocabulary and surface as disagreements.
 _ORGANISM = (
     (re.compile(r"homo sapiens|human"), "human"),
     (re.compile(r"mus musculus|mus spretus|mouse"), "mouse"),
@@ -92,7 +91,7 @@ def load_benchmark(csv_file: Path) -> Iterator[tuple[Any, ...]]:
 
 
 def summarise(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
-    """Per-field coverage and accuracy, straight off the ingested rows."""
+    """Per-field coverage and agreement, straight off the ingested rows."""
     rows = conn.execute(
         """
         SELECT field,
@@ -109,10 +108,8 @@ def summarise(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
             "n_experiments": n,
             "n_predicted": predicted,
             "n_evaluable": evaluable,
-            # None, not 0.0: sex has zero evaluable rows and reporting 0%
-            # accuracy for "never validated" is the exact lie this table exists
-            # to prevent.
-            "accuracy": round(correct / evaluable, 4) if evaluable else None,
+            # None: sex has no evaluable rows. Zero would read as measured-and-wrong.
+            "agreement": round(correct / evaluable, 4) if evaluable else None,
         }
         for field, n, predicted, evaluable, correct in rows
     }

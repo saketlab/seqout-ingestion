@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import typer
@@ -5,6 +6,7 @@ import typer
 from embed.embed_constants import TransferStep
 
 transfer_app = typer.Typer()
+logger = logging.getLogger(__name__)
 
 
 @transfer_app.command()
@@ -177,11 +179,82 @@ def pentimento(
     pg_url: str = typer.Option(...),
     pentimento_db_file: Path = typer.Option(...),
     batch_size: int = typer.Option(default=5000),
+    non_nulling: bool = typer.Option(
+        default=False,
+        help="ESCAPE HATCH: COALESCE so the load can only add, never blank. "
+        "For a build known to be MISSING data pg already holds (corrupt or "
+        "partial input). Forfeits the tri-state -- a real 'not measurable' "
+        "NULL cannot clear a stale value, so the next whole-truth transfer "
+        "must run without it.",
+    ),
+    table: list[str] = typer.Option(
+        None,
+        "--table",
+        help="Repeatable. Load ONLY these pg tables, e.g. --table "
+        "pentimento_microbe. Use when the build is authoritative for some "
+        "tables but behind postgres on others.",
+    ),
+    dry_run: bool = typer.Option(
+        default=False,
+        help="Write NOTHING. Report per column how many cells this build would "
+        "BLANK (postgres holds a value, the build has NULL) and how many it "
+        "would fill. Counting nulls on each side separately would miss a build "
+        "that fills 100 cells and blanks 100 others.",
+    ),
 ) -> None:
     """Load Pentimento into pg (counts, preflightx, microbe flags)."""
+    import json as _json
+
     from transfer.pentimento import pentimento_transfer
 
-    pentimento_transfer(pg_url, pentimento_db_file, batch_size)
+    report = pentimento_transfer(
+        pg_url,
+        pentimento_db_file,
+        batch_size,
+        non_nulling=non_nulling,
+        dry_run=dry_run,
+        tables=list(table) if table else None,
+    )
+    if report is not None:
+        logger.info("dry run report: %s", _json.dumps(report, indent=2))
+        if any(r["blanked"] for r in report):
+            # non-zero exit prevents scripts from transferring past this
+            raise typer.Exit(1)
+
+
+@transfer_app.command()
+def gard(
+    pg_url: str = typer.Option(...),
+    gard_db_file: Path = typer.Option(..., help="gard.db from `gard fetch`"),
+) -> None:
+    """Load the GARD rare-disease dimension table into pg."""
+    from transfer.gard import gard_transfer
+
+    gard_transfer(pg_url, gard_db_file)
+
+
+@transfer_app.command()
+def nord(
+    pg_url: str = typer.Option(...),
+    nord_db_file: Path = typer.Option(..., help="nord.db from `nord load`"),
+) -> None:
+    """Load the NORD rare-disease dimension table into pg."""
+    from transfer.nord import nord_transfer
+
+    nord_transfer(pg_url, nord_db_file)
+
+
+@transfer_app.command()
+def inheritance(
+    pg_url: str = typer.Option(...),
+    inheritance_db_file: Path = typer.Option(
+        ..., help="inheritance.db from `inheritance fetch`"
+    ),
+) -> None:
+    """Load the mode-of-inheritance dimension table into pg."""
+    from transfer.inheritance import inheritance_transfer
+
+    inheritance_transfer(pg_url, inheritance_db_file)
 
 
 @transfer_app.command()

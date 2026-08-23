@@ -1,4 +1,4 @@
--- No is_only_ddbj, since nothing in GEA is mirrored anywhere.
+-- GEA has no archive mirror flag.
 
 CREATE TABLE IF NOT EXISTS gea_experiments (
     accession                 TEXT PRIMARY KEY,
@@ -64,6 +64,13 @@ CREATE INDEX IF NOT EXISTS idx_gea_experiments_bioproject
     ON gea_experiments (bioproject);
 CREATE INDEX IF NOT EXISTS idx_gea_experiments_release_date
     ON gea_experiments (release_date);
+-- Reverse pmid -> experiment lookups in pysradb-server. One index per lookup
+-- arm; OR would seq-scan.
+CREATE INDEX IF NOT EXISTS idx_gea_experiments_pubmed_id
+    ON gea_experiments (pubmed_id);
+CREATE INDEX IF NOT EXISTS idx_gea_experiments_pubmed_pysradb
+    ON gea_experiments (pubmed_id_pysradb);
+
 CREATE INDEX IF NOT EXISTS idx_gea_samples_experiment
     ON gea_samples (experiment_accession);
 CREATE INDEX IF NOT EXISTS idx_gea_samples_organism ON gea_samples (organism);

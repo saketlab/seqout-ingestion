@@ -4,9 +4,15 @@
 .yuj/
 __pycache__/
 *.egg-info/
-data/
-scripts/
-.env
 .DS_Store
 
 .env.bak
+.env
+.env.*
+!.env.example
+
+data/
+docs/
+scripts/
+
+yuj/

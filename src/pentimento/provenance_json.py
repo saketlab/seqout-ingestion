@@ -10,6 +10,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+from pentimento.preflight import structural_calls
+
 logger = logging.getLogger(__name__)
 
 PROGRESS_EVERY = 5_000
@@ -17,10 +19,9 @@ PROGRESS_EVERY = 5_000
 
 def _best_run(experiment: dict[str, Any]) -> dict[str, Any] | None:
     """
-    Return the run whose report backs the experiment's evidence: the deepest one.
+    Return the deepest run whose report backs the experiment's evidence.
 
-    deep_runs are listed separately but are not automatically deeper than every
-    entry in runs, so both are considered and reads_scanned decides.
+    deep_runs and runs are both considered; reads_scanned decides.
     """
     best: dict[str, Any] | None = None
     best_depth = -1
@@ -54,10 +55,9 @@ def _call_row(
     deep_n_reads: Any,
 ) -> tuple[Any, ...] | None:
     """
-    One experiment's calls, shaped exactly like load_preflightx_db's rows.
+    One experiment's calls in load_preflightx_db row shape.
 
-    Identical column order on purpose: the JSON route then reuses the `_pfx_exp`
-    staging table and the same overlay UPDATE instead of duplicating either.
+    Column order matches `_pfx_exp`, so both routes reuse one overlay UPDATE.
     """
     vote = experiment.get("vote") or {}
     report = _best_run(experiment) or {}
@@ -77,9 +77,9 @@ def _call_row(
         species.get("called_hit_fraction"),
         _clean(species.get("runner_up")),
         species.get("margin"),
-        None,  # species_ambiguous: not in the JSON; the DB route is its source
+        None,  # species_ambiguous comes from the DB route
         _as_bool_int(species.get("mislabel")),
-        None,  # stated sex belongs to the metadata, not to a read scan
+        None,  # stated sex belongs to metadata
         _clean(vote.get("sex")) or _clean(sex.get("verdict")),
         _clean(sex.get("confidence")),
         sex.get("reads_scanned"),
@@ -92,6 +92,7 @@ def _call_row(
         _clean(vote.get("assay")) or _clean(chemistry.get("assay_display")),
         _clean(chemistry.get("assay_display")),
         _as_bool_int(chemistry.get("is_single_cell")),
+        *structural_calls(report),
     )
 
 
@@ -102,12 +103,10 @@ def _vote_row(
     params: dict[str, Any],
 ) -> tuple[Any, ...]:
     """
-    Return the vote and HOW MUCH was looked at to reach it.
+    Return the vote and scan depth behind it.
 
-    Runs scanned, reads per run, whether the deep pass ran: this is what
-    separates "abstained after looking hard" from "barely looked".
-    `preflightx_provenance` was meant to carry it and does not -- its
-    params_json is 100% NULL across all 193,748 rows.
+    Runs scanned, reads per run and deep-pass status separate shallow abstention
+    from deep abstention. params_json is NULL across all 193,748 rows.
     """
     vote = experiment.get("vote") or {}
     return (
@@ -125,17 +124,16 @@ def _vote_row(
 
 def load(annotated_dir: Path) -> Iterator[tuple[str, tuple[Any, ...]]]:
     """
-    Yield (table, row) for both destinations in ONE pass over the files.
+    Yield rows for both destinations in one pass over NFS files.
 
-    One pass, not two: this is 38,108 files on NFS, and reading them once per
-    destination table doubled the slowest leg of the build for nothing.
+    The corpus is 38,108 files; single-pass loading avoids duplicate reads.
     """
     if not annotated_dir.is_dir():
         logger.warning("provenance dir missing, skipping: %s", annotated_dir)
         return
     seen = 0
     malformed = 0
-    # iterdir() because this directory holds ~83k entries and a glob on it hits
+    # iterdir() because this directory holds many entries and a glob on it hits
     # the argument-list limit in adjacent tooling
     for path in annotated_dir.iterdir():
         if not path.name.endswith(".provenance.json"):

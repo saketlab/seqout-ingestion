@@ -1,18 +1,8 @@
 """
-Main enrichment module
+Sample metadata enrichment pipeline.
 
-Embedding-matches each sample column against a field description,
-asks the LLM only about what the embedding could
-not settle, then post-processes with Cellosaurus and records where every value
-came from.
-
-Returns four frames per study, in this order:
-
-    output_df      the enriched metadata
-    cello_df       the same, with a matched cell line's donations applied
-    provenance_df  per-sample per-field source / score / matched column
-    ontology_df    cello_df plus UBERON / MONDO / CL / EFO term ids
-
+Matches columns semantically, asks the LLM for unsettled fields, then applies
+Cellosaurus post-processing and ontology mapping.
 """
 
 import concurrent.futures
@@ -50,8 +40,8 @@ load_dotenv()
 _ontology_path = _cello.ontology_path
 
 
-# Tissues that indicate a metastatic/effusion sampling site, not the organ of origin.
-# When a cancer cell line has one of these, we look up the disease's primary organ.
+# Metastatic/effusion sampling sites. For cancer cell lines, use the
+# disease's primary organ.
 METASTATIC_SITE_KEYWORDS = {
     "pleural effusion",
     "ascites",
@@ -126,11 +116,10 @@ def _is_metastatic_tissue(tissue: str) -> bool:
 
 def get_primary_tissue(disease: str) -> str | None:
     """
-    Look up the primary organ for a disease from the disease→tissue mapping.
+    Look up the primary organ for a disease.
 
-    If the direct lookup returns a metastatic site, tries progressively
-    shorter disease name prefixes (e.g. 'blast phase CML' → 'CML') to
-    find the organ of origin.
+    Metastatic-site hits trigger shorter disease-name prefix lookups, e.g.
+    "blast phase CML" to "CML".
     """
     mapping = load_disease_primary_tissue()
     d = disease.lower().strip()
@@ -138,7 +127,7 @@ def get_primary_tissue(disease: str) -> str | None:
     if result and not _is_metastatic_tissue(result):
         return result
 
-    # Try shorter prefixes: "blast phase chronic myelogenous ..." → "chronic myelogenous ..."
+    # Try shorter prefixes, e.g. "blast phase chronic myelogenous ...".
     parts = d.split()
     for start in range(1, len(parts)):
         shorter = " ".join(parts[start:])
@@ -263,7 +252,7 @@ _WARNED_SPECIES: set = set()
 
 
 def _warn_unresolved_species(names) -> None:
-    """Warn when a species cannot be resolved."""
+    """Warn for unresolved species."""
     for name in sorted(names):
         if name in _WARNED_SPECIES:
             continue
@@ -281,9 +270,9 @@ def cellosaurus_species_conflict(
     expected_species: str | None = None,
 ) -> bool:
     """
-    True when a matched Cellosaurus entry is a different organism than expected.
+    True when a Cellosaurus match has a different resolved organism.
 
-    Conflict is decided on taxids only, and only when both sides resolve to one.
+    Conflict requires one taxid on each side.
     """
     if not entry:
         return False
@@ -322,9 +311,8 @@ def apply_cellosaurus_entries(
 
         entry = cellosaurus_lookup(str(cell_line_val))
         if cellosaurus_species_conflict(entry, expected_taxid, expected_species):
-            # Name collision across species, not an identification. Refuse the
-            # whole override and fall into the "not found" path below, so the
-            # LLM's own tissue/cell_type survive and nothing is overwritten.
+            # Name collision across species. Refuse the override and leave the LLM
+            # tissue and cell_type intact.
             species_refused.add(i)
             record_provenance(i, "cell_line", CELLOSAURUS_SPECIES_GUARD_REFUSED)
             entry = None
@@ -354,7 +342,7 @@ def apply_cellosaurus_entries(
                 cello_df.loc[i, "age"] = entry["age"]
                 record_provenance(i, "age", "cellosaurus")
 
-        # Sex: always override from Cellosaurus (authoritative for cell lines)
+        # Sex: override from Cellosaurus; cell-line metadata is authoritative.
         if entry.get("sex"):
             cello_df.loc[i, "sex"] = entry["sex"]
             record_provenance(i, "sex", "cellosaurus")
@@ -381,8 +369,7 @@ def apply_cellosaurus_entries(
                 cello_df.loc[i, "tissue"] = _title_case(entry["tissue"])
                 record_provenance(i, "tissue", "cellosaurus")
 
-        # Disease: always override from Cellosaurus
-        # Fixes "Healthy" for cancer cell lines + empty disease
+        # Disease: override from Cellosaurus for cancer cell lines and empty disease.
         if entry.get("disease"):
             cello_df.loc[i, "disease"] = _title_case(entry["disease"])
             record_provenance(i, "disease", "cellosaurus")
@@ -1001,11 +988,11 @@ _ASSAY_REGEX_MAP = [
             re.IGNORECASE,
         ),
         None,
-    ),  # not an assay
+    ),  # non-assay value
     (
         re.compile(r"^genomic dna$", re.IGNORECASE),
         None,
-    ),  # bare "Genomic DNA" is not an assay
+    ),  # bare "Genomic DNA" names a material
     (re.compile(r"affymetrix.*(?:snp|genotyp)", re.IGNORECASE), "SNP Array"),
     (re.compile(r"affymetrix.*(?:tiling|array)", re.IGNORECASE), "Microarray"),
     (re.compile(r"agilent.*(?:cgh|array)", re.IGNORECASE), "Array CGH"),
@@ -1018,7 +1005,7 @@ _ASSAY_REGEX_MAP = [
     (re.compile(r"smarter.*(?:single.cell|scrna|sc rna)", re.IGNORECASE), "scRNA-Seq"),
     (re.compile(r"smarter.*(?:stranded|total).*rna", re.IGNORECASE), "RNA-Seq"),
     (re.compile(r"nugen.*ovation", re.IGNORECASE), "RNA-Seq"),
-    # Genomic DNA + specific assay → resolve to the assay
+    # Genomic DNA plus specific assay resolves to the assay.
     (re.compile(r"genomic dna\s+cut\s*&\s*run", re.IGNORECASE), "CUT&Run"),
     (re.compile(r"genomic dna\s+cut\s*&\s*tag", re.IGNORECASE), "CUT&Tag"),
     (re.compile(r"genomic dna\s+(?:atac|tn5)", re.IGNORECASE), "ATAC-Seq"),
@@ -1040,28 +1027,28 @@ _ASSAY_REGEX_MAP = [
     (
         re.compile(r"(?:qrt-pcr|rt-pcr|qpcr|real.time pcr)", re.IGNORECASE),
         None,
-    ),  # not a sequencing assay
-    (re.compile(r"western blot", re.IGNORECASE), None),  # not an assay
+    ),  # sequencing-control value
+    (re.compile(r"western blot", re.IGNORECASE), None),  # rejected value
     (
         re.compile(r"whole.?genome.?amplif|^wga$", re.IGNORECASE),
         None,
-    ),  # sample prep, not assay
+    ),  # sample prep
     (
         re.compile(r"^(?:input|igg|control)$", re.IGNORECASE),
         None,
-    ),  # ChIP control, not an assay
+    ),  # ChIP control value
     (
         re.compile(r"^(?:enhancer|promoter)$", re.IGNORECASE),
         None,
-    ),  # genomic feature, not an assay
+    ),  # genomic feature
     (
         re.compile(r"^(?:enrich|enrichment)$", re.IGNORECASE),
         None,
-    ),  # ambiguous, not an assay
+    ),  # ambiguous value
     (
         re.compile(r"^(?:s\d+p|h3k\d+|ab\d+)", re.IGNORECASE),
         None,
-    ),  # antibody/histone target, not assay
+    ),  # antibody/histone target
 ]
 
 
@@ -1114,12 +1101,10 @@ def _title_case(value: str) -> str:
 
 def _normalize_assay(value: str) -> str | None:
     """
-    Canonical casing for assay names.  Returns None for non-assay values.
+    Canonical casing for assay names.
 
-    1. Exact lookup in CANONICAL_ASSAY
-    2. 10x Genomics strings → _normalize_10x (preserves direction + version)
-    3. Regex-based pattern matching for complex variants
-    4. Fall back to title case
+    Exact known values win, then 10x normalization, regex variants and title case.
+    Returns None for non-assay values.
     """
     canonical = CANONICAL_ASSAY.get(value.lower())
     if canonical:
@@ -1130,7 +1115,7 @@ def _normalize_assay(value: str) -> str | None:
     # Regex fallback for complex patterns (e.g., "Genomic DNA ChIP-Seq")
     for pattern, replacement in _ASSAY_REGEX_MAP:
         if pattern.search(value):
-            return replacement  # None means "not a real assay"
+            return replacement  # None means outside the assay vocabulary.
     return _title_case(value)
 
 
@@ -1138,7 +1123,7 @@ _ASSAY_CATEGORIES_CSV = Path(__file__).with_name("assay_categories.csv")
 
 
 def _load_assay_categories() -> dict[str, str]:
-    """Load assay → category mapping from CSV file."""
+    """Load assay-to-category mapping from CSV file."""
     import csv as _csv
 
     mapping: dict[str, str] = {}
@@ -1205,45 +1190,11 @@ def enrich_df(
     """
     Enrich a project's sample metadata.
 
-    Parameters
-    ----------
-    project : Project
-        Must have .samples (DataFrame) and .title/.description/.overall_design.
-    enrichment_backend : str
-        Ollama model name, or "vllm/<model>" for vLLM backend.
-    embedding_model : str
-        HuggingFace model for semantic column matching (lazy-loaded only when
-        rapidfuzz first pass fails for a term).
-    cellosaurus : bool
-        If True, apply Cellosaurus post-processing to fill/override fields
-        from cell line identity.
-    verbose : bool
-        Show progress bars and status messages.
-    debug : bool
-        Print debug info for column matching.
-    expected_taxid : str | None
-        NCBI taxid the study's samples are expected to be, e.g. "10090" for a
-        mouse cohort. When set, a Cellosaurus entry whose own taxid/species
-        contradicts it is refused outright rather than applied; see
-        cellosaurus_species_conflict. None (the default) disables the gate, so
-        human cohorts behave exactly as before.
-    expected_species : str | None
-        Same gate, given as a name ("mouse", "Mus musculus"). May be used
-        instead of or together with expected_taxid.
-
-    Returns
-    -------
-    tuple[DataFrame, DataFrame, DataFrame, DataFrame]
-        (enriched_df, cellosaurus_df, provenance_df, ontology_df)
-        - enriched_df:    Sample + 14 enriched columns (same as v2)
-        - cellosaurus_df: Sample + 14 columns after Cellosaurus augmentation
-                          (identical to enriched_df if cellosaurus=False)
-        - provenance_df:  Sample + {field}_source + {field}_score columns
-        - ontology_df:    cellosaurus_df + tissue_primary_site + tissue_site_type
-                          + UBERON/MONDO/CL/EFO ontology IDs
-
+    Returns enriched, Cellosaurus-adjusted, provenance and ontology DataFrames.
+    Species gates refuse Cellosaurus matches that contradict the expected
+    taxid/name.
     """
-    # Maps row_index → { field → {"source": ..., "column": ..., "score": ...} }
+    # Maps row_index to {field: {source, column, score}}.
     _provenance: dict[int, dict[str, dict]] = {}
 
     def _record_provenance(
@@ -1395,8 +1346,7 @@ def enrich_df(
             **ollama_kwargs,
         )
 
-    # The embedding model is only loaded on first cache miss, so studies whose
-    # columns all match by fuzzy string never pay the model-loading cost.
+    # Embedding model loads on first cache miss; fuzzy matches avoid startup.
 
     _embedding_model_instance = None
     _key_embeddings_cache = None  # tensor, lazily computed
@@ -1414,8 +1364,7 @@ def enrich_df(
 
     def _embedding_match(term: str, keys: list[str]) -> list[tuple[str, float]]:
         """Semantic embedding fallback used when fuzzy match finds nothing."""
-        # No candidate columns to match (e.g. study has only standard columns and
-        # no biological sample attributes) -> nothing to embed. Return no matches
+        # Empty candidate set returns an empty match list.
         if not keys:
             return []
         model, embs = _ensure_embeddings(keys)
@@ -2550,14 +2499,12 @@ def enrich_df(
     rows = list(detailed_df[all_cols].iterrows())
     tissue_from_embedding_flags: dict[int, bool] = {}
 
-    # Deduplicate rows before LLM invocation
-    # Many studies have identical metadata across samples (e.g. replicates).
-    # Deduplicate by attribute fingerprint so we only call the LLM once
-    # per unique metadata signature, then broadcast results.
+    # Deduplicate by attribute fingerprint before LLM calls, then broadcast
+    # results across replicate rows.
 
     def _row_fingerprint(row_dict: dict) -> str:
         """Create a hashable fingerprint from row values (excluding sample ID)."""
-        # Use only the embedding columns (biological metadata) for dedup
+        # Deduplicate on biological metadata columns.
         vals = []
         for col in embedding_cols:
             v = row_dict.get(col)
@@ -2586,7 +2533,7 @@ def enrich_df(
             f"({n_deduped} duplicates skipped)"
         )
 
-    # Enrich unique rows only
+    # Enrich unique rows.
     start_time = time.perf_counter()
     unique_results: dict[int, tuple[dict, bool]] = {}  # idx -> (enriched, tissue_flag)
 
@@ -2617,11 +2564,9 @@ def enrich_df(
     if verbose:
         console.print(f"Enrichment completed in {elapsed:.2f} seconds.")
 
-    # Clear cell_type/tissue when cell_line was LLM-extracted
-    # When cell_line is found (via embedding match or fallback), the parallel
-    # cell_type and tissue nodes don't know about it and often hallucinate
-    # (e.g., returning "HeLa" as cell_type). Clear them so Cellosaurus
-    # post-processing fills tissue/cell_type from the cell line identity.
+    # Clear cell_type/tissue when the LLM found a cell_line. Parallel nodes often
+    # echo the line name as cell_type; Cellosaurus fills tissue/cell_type from the
+    # cell line identity afterward.
     for i in range(len(detailed_df)):
         cell_line_val = (
             detailed_df.loc[i, "cell_line"]
@@ -2638,8 +2583,8 @@ def enrich_df(
             # Clear cell_type; Cellosaurus will set it from cell line identity
             ct_source = prov.get("cell_type", {}).get("source", "")
             if ct_source != "embedding":
-                # Only clear if cell_type wasn't from a direct embedding match
-                # (embedding = metadata explicitly had a cell_type column)
+                # Clear when cell_type came from the LLM; direct metadata columns stay
+                # authoritative.
                 detailed_df.loc[i, "cell_type"] = None
             # Clear tissue; Cellosaurus will fill from cell line site of origin
             tissue_from_emb = tissue_from_embedding_flags.get(i, False)
@@ -2706,7 +2651,7 @@ def enrich_df(
             cl_lower in KNOWN_CELL_TYPES_NOT_LINES or cl_lower.startswith("patient")
         )
         if is_misclassified:
-            # Move to cell_type if it's currently empty
+            # Move to cell_type when it is empty.
             ct = (
                 output_df.loc[i, "cell_type"]
                 if "cell_type" in output_df.columns
@@ -2735,10 +2680,9 @@ def enrich_df(
         cello_df["taxid"] = None
         species_refused = set()
 
-    # Fix 1: Add tissue_primary_site and tissue_site_type
-    # For cancer cell lines, the Cellosaurus "tissue" field may be the
-    # metastatic/effusion site (e.g. "pleural effusion") rather than the
-    # organ of disease origin. Add separate fields for primary site.
+    # Add tissue_primary_site and tissue_site_type. For cancer cell lines,
+    # Cellosaurus tissue may be a metastatic/effusion site; primary site records
+    # the disease origin.
 
     cello_df["tissue_primary_site"] = None
     cello_df["tissue_site_type"] = None
@@ -2770,7 +2714,7 @@ def enrich_df(
             if primary and not _is_metastatic_tissue(primary):
                 cello_df.loc[i, "tissue_primary_site"] = _title_case(primary)
             else:
-                # Cannot determine primary; leave as None
+                # Primary site unresolved; leave as None
                 cello_df.loc[i, "tissue_primary_site"] = None
         elif tissue:
             # In situ: primary site is the tissue itself
@@ -2822,16 +2766,11 @@ def _completeness_score(df: pd.DataFrame, enriched_cols: list[str]) -> float:
 
 
 def _remap_srp_to_gsm(srp_df: pd.DataFrame, srp_project) -> pd.DataFrame:
-    """
-    Remap SRP rows from SRX identifiers to GSM identifiers.
-
-    SRP responses have 'Accession' (SRX) and 'Sample Alias' (GSM).
-    Replace the Accession column with GSM values and rename to 'Sample'.
-    """
+    """Remap SRP rows from SRX identifiers to GSM identifiers."""
     if "Sample Alias" not in srp_project.samples.columns:
         return srp_df
 
-    # Build SRX→GSM mapping from the original project samples
+    # Build SRX-to-GSM mapping from original project samples.
     srx_to_gsm = {}
     for _, row in srp_project.samples.iterrows():
         srx = row.get("Accession")
@@ -2868,25 +2807,10 @@ def enrich_df_dual(
     expected_species: str | None = None,
 ):
     """
-    Enrich a project using both GSE and SRP metadata, pick the more complete result.
+    Enrich paired GSE/SRP metadata and keep the fuller result.
 
-    For GSE accessions, also fetches the corresponding SRP (and vice versa).
-    Both are enriched independently, then the result with more filled columns wins.
-    SRP-based output is remapped to use GSM identifiers.
-
-    Falls back to single-source enrichment if the counterpart is unavailable.
-
-    Parameters
-    ----------
-    borrow_columns : bool
-        If True, after picking the winner, borrow individual columns from the
-        losing side when they have strictly better fill rate. Default False.
-
-    Returns
-    -------
-    tuple[DataFrame, DataFrame, DataFrame, DataFrame]
-        Same as enrich_df: (enriched_df, cellosaurus_df, provenance_df, ontology_df)
-
+    The losing side can lend columns with better fill rate when borrow_columns is
+    set. Returns the same four frames as enrich_df.
     """
     from enrich.projects import fetch_projects, find_counterpart
 
@@ -3004,7 +2928,7 @@ def enrich_df_dual(
         return tuple(_remap_srp_to_gsm(df, srp_project) for df in dfs)
 
     if not borrow_columns:
-        # --- Winner-takes-all: use the more complete side entirely -----------
+        # Winner-takes-all: use the more complete side entirely
         if counter_score > primary_score:
             if verbose:
                 console.print(

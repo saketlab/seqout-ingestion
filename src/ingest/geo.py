@@ -19,6 +19,7 @@ import lxml.etree as ET  # noqa: N812
 from bs4 import BeautifulSoup, Tag
 from tqdm.asyncio import tqdm
 
+from geo_samples_ref import dump_samples_ref
 from helpers import download_file, exec_query_from_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
@@ -534,14 +535,17 @@ def _get_series(root: ET._Element) -> list[tuple] | None:
     overall_design = _findtext(series, "Overall-Design")
     pubmed_ids_list = [p.text for p in series.findall(_wrap_ns("Pubmed-ID"))]
     pubmed_ids = json.dumps(pubmed_ids_list) if pubmed_ids_list else None
-    # TODO: resolve these citation DOIs to a PMID (esearch "<doi>[DOI]" or
-    # idconv) and backfill pubmed_id when empty; only the raw citation is stored
+    # Resolve citation DOIs to PMIDs later and backfill pubmed_id when empty;
+    # raw citation text is stored for now.
     citations_list = [c.text for c in series.findall(_wrap_ns("Citation"))]
     citations = json.dumps(citations_list) if citations_list else None
     relations_raw = _et_to_dict(series.findall(_wrap_ns("Relation")))
     relations = json.dumps(relations_raw) if relations_raw else None
+    # `_et_to_dict` keeps the MINiML attribute, so <Sample-Ref ref="GSM1"/> comes
+    # back as {"@ref": "GSM1"}. Store the accession itself: samples_ref is a JSON
+    # array of GSM strings, one shape, everywhere. See src/geo_samples_ref.py.
     sample_refs_raw = _et_to_dict(series.findall(_wrap_ns("Sample-Ref")))
-    sample_refs = json.dumps(sample_refs_raw) if sample_refs_raw else None
+    sample_refs = dump_samples_ref(sample_refs_raw)
 
     title = _findtext(series, "Title")
     summary = _findtext(series, "Summary")

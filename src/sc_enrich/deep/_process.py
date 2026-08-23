@@ -12,24 +12,38 @@ from typing import Any, cast
 
 import h5py
 
-try:  # optional 'rds' extra: only the .rds readers need R / rpy2 / pyreadr
+# Import the two halves of the 'rds' extra independently. pyreadr reads most
+# .rds files unaided; rpy2 handles S4/Seurat objects through system R.
+try:
     import pyreadr
-    import rpy2.robjects as ro
     from pyreadr.custom_errors import LibrdataError
 except ImportError:
-    _R_HINT = (
-        "reading .rds files needs the optional 'rds' extra (rpy2 + pyreadr and a "
-        "system R install). install with: uv sync --extra rds"
+    _PYREADR_HINT = (
+        "reading .rds files needs pyreadr. install with: uv pip install pyreadr"
     )
 
     class LibrdataError(Exception):  # placeholder so except LibrdataError resolves
         pass
 
+    class _MissingPyreadr:
+        def __getattr__(self, _name: str) -> object:
+            raise ImportError(_PYREADR_HINT)
+
+    pyreadr = _MissingPyreadr()  # type: ignore[assignment]
+
+try:  # fallback for S4/Seurat objects; needs system R
+    import rpy2.robjects as ro
+except ImportError:
+    _R_HINT = (
+        "this .rds needs the rpy2 fallback, which requires a system R install. "
+        "install with: uv sync --extra rds"
+    )
+
     class _MissingR:  # any attribute access raises the friendly hint
         def __getattr__(self, _name: str) -> object:
             raise ImportError(_R_HINT)
 
-    pyreadr = ro = _MissingR()  # type: ignore[assignment]
+    ro = _MissingR()  # type: ignore[assignment]
 
 from helpers import ftp_data_stream, open_http_range
 from sc_enrich.deep.counter_common import FileType, RdsReadError
@@ -41,8 +55,7 @@ _rds_state: dict[str, str] = {"class": ""}
 
 _rds_genes: dict[str, int] = {"genes": -1}
 
-# nnz of the last .mtx counted; -1 when unknown, used to spot raw/unfiltered
-# matrices (nnz/cell far below real gene density)
+# nnz of the last .mtx counted; -1 means unknown for raw/unfiltered checks.
 _mtx_nnz: dict[str, int] = {"nnz": -1}
 
 
@@ -416,10 +429,10 @@ def count_tar_members_via_stream(
     tmp_dir: Path | None = None,
 ) -> list[tuple[str, int, int, str, int]] | None:
     """
-    Count every matrix member of a streamed tar (no early exit).
+    Count every matrix member of a streamed tar.
 
-    Returns [(name, cells, genes, format, nnz)] so per-GSM RAW tars map cells to
-    samples instead of one study-level max. None = stream failed.
+    Returns [(name, cells, genes, format, nnz)] for per-GSM RAW tars. None means
+    stream failure.
     """
     ftp_url = url.replace("https://", "ftp://", 1)
     extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
@@ -550,7 +563,7 @@ _H5_GENE_LEAVES = ("genes", "gene_names", "var_names")
 
 
 def _h5_genes(f: Any) -> int:
-    """Gene-axis length of a 10x-style .h5 (-1 if no recognizable features set)."""
+    """Gene-axis length of a 10x-style .h5; -1 means unknown."""
     n_genes: int | None = None
 
     def find_features(name: str, obj: Any) -> None:
@@ -572,7 +585,7 @@ def _h5_genes(f: Any) -> int:
 
 
 def _h5ad_genes(f: Any) -> int:
-    """Gene-axis length of an .h5ad (-1 if not derivable)."""
+    """Gene-axis length of an .h5ad; -1 means unknown."""
     if "var/_index" in f:
         n = len(f["var/_index"])
         return n if n > 1 else -1
@@ -628,8 +641,7 @@ def gene_count_for(path: Path, file_type: FileType, chunk_size: int) -> int:
     """
     Genes for an already-sniffed file where cheaply derivable, else -1.
 
-    barcodes/txt/tsv/csv/tar carry no gene axis in the fetched head; reuses the
-    local file the cell count came from, no extra download.
+    File types lacking a gene axis reuse the local file from the cell-count pass.
     """
     try:
         if file_type == FileType.Mtx:
@@ -712,8 +724,7 @@ def _process_delimiter_file_types(delimiter: str) -> Callable[[Path, int], int]:
 
 @safe_process
 def _process_rds(path: Path, _: int) -> int:
-    # reset both holders so a stale class or gene count from a prior link cannot
-    # leak
+    # Reset both holders so stale class or gene counts stay isolated by link.
     _rds_state["class"] = ""
     _rds_genes["genes"] = -1
     try:

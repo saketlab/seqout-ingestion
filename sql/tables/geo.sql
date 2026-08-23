@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS geo_series (
     title                TEXT,
     pubmed_id            TEXT CHECK (json_valid(pubmed_id)),
     citation             TEXT CHECK (json_valid(citation)),
+    -- JSON array of GSM accession strings. Object-form entries should be
+    -- flattened with the migration and read through src/geo_samples_ref.py.
+    -- GSE228457 is a corrupt page; repair by re-ingest.
     samples_ref          TEXT CHECK (json_valid(samples_ref)),
     series_type          TEXT CHECK (json_valid(series_type)),
     relation             TEXT CHECK (json_valid(relation)),
