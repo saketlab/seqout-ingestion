@@ -52,7 +52,7 @@ BATCH_SIZE = 1000
 
 #: The uniqueness constraint doubles as the only index in the database, and it
 #: backs every name lookup and every MERGE. Relationship traversals are pointer
-#: chases -- no index applies and none is needed.
+#: chases; no index applies and none is needed.
 _CONSTRAINT = (
     "CREATE CONSTRAINT term_name_unique IF NOT EXISTS "
     "FOR (t:Term) REQUIRE t.name IS UNIQUE"
@@ -289,7 +289,7 @@ def load_hierarchy(driver: Driver, source: Source, root: Path) -> dict[str, int]
 # ---------------------------------------------------------------------------
 
 #: A term X has children iff something points at X, or at any member of X's
-#: synonym cluster, via SUBCLASS_OF/PART_OF -- excluding the cluster itself, so
+#: synonym cluster, via SUBCLASS_OF/PART_OF, excluding the cluster itself, so
 #: a synonym is never counted as a child of its own term. MAPS_TO*0..2 includes
 #: X via the *0, and two hops covers synonym-of-a-synonym chains.
 #:

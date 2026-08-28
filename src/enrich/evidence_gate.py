@@ -77,6 +77,36 @@ _NULLISH = {
 }
 _SQUASH_MATCH_LEN = 4
 
+# Cellosaurus aliases these to cell lines: "ko" -> K-562, "wt" -> STA-WT-1,
+# "na" -> NA. Text saying "CRISPR KO" would otherwise vouch for an asserted
+# K-562. Blocked as evidence only; CELL_LINE_PLACEHOLDERS handles a submitter
+# who writes one as the cell line.
+_AMBIGUOUS_EVIDENCE_NAMES = frozenset(
+    {
+        "ko",
+        "wt",
+        "na",
+        "nt",
+        "ctl",
+        "ctr",
+        "neg",
+        "pos",
+        "es",
+        "ips",
+        "pbs",
+        "dmso",
+        "wtc",
+        "sc",
+        "shc",
+        "mut",
+        "ref",
+        "std",
+        "tc",
+        "jm",
+        "nsg",
+    }
+)
+
 _CELLOSAURUS_BACKPROP = BACKPROP_FIELDS
 
 _EXTRACTED_COLS = {
@@ -154,6 +184,8 @@ def cell_line_supported(value, evidence, lookup: dict | None = None) -> bool:
         if len(n) >= _SQUASH_MATCH_LEN:
             if n in squashed:
                 return True
+        elif n in _AMBIGUOUS_EVIDENCE_NAMES:
+            continue
         elif raw and re.search(rf"\b{re.escape(n)}\b", raw):
             return True
     return False

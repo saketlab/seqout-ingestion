@@ -214,15 +214,17 @@ def _load_gsa(gsa_db_file: Path) -> dict[str, tuple[str, str, str]]:
 
 def _load_gsa_human(gsa_human_db_file: Path) -> dict[str, tuple[str, str, str]]:
     """
-    HRA studies -> (title, description, project_accession).
+    Open-access HRA studies -> (title, description, project_accession).
 
     Description is synthesised from the study's distinct experiment titles (as for
-    CRA); controlled studies have no fetched experiments, so fall back to disease.
+    CRA), falling back to disease when the workbook titled no experiment.
+    Controlled studies are excluded to match unified_metadata, so the catalogue
+    never aliases an accession the metadata build does not carry.
     """
     with sqlite_connect(gsa_human_db_file) as conn:
         rows = conn.execute(
             """SELECT accession, title, disease, project_accession
-            FROM gsa_human_studies""",
+            FROM gsa_human_studies WHERE access = 'Open'""",
         ).fetchall()
         exp_titles = dict(
             conn.execute(

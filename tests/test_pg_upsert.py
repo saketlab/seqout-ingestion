@@ -30,3 +30,8 @@ def test_multiple_columns_are_or_ed_in_the_guard():
 
 def test_no_payload_yields_empty_so_caller_uses_do_nothing():
     assert non_nulling_update("t", []) == ""
+
+
+def test_insert_only_yields_no_update_clause():
+    """Callers render "" as DO NOTHING, so an existing row is never rewritten."""
+    assert non_nulling_update("t", ["a", "b"], insert_only=True) == ""

@@ -2,9 +2,11 @@ import contextlib
 import ftplib
 import http
 import io
+import json
 import logging
 import socket
 import sqlite3
+import threading
 import time
 import zlib
 from collections.abc import Callable, Iterator
@@ -77,7 +79,8 @@ def send_req(
 ) -> httpx.Response:
     close_client = client is None
     if client is None:
-        client = httpx.Client()
+        # archives redirect plain GETs to their mirrors
+        client = httpx.Client(follow_redirects=True)
 
     try:
 
@@ -269,16 +272,57 @@ def _download_multipart(
         )
         return
 
-    already_downloaded = 0
-    if dest_path.exists():
-        already_downloaded = dest_path.stat().st_size
-        if already_downloaded >= content_length:
+    # reported success.
+    parts_path = dest_path.with_name(dest_path.name + ".parts")
+
+    if dest_path.exists() and not parts_path.exists():
+        if dest_path.stat().st_size == content_length:
             logger.info("skipping %s as it is already fully downloaded", dest_path.name)
             return
+        logger.warning("%s is partial with no parts file; restarting", dest_path.name)
 
-    if already_downloaded == 0:
+    done: list[list[int]] = []
+    if parts_path.exists():
+        try:
+            meta = json.loads(parts_path.read_text())
+        except ValueError:
+            meta = {}
+        if (
+            meta.get("content_length") == content_length
+            and meta.get("num_workers") == num_workers
+            and dest_path.exists()
+        ):
+            done = [list(x) for x in meta.get("done", [])]
+            logger.info(
+                "resuming %s: %d of %d parts already written",
+                dest_path.name,
+                len(done),
+                num_workers,
+            )
+        else:
+            logger.warning(
+                "%s does not match this download; restarting", parts_path.name
+            )
+
+    already_downloaded = sum(e - s + 1 for s, e in done)
+    if not done:
         with dest_path.open("wb") as f:
             f.truncate(content_length)
+
+    parts_lock = threading.Lock()
+
+    def _record(chunk_start: int, chunk_end: int) -> None:
+        with parts_lock:
+            done.append([chunk_start, chunk_end])
+            parts_path.write_text(
+                json.dumps(
+                    {
+                        "content_length": content_length,
+                        "num_workers": num_workers,
+                        "done": done,
+                    },
+                ),
+            )
 
     pbar = (
         tqdm(
@@ -372,17 +416,33 @@ def _download_multipart(
                 if i < num_workers - 1
                 else content_length - 1
             )
-            effective_start = max(c_start, already_downloaded)
-            futures.append(pool.submit(_download_chunk, effective_start, c_end))
+            if [c_start, c_end] in done:
+                if pbar:
+                    pbar.update(c_end - c_start + 1)
+                continue
+
+            def _run(start: int = c_start, end: int = c_end) -> None:
+                _download_chunk(start, end)
+                _record(start, end)
+
+            futures.append(pool.submit(_run))
 
         for future in as_completed(futures):
             future.result()
+
+    covered = sum(e - s + 1 for s, e in done)
+    if covered != content_length:
+        raise RuntimeError(
+            f"incomplete download: {covered} of {content_length} bytes written for {url}",  # noqa: E501
+        )
 
     actual_size = dest_path.stat().st_size
     if actual_size != content_length:
         raise RuntimeError(
             f"downloaded file size mismatch: expected {content_length}, got {actual_size} for {url}",  # noqa: E501
         )
+
+    parts_path.unlink(missing_ok=True)
 
     if pbar:
         pbar.close()

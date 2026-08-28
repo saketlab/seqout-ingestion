@@ -12,7 +12,7 @@ def run(
     ae_db_file: Path = typer.Option(...),
     unified_metadata_db_file: Path = typer.Option(...),
     chroma_db_dir: Path = typer.Option(...),
-    model_name: str = typer.Option("codefuse-ai/F2LLM-v2-8B"),
+    model_name: str = typer.Option("abhinand/MedEmbed-large-v0.1"),
 ) -> None:
     from embed.embedder import embed_new
 

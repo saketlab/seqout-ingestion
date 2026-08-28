@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 SMALL_BP = 50_000
 
+# Genome-size ceiling for a viral reference; breadth_frac is a fraction, so a
+# larger genome already demands proportionally more covered bases. class=virus
+# bars herpesviruses from the bacterial gate, so a ceiling below their size
+# excludes them from both. SMALL_BP stays the bacterial floor.
+VIRAL_MAX_BP = 300_000
+
 # Mouse genomes carry MLV/MMTV-like loci and vectors carry HIV1/HTLV1 sequence.
 # Excluded from evidence tier; derived from FLAG_PANEL so gate and badge agree.
 ENDOGENOUS_RX = re.compile(
@@ -51,11 +57,12 @@ QUANT_ALIGNER = "minimap2 -x sr --secondary=no"
 QUANT_SOURCE_TMPL = "https://s3.amazonaws.com/logan-pub/u/{acc}/{acc}.unitigs.fa.zst"
 # f-strings are stored in quant_provenance as the exact rule record.
 VIRAL_GATE_RULE = (
-    f"class=virus AND 0 < ref_bp <= {SMALL_BP} "
+    f"class=virus AND 0 < ref_bp <= {VIRAL_MAX_BP} "
     f"AND breadth_frac >= {VIRAL_VALIDATED_BREADTH}"
 )
 VIRAL_EVIDENCE_GATE_RULE = (
-    f"class=virus AND 0 < ref_bp <= {SMALL_BP} AND breadth_frac >= {VIRAL_BREADTH} "
+    f"class=virus AND 0 < ref_bp <= {VIRAL_MAX_BP} "
+    f"AND breadth_frac >= {VIRAL_BREADTH} "
     f"AND NOT host-endogenous/vector-derived"
 )
 BACT_GATE_RULE = (
@@ -386,7 +393,7 @@ def load_microbe_quant(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
                     ref_bp = _as_int(rec[4]) or 0
                     covered = _as_int(rec[5]) or 0
                     breadth = _as_float(rec[6]) or 0.0
-                    small_virus = klass == "virus" and 0 < ref_bp <= SMALL_BP
+                    small_virus = klass == "virus" and 0 < ref_bp <= VIRAL_MAX_BP
                     viral = small_virus and breadth >= VIRAL_VALIDATED_BREADTH
                     viral_ev = (
                         small_virus

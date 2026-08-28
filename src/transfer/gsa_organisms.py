@@ -46,7 +46,7 @@ _CREATE_GIN = (
 
 # The federated search + organism facet read gsa_studies_search.organisms, not
 # gsa_studies. Mirror the multi-valued set there (it was previously single-valued)
-# -- see _SEARCH_MATCH_CTE in the server's queries.py.
+# see _SEARCH_MATCH_CTE in the server's queries.py.
 _COPY_TO_SEARCH = """
 UPDATE gsa_studies_search gss
 SET organisms = gs.organisms

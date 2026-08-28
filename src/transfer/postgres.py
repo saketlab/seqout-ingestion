@@ -65,8 +65,7 @@ class _TableInfo:
     conflict_cols: list[str] | None = None
 
 
-def postgres_transfer(
-    pg_url: str,
+def build_table_info(
     sra_db_file: Path,
     geo_db_file: Path,
     ena_db_file: Path,
@@ -75,15 +74,14 @@ def postgres_transfer(
     unified_metadata_db_file: Path,
     download_links_db_file: Path,
     read_batch_size: int,
-    num_retries: int,
-    num_workers: int,
-    gsa_db_file: Path | None = None,
-    gsa_human_db_file: Path | None = None,
-    gsa_bioproject_db_file: Path | None = None,
-    *,
-    prune_publications: bool = False,
-) -> None:
-    table_info = {
+) -> dict[str, _TableInfo]:
+    """
+    Every sqlite-backed transfer task: its source file, key and column lists.
+
+    Shared with the delta builder so a table's conflict key has one definition;
+    two lists would drift the first time a table is added.
+    """
+    return {
         "geo_series": _TableInfo(
             sqlite_db_file=geo_db_file,
             modifier=_geo_series_batch_modifier(
@@ -209,27 +207,68 @@ def postgres_transfer(
         ),
     }
 
+
+def postgres_transfer(
+    pg_url: str,
+    sra_db_file: Path,
+    geo_db_file: Path,
+    ena_db_file: Path,
+    ae_db_file: Path,
+    pubmed_metadata_db_file: Path,
+    unified_metadata_db_file: Path,
+    download_links_db_file: Path,
+    read_batch_size: int,
+    num_retries: int,
+    num_workers: int,
+    gsa_db_file: Path | None = None,
+    gsa_human_db_file: Path | None = None,
+    gsa_bioproject_db_file: Path | None = None,
+    *,
+    prune_publications: bool = False,
+    insert_only: bool = False,
+    tables: list[str] | None = None,
+) -> None:
+    table_info = build_table_info(
+        sra_db_file,
+        geo_db_file,
+        ena_db_file,
+        ae_db_file,
+        pubmed_metadata_db_file,
+        unified_metadata_db_file,
+        download_links_db_file,
+        read_batch_size,
+    )
+
     all_tasks: list[tuple[str, Callable, tuple]] = []
     for table_name, info in table_info.items():
-        if info.sqlite_db_file is not None and info.sqlite_db_file.exists():
-            all_tasks.append(
-                (
-                    table_name,
-                    _transfer_helper,
-                    (
-                        pg_url,
-                        info.sqlite_db_file,
-                        info.modifier,
-                        table_name,
-                        read_batch_size,
-                        num_retries,
-                        info.select_cols,
-                        info.insert_cols,
-                        info.select_table_name,
-                        info.conflict_cols,
-                    ),
-                ),
+        if info.sqlite_db_file is None or not info.sqlite_db_file.exists():
+            continue
+        if insert_only and not info.conflict_cols:
+            # no unique key, so ON CONFLICT cannot fire and the plain COPY
+            # appends a second copy of every staged row
+            logger.warning(
+                "%s has no conflict key; skipped under insert-only", table_name
             )
+            continue
+        all_tasks.append(
+            (
+                table_name,
+                _transfer_helper,
+                (
+                    pg_url,
+                    info.sqlite_db_file,
+                    info.modifier,
+                    table_name,
+                    read_batch_size,
+                    num_retries,
+                    info.select_cols,
+                    info.insert_cols,
+                    info.select_table_name,
+                    info.conflict_cols,
+                    insert_only,
+                ),
+            ),
+        )
 
     all_tasks.append(
         (
@@ -269,6 +308,7 @@ def postgres_transfer(
                 pubmed_metadata_db_file,
                 read_batch_size,
                 prune_publications,
+                insert_only,
             ),
         ),
     )
@@ -286,8 +326,20 @@ def postgres_transfer(
             gsa_human_db_file,
             read_batch_size,
             gsa_bioproject_db_file,
+            insert_only=insert_only,
         ),
     )
+
+    if tables:
+        wanted = set(tables)
+        unknown = wanted - {label for label, _, _ in all_tasks}
+        if unknown:
+            logger.warning("no such transfer task: %s", ", ".join(sorted(unknown)))
+        all_tasks = [t for t in all_tasks if t[0] in wanted]
+        if not all_tasks:
+            logger.error("--table matched nothing; giving up")
+            return
+        logger.info("restricted to %s", ", ".join(label for label, _, _ in all_tasks))
 
     with (
         ThreadPoolExecutor(max_workers=num_workers) as pool,
@@ -324,6 +376,7 @@ def _transfer_helper(
     insert_cols: list[str] | None = None,
     select_table_name: str | None = None,
     conflict_cols: list[str] | None = None,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     select_pg_table_name = select_table_name or table_name
 
@@ -354,6 +407,7 @@ def _transfer_helper(
             non_nulling_update(
                 table_name,
                 [c for c in insert_col_list if c not in conflict_cols],
+                insert_only=insert_only,
             )
             if conflict_cols
             else ""
@@ -1529,6 +1583,7 @@ def _transfer_study_publications(
     pubmed_metadata_db_file: Path,
     batch_size: int,
     prune: bool = False,  # noqa: FBT002
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     with (
         sqlite_connect(unified_metadata_db_file) as um_conn,
@@ -1587,10 +1642,14 @@ def _transfer_study_publications(
         cols = ["accession", "source", "publications"]
         cols_str = ", ".join(cols)
         placeholders = ", ".join(["%s"] * len(cols))
+        action = (
+            "DO NOTHING"
+            if insert_only
+            else "DO UPDATE SET publications = EXCLUDED.publications"
+        )
         insert_query = f"""INSERT INTO study_publications ({cols_str})
         VALUES ({placeholders})
-        ON CONFLICT (accession, source) DO UPDATE
-        SET publications = EXCLUDED.publications"""  # noqa: S608
+        ON CONFLICT (accession, source) {action}"""  # noqa: S608
 
         def _gen_rows() -> Iterator[tuple]:
             for (acc, source), pubs in groups.items():
@@ -1609,7 +1668,7 @@ def _transfer_study_publications(
         # anything outside it is deleted. Off by default, because a partial
         # DATA_DIR would delete publication rows outside the run. Enable only
         # with a full dump.
-        if not prune:
+        if insert_only or not prune:
             logger.info(
                 "skipping study_publications orphan cleanup "
                 "(pass --prune-publications to enable)",

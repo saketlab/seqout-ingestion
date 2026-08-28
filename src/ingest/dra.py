@@ -76,7 +76,7 @@ DRA_SQL_STATEMENTS = {
         "VALUES (?,?,?,?,?,?,?,?,?,?)"
     ),
     # Upsert, not INSERT OR REPLACE: REPLACE is a delete+insert, which would null the
-    # columns this statement does not name -- pubmed_id_pysradb and pubmed_last_checked
+    # columns this statement does not name: pubmed_id_pysradb, pubmed_last_checked
     # come from backfill, not from the XML, and a re-ingest must not discard them.
     FileType.Study: (
         "INSERT INTO dra_studies "

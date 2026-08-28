@@ -130,6 +130,8 @@ def ingest_sra(
         num_retries=retries,
         timeout=timeout,
         max_wait=max_timeout,
+        with_pbar=True,
+        validate_content_length=True,
     )
 
     logger.info("downloading accessions tab file")
@@ -142,8 +144,17 @@ def ingest_sra(
     )
 
     accessions_csv_path = output_dir / "sra_accessions.csv"
+    # A csv older than the tab it came from was built against a shorter file.
+    stale = (
+        accessions_csv_path.exists()
+        and accessions_csv_path.stat().st_mtime < tab_path.stat().st_mtime
+    )
+    if stale:
+        logger.warning(
+            "%s predates %s; reconverting", accessions_csv_path.name, tab_path.name
+        )
     to_reprocess_csv = (
-        True if not accessions_csv_path.exists() else is_freshly_downloaded
+        not accessions_csv_path.exists() or is_freshly_downloaded or stale
     )
 
     if to_reprocess_csv:
@@ -184,7 +195,8 @@ def _extract_sra_file_dumps_in_range(
 ) -> list[str]:
     file_dumps: list[str] = []
 
-    r = httpx.get(SRA_FTP_BASE_URL, timeout=30)
+    # NCBI 301s the listing to its trailing-slash form
+    r = httpx.get(SRA_FTP_BASE_URL, timeout=30, follow_redirects=True)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
 
@@ -245,9 +257,10 @@ def _convert_tab_to_csv(
     libc = ctypes.CDLL("libc.so.6")
 
     file_type_col = 6
+    tmp_path = csv_file_path.with_suffix(".csv.partial")
     with (
         tab_file_path.open("rb", buffering=0) as inf,
-        csv_file_path.open("wb") as outf,
+        tmp_path.open("wb") as outf,
         tqdm(
             total=tab_file_path.stat().st_size,
             unit="B",
@@ -293,6 +306,8 @@ def _convert_tab_to_csv(
                     + f[4].split(b"T")[0]
                     + b"\n"
                 )
+
+    tmp_path.replace(csv_file_path)
 
 
 def _download_sra_file_dumps(

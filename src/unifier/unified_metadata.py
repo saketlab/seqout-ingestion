@@ -849,8 +849,7 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
     m.num_experiments = dict(exp_count)
     m.num_samples = dict(sample_count)
 
-    # GSA-Human / HRA: controlled studies carry the study-level row.
-    # Open GSA studies have per-study experiment and sample workbook rows.
+    # GSA-Human / HRA: open studies only. 
     conn = sqlite_connect(gsa_human_db_file)
     hra_library: dict[str, Counter[str]] = defaultdict(Counter[str])
     for study, strategy in conn.execute(
@@ -879,14 +878,14 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
     ) in conn.execute(
         """SELECT accession, organization, release_time, pubmed_id_pysradb,
             strategy, study_type, n_individuals, n_samples, n_experiments
-        FROM gsa_human_studies""",
+        FROM gsa_human_studies WHERE access = 'Open'""",
     ):
         # every HRA study is human, so a NULL individual count defaults to 1 to
         # still mark human presence
         m.organism[acc] = {
             "Homo sapiens": n_individuals if n_individuals is not None else 1,
         }
-        # controlled studies use the study-level string when experiment rows are unavailable
+        # fall back to the study-level string when the workbook named no strategy
         if acc in hra_library:
             m.library[acc] = dict(hra_library[acc])
         elif lib := (strategy or study_type or "").strip():

@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS ena_experiments (
     disease                     TEXT,
     dev_stage                   TEXT,
     base_count                  INTEGER,
-    read_count                  INTEGER
+    read_count                  INTEGER,
     run_alias                   TEXT
 );
 

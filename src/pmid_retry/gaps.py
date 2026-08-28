@@ -16,6 +16,20 @@ logger = logging.getLogger(__name__)
 
 _NO_PYSRADB = "(pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
 
+#: Newest first: a paper appears years after the data, so recent studies are the
+#: ones whose PubMed link is most likely to have just become resolvable. Each
+#: source names its own recency column, and NULLS LAST keeps undated rows from
+#: crowding the head of the queue.
+_ORDER: dict[str, str] = {
+    "sra": " ORDER BY published_at DESC NULLS LAST, updated_at DESC NULLS LAST",
+    "geo": " ORDER BY published_at DESC NULLS LAST, updated_at DESC NULLS LAST",
+    "ena": " ORDER BY last_updated DESC NULLS LAST",
+    "ae": " ORDER BY release_date DESC NULLS LAST, submission_date DESC NULLS LAST",
+    "dra": " ORDER BY published_at DESC NULLS LAST, updated_at DESC NULLS LAST",
+    "gea": " ORDER BY release_date DESC NULLS LAST, updated_at DESC NULLS LAST",
+    "gsa": " ORDER BY last_updated DESC NULLS LAST",
+}
+
 GAP_SQL: dict[str, str] = {
     "sra": (
         "SELECT accession FROM sra_studies"
@@ -70,7 +84,7 @@ def pmid_gaps(
     gaps: dict[str, list[str]] = {}
     with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
         for source in wanted:
-            query = GAP_SQL[source]
+            query = GAP_SQL[source] + _ORDER[source]
             if limit:
                 query += f" LIMIT {int(limit)}"
             cur.execute(query)

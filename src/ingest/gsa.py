@@ -487,7 +487,7 @@ def parse_search_page(html: str, accession: str) -> dict:
             label = " ".join(th.get_text(" ").split())
             cells[label] = " ".join(td.get_text(" ").split())
 
-    # a miss renders a result list -- never attribute another study's title
+    # a miss renders a result list; never attribute another study's title
     if not any(v.upper() == accession.upper() for v in cells.values()):
         return {}
 

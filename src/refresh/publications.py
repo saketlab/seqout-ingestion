@@ -125,7 +125,7 @@ _SOURCES = (
 )
 
 # Every pmid any study points at, from every column that can hold one. The regex
-# doubles as the NULL/''/garbage filter -- geo's arrays and the scalar text
+# doubles as the NULL/''/garbage filter; geo's arrays and the scalar text
 # columns all reduce to the same shape. '0' is in there and is not a pmid, hence
 # the leading [1-9].
 #
@@ -162,7 +162,7 @@ _MISSING_PMIDS = f"""
 # _MISSING_PMIDS never revisits a row that already exists, so they need their own
 # queue. PubMed titles end in punctuation; a cut one ends mid-word. The heuristic
 # over-matches (an epmc-sourced title with no full stop is re-fetched for
-# nothing), which costs efetch quota and nothing else -- the upsert is idempotent.
+# nothing), which costs efetch quota and nothing else; the upsert is idempotent.
 _TRUNCATED_TITLE_PMIDS = r"""
     SELECT pmid FROM pubmed_metadata
     WHERE title IS NOT NULL AND title <> '' AND title !~ '[.?!)\]]$'
@@ -299,7 +299,7 @@ _TITLE_UPDATE = """
 
 # study_publications.publications is a denormalized copy of pubmed_metadata rows
 # (postgres.py::_transfer_study_publications builds it on the lab box), and it is
-# what the API returns and what pub_tsv's main path indexes -- repairing
+# what the API returns and what pub_tsv's main path indexes; repairing
 # pubmed_metadata alone changes nothing a user can see. Titles only: every other
 # key in those objects is still whatever the transfer wrote.
 #
@@ -347,7 +347,7 @@ def _title_worker(
             results: dict[str, dict] = {}
             try:
                 # private, but it is the efetch half of pmid_info without the
-                # OpenAlex half -- the public entry point cannot skip that.
+                # OpenAlex half; the public entry point cannot skip that.
                 sra._fetch_pmid_metadata_ncbi(batch, results)  # noqa: SLF001
             except Exception:
                 logger.exception("efetch failed for a batch of %d", len(batch))
@@ -370,7 +370,7 @@ def _title_worker(
 
 
 # --------------------------------------------------------------------------
-# step 1 -- resolve studies that have no publication at all
+# step 1: resolve studies that have no publication at all
 # --------------------------------------------------------------------------
 
 
@@ -491,7 +491,7 @@ def _resolve_worker(
 
             with conn.cursor() as cur:
                 # stamped whether or not a pmid came back, so a miss is not
-                # retried next week -- that is what makes the queue advance.
+                # retried next week, which makes the queue advance.
                 cur.execute(
                     f"UPDATE {source.table} SET pubmed_last_checked = current_date"  # noqa: S608
                     f" WHERE {source.acc_col} = ANY(%s)",
@@ -545,7 +545,7 @@ def _resolve_dra(
 
 
 # --------------------------------------------------------------------------
-# step 2 -- fetch metadata for pmids no one has looked up yet
+# step 2: fetch metadata for pmids no one has looked up yet
 # --------------------------------------------------------------------------
 
 

@@ -262,8 +262,57 @@ def geocode_missing(
     logger.info("done: %d/%d records geocoded successfully", updated, total)
 
 
+_ROR_ZENODO_API = (
+    "https://zenodo.org/api/records?communities=ror-data&sort=newest&size=1"
+)
+
+
+def _fetch_ror_dump(dest: Path) -> bool:
+    """
+    Download the newest ROR dump to `dest`. Returns whether it is now present.
+    """
+    import io
+    import urllib.request
+    import zipfile
+
+    try:
+        with urllib.request.urlopen(_ROR_ZENODO_API, timeout=60) as r:  # noqa: S310
+            hits = json.load(r)["hits"]["hits"]
+        files = hits[0]["files"]
+        zip_url = next(f["links"]["self"] for f in files if f["key"].endswith(".zip"))
+        logger.info("fetching ROR dump %s", hits[0]["metadata"]["title"])
+        with urllib.request.urlopen(zip_url, timeout=600) as r:  # noqa: S310
+            blob = r.read()
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            # v2 schema only: _load_ror_index reads locations[].geonames_details
+            # and names[].types, neither of which exists in the v1 layout
+            name = next(
+                n
+                for n in zf.namelist()
+                if n.startswith("v2") and n.endswith(".json") and "schema" not in n
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.with_suffix(dest.suffix + ".partial")
+            tmp.write_bytes(zf.read(name))
+            tmp.replace(dest)
+        logger.info("ROR dump written to %s", dest)
+    except Exception as exc:
+        logger.warning("could not fetch ROR dump: %s", exc)
+        return False
+    return dest.exists()
+
+
 def _load_ror_index(ror_data_file: Path | None) -> dict[str, list[dict[str, Any]]]:
-    if ror_data_file is None or not ror_data_file.exists():
+    if ror_data_file is None:
+        logger.warning("no --ror-data-file: geocoding without institution matching")
+        return {}
+
+    if not ror_data_file.exists() and not _fetch_ror_dump(ror_data_file):
+        logger.warning(
+            "ROR data absent at %s and could not be fetched; every uncached "
+            "centre will fall through to the address geocoder",
+            ror_data_file,
+        )
         return {}
 
     logger.info("loading ror index from %s", ror_data_file)
@@ -364,7 +413,11 @@ def _geocode_item(
     result = _geocode(
         cleaned, arcgis_geocoder, _parse_arcgis, GeocodingProviders.Arcgis
     )
-    if result is None or result.get("error"):
+    if (
+        result is None
+        or result.get("error")
+        or not _arcgis_is_plausible(cleaned, result)
+    ):
         result = _geocode(
             cleaned, osm_geocoder, _parse_osm, GeocodingProviders.Nominatim
         )
@@ -376,14 +429,127 @@ def _geocode_item(
         geo_country_mapping[a] for a in geo_accessions if a in geo_country_mapping
     }
     if result.get("error") is None and geo_countries:
+        if len(geo_countries) > 1:
+            # a center used by studies in several countries cannot be resolved
+            # from the GEO mapping; an arbitrary pick would be a coin toss
+            return None
         geo_country = next(iter(geo_countries))
         result_country_code = (result.get("country_code") or "").lower()
-        if result_country_code == geo_country:
-            result["country"] = geo_country
-        else:
+        if result_country_code != geo_country:
             return None
+        # geo_country is alpha-2; assigning it to `country` put "cn" in a column
+        # that holds country NAMES. Confirm the code, keep the geocoder's name.
+        result["country_code"] = geo_country
 
     return result
+
+
+#: ArcGIS score floor. 
+_ARCGIS_MIN_SCORE = 0.85
+
+#: Words shared by thousands of institutions. A candidate matching only these
+#: has matched nothing: "Sanger Institute" and "Singer Institute" agree on
+#: every token but the one that names the place.
+_GENERIC_TOKENS = frozenset(
+    {
+        "the",
+        "of",
+        "for",
+        "and",
+        "de",
+        "di",
+        "du",
+        "der",
+        "la",
+        "el",
+        "university",
+        "universite",
+        "universitat",
+        "universidad",
+        "univ",
+        "institute",
+        "institut",
+        "instituto",
+        "institution",
+        "inst",
+        "college",
+        "school",
+        "faculty",
+        "department",
+        "dept",
+        "division",
+        "laboratory",
+        "laboratories",
+        "lab",
+        "labs",
+        "center",
+        "centre",
+        "hospital",
+        "clinic",
+        "medical",
+        "research",
+        "science",
+        "sciences",
+        "technology",
+        "national",
+        "international",
+        "state",
+        "academy",
+        "foundation",
+        "society",
+        "group",
+        "unit",
+        "program",
+        "programme",
+        "ltd",
+        "inc",
+        "llc",
+        "gmbh",
+        "corp",
+        "co",
+        "company",
+    }
+)
+
+
+#: below this a token is an initial or a stray fragment, not a name
+_MIN_TOKEN_LEN = 3
+
+
+def _distinctive_tokens(text: str) -> set[str]:
+    tokens = re.findall(r"[a-z0-9]+", text.lower())
+    return {t for t in tokens if t not in _GENERIC_TOKENS and len(t) >= _MIN_TOKEN_LEN}
+
+
+def _arcgis_is_plausible(query: str, result: dict[str, Any]) -> bool:
+    """
+    Whether an ArcGIS candidate answers the question that was asked.
+    """
+    score = result.get("geocode_score")
+    if score is not None and score < _ARCGIS_MIN_SCORE:
+        return False
+
+    candidate = _first(
+        result.get("place_name"),
+        result.get("loc_name"),
+        result.get("short_label"),
+        result.get("official_address"),
+    )
+    if not candidate:
+        return False
+
+    wanted = _distinctive_tokens(query)
+    if not wanted:
+        # nothing but generic words to match on; let Nominatim try instead
+        return False
+
+    if wanted & _distinctive_tokens(str(candidate)):
+        return True
+
+    logger.debug(
+        "arcgis rejected for '%s': got '%s' (score %s)", query, candidate, score
+    )
+    return False
 
 
 def _geocode(
@@ -403,6 +569,8 @@ def _geocode(
             "namedetails": True,
             "language": "en",
         }
+    elif source == GeocodingProviders.Arcgis:
+        kwargs = {"out_fields": "*"}
 
     try:
         location = geocoder(query, **kwargs)
@@ -714,7 +882,6 @@ def _clean_text(text: str | None) -> str | None:
     text = re.sub(r",\s*$", "", text)
     text = re.sub(r"\s+", " ", text)
     text = text.strip()
-    text = text.split(",")[-1].strip()
 
     return text or None
 

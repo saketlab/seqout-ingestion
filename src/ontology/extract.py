@@ -46,8 +46,8 @@ logger = logging.getLogger(__name__)
 _GOOD_PREDS = frozenset({"hasExactSynonym", "hasRelatedSynonym"})
 
 #: Synonyms this short are almost always initialisms that collide with
-#: unrelated terms. HGNC is the exception -- gene symbols are legitimately
-#: 2 characters (e.g. AR, MB) -- so it gets its own floor.
+#: unrelated terms. HGNC gene symbols are legitimately 2 characters
+#: (e.g. AR, MB), so it gets its own floor.
 _MIN_SYNONYM_LEN = 2
 _MIN_SYNONYM_LEN_HGNC = 1
 
@@ -188,7 +188,7 @@ def download(source: Source, root: Path, *, workers: int, force: bool) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# parsers -- one per Source.parser kind
+# parsers, one per Source.parser kind
 # ---------------------------------------------------------------------------
 
 

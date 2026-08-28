@@ -10,8 +10,34 @@ logger = logging.getLogger(__name__)
 
 
 @transfer_app.command()
+def delta(
+    pg_url: str = typer.Option(..., envvar="PG_URL"),
+    source_db_file: Path = typer.Option(...),
+    out_db_file: Path = typer.Option(...),
+    table: list[str] = typer.Option(  # noqa: B008
+        ...,
+        "--table",
+        help="Repeatable. Transfer task names to include, e.g. --table sra_studies.",
+    ),
+    read_batch_size: int = typer.Option(default=500),
+) -> None:
+    """
+    Write a slim sqlite holding only rows postgres lacks, for a faster transfer.
+
+    Run after ingest, then point transfer postgres at out_db_file. Keys come from
+    the transfer's own task table, so this cannot disagree with what the transfer
+    treats as a conflict.
+    """
+    from transfer.delta import build_delta
+
+    counts = build_delta(pg_url, source_db_file, out_db_file, table, read_batch_size)
+    logger.info("delta written to %s (%d rows)", out_db_file, sum(counts.values()))
+
+
+@transfer_app.command()
 def postgres(
-    pg_url: str = typer.Option(...),
+    # envvar keeps the password out of argv, where ps and the shell history see it
+    pg_url: str = typer.Option(..., envvar="PG_URL"),
     sra_db_file: Path = typer.Option(...),
     geo_db_file: Path = typer.Option(...),
     ena_db_file: Path = typer.Option(...),
@@ -34,6 +60,22 @@ def postgres(
             "on a fresh or partial DATA_DIR this wipes the table."
         ),
     ),
+    insert_only: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--insert-only",
+        help=(
+            "ON CONFLICT DO NOTHING everywhere, so an accession postgres "
+            "already holds keeps every value it has. For the weekly window, "
+            "whose sqlite covers only new records. Tables with no unique key "
+            "are skipped rather than appended to."
+        ),
+    ),
+    table: list[str] = typer.Option(
+        None,
+        "--table",
+        help="Repeatable. Run ONLY these transfer tasks, e.g. --table geo_series. "
+        "For a sqlite that is authoritative for some tables and behind on others.",
+    ),
 ) -> None:
     from transfer.postgres import postgres_transfer
 
@@ -53,6 +95,8 @@ def postgres(
         gsa_human_db_file=gsa_human_db_file,
         gsa_bioproject_db_file=gsa_bioproject_db_file,
         prune_publications=prune_publications,
+        insert_only=insert_only,
+        tables=table or None,
     )
 
 
@@ -135,6 +179,14 @@ def ddbj(
     gea_db_file: Path | None = typer.Option(None),
     download_links_db_file: Path | None = typer.Option(None),
     read_batch_size: int = typer.Option(default=500),
+    insert_only: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--insert-only",
+        help=(
+            "ON CONFLICT DO NOTHING, for a per-window sqlite. Skips gea_samples, "
+            "whose only unique key is an id that ingest restarts every window."
+        ),
+    ),
 ) -> None:
     """Upsert DDBJ DRA and GEA into the dra_* / gea_* Postgres tables."""
     from transfer.ddbj import ddbj_transfer
@@ -145,6 +197,7 @@ def ddbj(
         gea_db_file,
         read_batch_size,
         download_links_db_file=download_links_db_file,
+        insert_only=insert_only,
     )
 
 

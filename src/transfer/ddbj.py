@@ -197,6 +197,8 @@ def dl_tasks(
     pg_url: str,
     download_links_db_file: Path | None,
     batch_size: int,
+    *,
+    insert_only: bool = False,
 ) -> list[tuple[str, Callable[..., None], tuple]]:
     if not download_links_db_file or not download_links_db_file.exists():
         return []
@@ -204,12 +206,17 @@ def dl_tasks(
         (
             "sra_run_download_links (DRR)",
             _transfer_dra_download_links,
-            (pg_url, download_links_db_file, batch_size),
+            (pg_url, download_links_db_file, batch_size, insert_only),
         ),
     ]
 
 
-def _transfer_dra_download_links(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_dra_download_links(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         cols = ", ".join(_DL_COLS)
         with sqlite_connect(db) as c:
@@ -226,6 +233,7 @@ def _transfer_dra_download_links(pg_url: str, db: Path, batch_size: int) -> None
         batch_size,
         conflict_col="run_accession",
         fill_gaps_only=True,
+        insert_only=insert_only,
     )
 
 
@@ -233,11 +241,13 @@ def dra_tasks(
     pg_url: str,
     dra_db_file: Path | None,
     batch_size: int,
+    *,
+    insert_only: bool = False,
 ) -> list[tuple[str, Callable[..., None], tuple]]:
     if not dra_db_file or not dra_db_file.exists():
         return []
 
-    common = (pg_url, dra_db_file, batch_size)
+    common = (pg_url, dra_db_file, batch_size, insert_only)
     return [
         ("dra_submissions", _transfer_submissions, common),
         ("dra_studies", _transfer_studies, common),
@@ -252,15 +262,24 @@ def gea_tasks(
     pg_url: str,
     gea_db_file: Path | None,
     batch_size: int,
+    *,
+    insert_only: bool = False,
 ) -> list[tuple[str, Callable[..., None], tuple]]:
     if not gea_db_file or not gea_db_file.exists():
         return []
 
-    common = (pg_url, gea_db_file, batch_size)
-    return [
-        ("gea_experiments", _transfer_gea_experiments, common),
-        ("gea_samples", _transfer_gea_samples, common),
-    ]
+    common = (pg_url, gea_db_file, batch_size, insert_only)
+    tasks = [("gea_experiments", _transfer_gea_experiments, common)]
+    if insert_only:
+        # gea_samples conflicts on a surrogate id that ingest restarts per
+        # window, so a staged row lands on the id of an unrelated sample and
+        # overwrites it. The values are non-NULL, so COALESCE does not protect
+        # them. (experiment_accession, source_name) is not unique in postgres,
+        # so there is no natural key to conflict on yet.
+        logger.warning("gea_samples has no natural key; skipped under insert-only")
+    else:
+        tasks.append(("gea_samples", _transfer_gea_samples, common[:3]))
+    return tasks
 
 
 def ddbj_transfer(
@@ -269,16 +288,20 @@ def ddbj_transfer(
     gea_db_file: Path | None,
     batch_size: int,
     download_links_db_file: Path | None = None,
+    *,
+    insert_only: bool = False,
 ) -> None:
-    tasks = dra_tasks(pg_url, dra_db_file, batch_size)
+    tasks = dra_tasks(pg_url, dra_db_file, batch_size, insert_only=insert_only)
     if tasks:
         exec_query_from_file("tables/dra_pg.sql", pg_dsn=pg_url)
 
-    gea = gea_tasks(pg_url, gea_db_file, batch_size)
+    gea = gea_tasks(pg_url, gea_db_file, batch_size, insert_only=insert_only)
     if gea:
         exec_query_from_file("tables/gea_pg.sql", pg_dsn=pg_url)
     tasks += gea
-    tasks += dl_tasks(pg_url, download_links_db_file, batch_size)
+    tasks += dl_tasks(
+        pg_url, download_links_db_file, batch_size, insert_only=insert_only
+    )
 
     if not tasks:
         logger.warning("no dra or gea db given; nothing to transfer")
@@ -290,7 +313,12 @@ def ddbj_transfer(
     logger.info("ddbj transfer complete")
 
 
-def _transfer_submissions(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_submissions(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         with sqlite_connect(db) as c:
             for acc, alias, broker, center, lab, pub, upd in c.execute(
@@ -307,10 +335,22 @@ def _transfer_submissions(pg_url: str, db: Path, batch_size: int) -> None:
                     _iso_date(upd),
                 )
 
-    _upsert(pg_url, "dra_submissions", _SUBMISSIONS_COLS, rows(), batch_size)
+    _upsert(
+        pg_url,
+        "dra_submissions",
+        _SUBMISSIONS_COLS,
+        rows(),
+        batch_size,
+        insert_only=insert_only,
+    )
 
 
-def _transfer_studies(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_studies(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         with sqlite_connect(db) as c:
             for r in c.execute(
@@ -358,10 +398,22 @@ def _transfer_studies(pg_url: str, db: Path, batch_size: int) -> None:
                     is_only_ddbj,
                 )
 
-    _upsert(pg_url, "dra_studies", _STUDIES_COLS, rows(), batch_size)
+    _upsert(
+        pg_url,
+        "dra_studies",
+        _STUDIES_COLS,
+        rows(),
+        batch_size,
+        insert_only=insert_only,
+    )
 
 
-def _transfer_studies_search(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_studies_search(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     """Only is_only_ddbj = 1 -- see sql/tables/dra_pg.sql."""
 
     def rows() -> Iterator[tuple]:
@@ -382,10 +434,22 @@ def _transfer_studies_search(pg_url: str, db: Path, batch_size: int) -> None:
                     _iso_date(pub),
                 )
 
-    _upsert(pg_url, "dra_studies_search", _SEARCH_COLS, rows(), batch_size)
+    _upsert(
+        pg_url,
+        "dra_studies_search",
+        _SEARCH_COLS,
+        rows(),
+        batch_size,
+        insert_only=insert_only,
+    )
 
 
-def _transfer_experiments(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_experiments(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         with sqlite_connect(db) as c:
             for r in c.execute(
@@ -396,10 +460,22 @@ def _transfer_experiments(pg_url: str, db: Path, batch_size: int) -> None:
             ):
                 yield (*r[:7], string_list(r[7]), *r[8:])
 
-    _upsert(pg_url, "dra_experiments", _EXPERIMENTS_COLS, rows(), batch_size)
+    _upsert(
+        pg_url,
+        "dra_experiments",
+        _EXPERIMENTS_COLS,
+        rows(),
+        batch_size,
+        insert_only=insert_only,
+    )
 
 
-def _transfer_samples(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_samples(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         with sqlite_connect(db) as c:
             yield from c.execute(
@@ -408,17 +484,29 @@ def _transfer_samples(pg_url: str, db: Path, batch_size: int) -> None:
                 FROM dra_samples""",
             )
 
-    _upsert(pg_url, "dra_samples", _SAMPLES_COLS, rows(), batch_size)
+    _upsert(
+        pg_url,
+        "dra_samples",
+        _SAMPLES_COLS,
+        rows(),
+        batch_size,
+        insert_only=insert_only,
+    )
 
 
-def _transfer_runs(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_runs(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         with sqlite_connect(db) as c:
             yield from c.execute(
                 "SELECT accession, experiment, submission FROM dra_runs",
             )
 
-    _upsert(pg_url, "dra_runs", _RUNS_COLS, rows(), batch_size)
+    _upsert(pg_url, "dra_runs", _RUNS_COLS, rows(), batch_size, insert_only=insert_only)
 
 
 def _coerce_gea(cols: list[str], row: tuple) -> tuple:
@@ -434,17 +522,31 @@ def _coerce_gea(cols: list[str], row: tuple) -> tuple:
     return tuple(out)
 
 
-def _transfer_gea_experiments(pg_url: str, db: Path, batch_size: int) -> None:
+def _transfer_gea_experiments(
+    pg_url: str,
+    db: Path,
+    batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
+) -> None:
     def rows() -> Iterator[tuple]:
         cols = ", ".join(_GEA_EXPERIMENTS_COLS)
         with sqlite_connect(db) as c:
             for row in c.execute(f"SELECT {cols} FROM gea_experiments"):  # noqa: S608
                 yield _coerce_gea(_GEA_EXPERIMENTS_COLS, row)
 
-    _upsert(pg_url, "gea_experiments", _GEA_EXPERIMENTS_COLS, rows(), batch_size)
+    _upsert(
+        pg_url,
+        "gea_experiments",
+        _GEA_EXPERIMENTS_COLS,
+        rows(),
+        batch_size,
+        insert_only=insert_only,
+    )
 
 
 def _transfer_gea_samples(pg_url: str, db: Path, batch_size: int) -> None:
+    """Scheduled only when insert_only is off; the id conflict is not windowed-safe."""
+
     def rows() -> Iterator[tuple]:
         cols = ", ".join(_GEA_SAMPLES_COLS)
         with sqlite_connect(db) as c:
@@ -469,12 +571,15 @@ def _upsert(
     conflict_col: str = "accession",
     *,
     fill_gaps_only: bool = False,
+    insert_only: bool = False,
 ) -> None:
     """fill_gaps_only writes only the columns the existing row leaves empty."""
     col_sql = ", ".join(cols)
     placeholders = ", ".join(["%s"] * len(cols))
     payload = [c for c in cols if c != conflict_col]
-    if fill_gaps_only:
+    if insert_only:
+        action = "DO NOTHING"
+    elif fill_gaps_only:
         updates = ", ".join(
             f"{c} = COALESCE(NULLIF({table}.{c}, ''), EXCLUDED.{c})" for c in payload
         )

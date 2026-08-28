@@ -100,6 +100,15 @@ def export_accessions(
         help="preflight manifest dir; given, drops studies whose manifest "
         "carries no fastq_ftp and so would scan nothing",
     ),
+    is_countable_matrix_only: bool = typer.Option(
+        default=False,
+        help="ncount only: drop studies with no deposited matrix to count",
+    ),
+    is_canonicalise: bool = typer.Option(
+        default=False,
+        help="swap each accession for its unified_metadata canonical form; "
+        "sc_enrich counter-setup resolves by canonical accession only",
+    ),
     is_by_next_stage: bool = typer.Option(
         default=False,
         help="select on next_stage, so a study queued to another stage "
@@ -115,5 +124,7 @@ def export_accessions(
         evidence_tier,
         manifest_dir,
         by_next_stage=is_by_next_stage,
+        countable_matrix_only=is_countable_matrix_only,
+        canonicalise_accessions=is_canonicalise,
     )
     typer.echo(f"{count} studies -> {out_file}")

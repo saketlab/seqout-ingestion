@@ -393,14 +393,22 @@ def overwrite_update(table: str, payload_cols: list[str]) -> str:
     return f"SET {updates} WHERE {guard}"
 
 
-def non_nulling_update(table: str, payload_cols: list[str]) -> str:
+def non_nulling_update(
+    table: str,
+    payload_cols: list[str],
+    *,
+    insert_only: bool = False,
+) -> str:
     """
     Build SET ... WHERE for an upsert that preserves existing non-NULLs.
 
     COALESCE protects later backfills from per-window SQLite retransfers. The
     IS DISTINCT FROM guard prevents unchanged conflicts from creating dead tuples.
+
+    insert_only returns "", which every caller renders as ON CONFLICT DO NOTHING,
+    so an existing row keeps even the values a fresher archive record disagrees with.
     """
-    if not payload_cols:
+    if insert_only or not payload_cols:
         return ""
     updates = ", ".join(
         f"{c} = COALESCE(EXCLUDED.{c}, {table}.{c})" for c in payload_cols

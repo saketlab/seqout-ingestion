@@ -48,7 +48,9 @@ NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/keys/ncbi.txt")
 OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/keys/openalex.txt")
 ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", DATA_DIR + "/data/assay_mapping.csv")
 TAXONOMY_MAPPING_FILE := env("TAXONOMY_MAPPING_FILE", DATA_DIR + "/data/ncbi_taxonomy_common_names.csv")
-ROR_DATA := env("ROR_DATA", "/data/ror_data.json")
+DATA_DIR_LOCAL := env("DATA_DIR_LOCAL", "/data/saket")
+
+ROR_DATA := env("ROR_DATA", DATA_DIR_LOCAL + "/ror/ror_data.json")
 GEOCODING_CACHE_FILE := env("GEOCODING_CACHE_FILE", DATA_DIR + "/geocoding/geocoding_cache.json")
 
 PYTHON := ".venv/bin/python"
@@ -345,11 +347,13 @@ transfer_postgres *flags:
         {{ _gsa_db_args }} \
         {{ flags }}
 
+# Load pentimento into pg. --non-nulling: adds values, never blanks one.
 [group("pentimento")]
 transfer_pentimento *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer pentimento \
         --pg-url "$PG_URL" \
         --pentimento-db-file {{ PENTIMENTO_DB_FILE }} \
+        --non-nulling \
         {{ flags }}
 
 [group("transfer")]

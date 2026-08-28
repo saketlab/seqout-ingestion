@@ -296,7 +296,7 @@ def guard_h9(project, frames: dict, log: _Log, lookup: dict | None = None) -> in
         for field, value in donate.items():
             if field in ("taxid", "tissue_primary_site", "tissue_site_type"):
                 continue
-            # only fields the wrong entry donated -- an LLM-set value stands
+            # only fields the wrong entry donated; an LLM-set value stands
             if field != "cell_line" and _prov(prov, i, field) != "cellosaurus":
                 continue
             for key in ("output", "cello", "ontology"):
@@ -471,7 +471,7 @@ def guard_organism(project, frames: dict, log: _Log) -> int:
 PLACEHOLDER_DETECTOR = "cell_line_placeholder"
 PLACEHOLDER_REASON = "placeholder_is_not_an_identification"
 
-# F5: imported, not restated -- the same set that gates the Cellosaurus lookup.
+# F5: the same set that gates the Cellosaurus lookup, imported not restated.
 
 
 def guard_placeholder(project, frames: dict, log: _Log) -> int:
@@ -1006,7 +1006,7 @@ def guard_insdc_assay(project, frames: dict, log: _Log) -> dict:
             stats["assay_declared_agree"] += 1
             continue
         if mixed:
-            # the sample's own experiments disagree -- there is no single
+            # the sample's own experiments disagree; there is no single
             # declaration to be outside of.  Record, do not act.
             stats["assay_conflict_kept"] += 1
             continue
@@ -1157,7 +1157,7 @@ def apply_inline_guards(
     stats = {}
     # order matters: H9 first (it REWRITES a cell line the others would judge),
     # then placeholders (they REMOVE one), then organism, then bad_label last so
-    # it sees the settled state -- the same dependency order run_v4_tiers.sh uses.
+    # it sees the settled state, the dependency order run_v4_tiers.sh uses.
     stats["h9"] = guard_h9(project, frames, log)
     stats["placeholder"] = guard_placeholder(project, frames, log)
     stats["organism"] = guard_organism(project, frames, log)
@@ -1288,7 +1288,7 @@ def _demo() -> None:
     assert all(len(r) == len(LOG_COLUMNS) for r in rows)
     assert {r[9] for r in rows} == {"wrong_h9"}, {r[9] for r in rows}
 
-    # 2. a genuine Sezary study keeps CVCL_1240 -- the guard must not fire.
+    # 2. a genuine Sezary study keeps CVCL_1240; the guard must not fire.
     q = _P()
     q.title = "Sezary syndrome cutaneous T-cell lymphoma H9 line"
     q.samples = pd.DataFrame({"Sample": ["GSM1"], "source": ["H9 lymphoma"]})
@@ -1508,7 +1508,7 @@ def _demo() -> None:
         old
     )
 
-    # 9c. a MIXED sample is never majority-voted -- recorded, not acted on.
+    # 9c. a MIXED sample is never majority-voted; recorded, not acted on.
     z = _P()
     z.title = "x"
     z.samples = pd.DataFrame(

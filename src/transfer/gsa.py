@@ -125,6 +125,8 @@ def gsa_transfer_tasks(
     gsa_human_db_file: Path | None,
     batch_size: int,
     gsa_bioproject_db_file: Path | None = None,
+    *,
+    insert_only: bool = False,
 ) -> list[tuple[str, Callable[..., None], tuple]]:
     """Build the GSA transfer tasks, or an empty list if no DB file exists."""
     cra = gsa_db_file if gsa_db_file and gsa_db_file.exists() else None
@@ -139,8 +141,8 @@ def gsa_transfer_tasks(
     if not cra and not hra and not bp:
         return []
 
-    common = (pg_url, cra, hra, batch_size)
-    titled = (pg_url, cra, hra, batch_size, bp)
+    common = (pg_url, cra, hra, batch_size, insert_only)
+    titled = (pg_url, cra, hra, batch_size, bp, insert_only)
     tasks: list[tuple[str, Callable[..., None], tuple]] = []
     if cra or hra:
         tasks += [
@@ -152,7 +154,11 @@ def gsa_transfer_tasks(
         ]
     if bp:
         tasks.append(
-            ("gsa_projects", _transfer_gsa_projects, (pg_url, bp, batch_size)),
+            (
+                "gsa_projects",
+                _transfer_gsa_projects,
+                (pg_url, bp, batch_size, insert_only),
+            ),
         )
     return tasks
 
@@ -161,6 +167,7 @@ def _transfer_gsa_projects(
     pg_url: str,
     bioproject_db: Path,
     batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     """Upsert scraped PRJCA project metadata; JSON text cols land in JSONB."""
 
@@ -178,6 +185,7 @@ def _transfer_gsa_projects(
         "accession",
         batch_size,
         "gsa_projects",
+        insert_only,
     )
 
 
@@ -189,11 +197,16 @@ def _upsert(
     conflict_col: str,
     batch_size: int,
     label: str,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     """Batch upsert rows into a pre-existing Postgres table."""
     col_sql = ", ".join(cols)
     placeholders = ", ".join(["%s"] * len(cols))
-    update_sql = non_nulling_update(table, [c for c in cols if c != conflict_col])
+    update_sql = non_nulling_update(
+        table,
+        [c for c in cols if c != conflict_col],
+        insert_only=insert_only,
+    )
     action = f"DO UPDATE {update_sql}" if update_sql else "DO NOTHING"
     query = (
         f"INSERT INTO {table} ({col_sql}) VALUES ({placeholders}) "  # noqa: S608
@@ -265,6 +278,7 @@ def _transfer_gsa_studies(
     hra: Path | None,
     batch_size: int,
     bp: Path | None = None,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     project_titles = _project_titles(bp)
 
@@ -323,6 +337,7 @@ def _transfer_gsa_studies(
         "study_accession",
         batch_size,
         "gsa_studies",
+        insert_only,
     )
 
 
@@ -332,6 +347,7 @@ def _transfer_gsa_studies_search(
     hra: Path | None,
     batch_size: int,
     bp: Path | None = None,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     project_titles = _project_titles(bp)
 
@@ -364,6 +380,7 @@ def _transfer_gsa_studies_search(
         "accession",
         batch_size,
         "gsa_studies_search",
+        insert_only,
     )
 
 
@@ -372,6 +389,7 @@ def _transfer_gsa_experiments(
     cra: Path | None,
     hra: Path | None,
     batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     cra_sql = """
         SELECT r.accession, r.experiment_accession, e.sample_accession,
@@ -449,6 +467,7 @@ def _transfer_gsa_experiments(
         "run_accession",
         batch_size,
         "gsa_experiments",
+        insert_only,
     )
 
 
@@ -457,6 +476,7 @@ def _transfer_gsa_samples(
     cra: Path | None,
     hra: Path | None,
     batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     def rows() -> Iterator[tuple]:
         if cra:
@@ -485,6 +505,7 @@ def _transfer_gsa_samples(
         "sample_accession",
         batch_size,
         "gsa_samples",
+        insert_only,
     )
 
 
@@ -535,6 +556,7 @@ def _transfer_gsa_run_downloads(
     cra: Path | None,
     hra: Path | None,
     batch_size: int,
+    insert_only: bool = False,  # noqa: FBT002
 ) -> None:
     # CRA file*_url are clean (bytes embedded in file*_name); HRA workbook urls are
     # unreliable, so HRA downloads come from gsa_human_run_files (manifest-built).
@@ -589,4 +611,5 @@ def _transfer_gsa_run_downloads(
         "run_accession",
         batch_size,
         "gsa_run_downloads",
+        insert_only,
     )

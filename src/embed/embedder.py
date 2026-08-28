@@ -2,7 +2,7 @@
 Embed new accessions into the shared chroma space.
 
 Diffs each source's studies against the corresponding chroma collection, builds
-cleaned text for the missing ones, and embeds them with the shared F2LLM model.
+cleaned text for the missing ones, and embeds them with the shared MedEmbed model.
 Existing accessions are left untouched (their metadata is assumed unchanged).
 
 Encoding reuses the adaptive length-sorted batching from the original sra embed:

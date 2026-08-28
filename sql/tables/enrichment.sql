@@ -100,6 +100,10 @@ CREATE TABLE IF NOT EXISTS ontology_samples (
     development_stage_ontology_score TEXT,
     development_stage_match_method TEXT,
     development_stage_ancestors TEXT,
+    age_days TEXT,
+    age_group TEXT,
+    prenatal TEXT,
+    age_raw TEXT,
     PRIMARY KEY (study_accession, sample)
 );
 

@@ -7,6 +7,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
+from age.parser import parse_age
 from helpers import exec_query_from_file, sqlite_connect
 
 logger = logging.getLogger(__name__)
@@ -48,9 +49,16 @@ _ONTOLOGY_SUFFIXES = (
     "match_method",
     "ancestors",
 )
+# `age` carries two formats: hours-as-a-string from the embedding path, a
+# Cellosaurus token (30Y6M, Fetus) from the donation path. These four give one
+# unit, so a consumer never branches on age_source. _derive_age fills them; the
+# CSV has no such columns.
+AGE_CANON_COLS = ["age_days", "age_group", "prenatal", "age_raw"]
+
 ONTOLOGY_COLS = [
     *CELLOSAURUS_COLS,
     *[f"{f}_{s}" for f in _ONTOLOGY_FIELDS for s in _ONTOLOGY_SUFFIXES],
+    *AGE_CANON_COLS,
 ]
 
 _PROVENANCE_SUFFIXES = (
@@ -154,6 +162,24 @@ def _read_csv(path: Path) -> list[dict]:
         return []
 
 
+def _derive_age(rows: list[dict]) -> list[dict]:
+    """Add the canonical age columns, in place, from each row's raw ``age``."""
+    for row in rows:
+        raw = (row.get("age") or "").strip()
+        if not raw:
+            # parse_age calls "" unspecified; here it means no age was recorded,
+            # so leave nothing behind.
+            row.update(dict.fromkeys(AGE_CANON_COLS, ""))
+            continue
+        norm = parse_age(raw)
+        row["age_days"] = "" if norm.age_days is None else repr(norm.age_days)
+        row["age_group"] = norm.age_group or ""
+        # 't'/'f' so Postgres COPY reads it as boolean straight out of SQLite
+        row["prenatal"] = "t" if norm.prenatal else "f"
+        row["age_raw"] = raw
+    return rows
+
+
 def _insert(
     conn: sqlite3.Connection,
     table: str,
@@ -234,6 +260,8 @@ def ingest(
             if table == "enriched_samples":
                 _insert(conn, table, cols, acc, rows)
             elif path.exists() and (extra := _read_csv(path)):
+                if table == "ontology_samples":
+                    _derive_age(extra)
                 _insert(conn, table, cols, acc, extra)
         if len(studies) >= COMMIT_INTERVAL:
             _flush(conn, studies)

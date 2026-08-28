@@ -76,9 +76,13 @@ MISSING_QUERIES: dict[Datasource, str] = {
         " WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]')"
         " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
     ),
+    # Controlled-access HRA studies publish no samples, experiments or runs, so
+    # a pmid on one links to nothing downstream. They are four fifths of the
+    # archive and each costs a PubMed search, which is the slowest stage here.
     Datasource.GsaHuman: (
         "SELECT accession FROM gsa_human_studies"
-        " WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
+        " WHERE access = 'Open'"
+        " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
     ),
 }
 
