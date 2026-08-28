@@ -198,9 +198,9 @@ def run_accessions(
     """
     Resolve arbitrary accessions to quantifier run accessions.
 
-    Runs pass through; studies resolve by alias-aware lookup. `exclude_studies` drops
-    named studies. `max_per_study` caps one contribution; Tabula Muris resolves to
-    99,868 runs against median 10.
+    Runs pass through; studies resolve by alias-aware lookup. `exclude_studies`
+    drops named studies. `max_per_study` caps one contribution: an atlas can
+    resolve to orders of magnitude more runs than the median study.
     """
     runs: list[str] = []
     seen: set[str] = set()

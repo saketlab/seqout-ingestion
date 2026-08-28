@@ -449,8 +449,8 @@ def load_quant_provenance(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
     """
     Yield per-run microbial quantification provenance.
 
-    Depth and read length are per-run because breadth 0.5 off 700 k reads is not
-    breadth 0.5 off 700 M. Failed downloads still get rows, preserving
+    Depth and read length are per-run because the same breadth means different
+    things at different depths. Failed downloads still get rows, preserving
     unmeasured versus measured-empty.
     """
     if not quant_dir.is_dir():

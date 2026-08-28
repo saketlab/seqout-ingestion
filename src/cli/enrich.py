@@ -62,8 +62,9 @@ def batch(
         None,
         envvar="EXPECTED_TAXID",
         help="species gate on the Cellosaurus override. The lookup table is "
-        "~99.7% human, so a mouse line name that collides with a human entry "
-        "would inherit the human donor's demographics. Unset leaves it inert",
+        "overwhelmingly human, so a mouse line name that collides with a human "
+        "entry would inherit the human donor's demographics. Unset leaves it "
+        "inert",
     ),
     expected_species: str = typer.Option(None, help="as --expected-taxid, by name"),
     workers: int = typer.Option(

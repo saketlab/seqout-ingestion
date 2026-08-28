@@ -27,9 +27,8 @@ def build(
     ena_delta_db_file: Path = typer.Option(
         None,
         help="ENA's dated increment. ENA is ingested as a base checkpoint plus "
-        "increments; omitting this reports a floor -- the 2026-04-28 base alone "
-        "is 208 single-cell studies and 3,097 experiment rows short of what the "
-        "archive holds.",
+        "increments, so omitting this reports a floor: the base alone is short "
+        "of what the archive holds.",
     ),
     enriched_db_file: Path = typer.Option(
         None,

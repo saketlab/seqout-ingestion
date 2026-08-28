@@ -4,8 +4,7 @@ Populate gsa_studies.organisms from gsa_samples.
 GSA project pages and the organism search facet otherwise see only the single
 study-level scientific_name. gsa_samples.study_accession joins 1:1 to
 gsa_studies.study_accession (both CRA*), so this is one GROUP BY with no
-experiments hop. Measured on prod 2026-07-25: 19,182 studies with samples,
-1,194 multi-organism.
+experiments hop.
 
 gsa_studies is a Postgres-side derived table (study_accession PK + embedding
 columns), not built from a static DDL, so this step owns the column via
@@ -45,8 +44,8 @@ _CREATE_GIN = (
 )
 
 # The federated search + organism facet read gsa_studies_search.organisms, not
-# gsa_studies. Mirror the multi-valued set there (it was previously single-valued)
-# see _SEARCH_MATCH_CTE in the server's queries.py.
+# gsa_studies. Mirror the multi-valued set there; see _SEARCH_MATCH_CTE in the
+# server's queries.py.
 _COPY_TO_SEARCH = """
 UPDATE gsa_studies_search gss
 SET organisms = gs.organisms

@@ -57,8 +57,8 @@ MISSING_QUERIES: dict[Datasource, str] = {
         "SELECT study_accession FROM ena_studies"
         " WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
     ),
-    # DDBJ-exclusive only. The SRA/ENA twin of a mirrored DRP is canonical and already
-    # carries the pmid; the DDBJ copy would cost ~17k NCBI calls nothing reads.
+    # DDBJ-exclusive only. The SRA/ENA twin of a mirrored DRP is canonical and
+    # already carries the pmid, so the DDBJ copy costs NCBI calls nothing reads.
     Datasource.Dra: (
         "SELECT accession FROM dra_studies"
         " WHERE is_only_ddbj = 1"

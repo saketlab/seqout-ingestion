@@ -6,15 +6,15 @@ They were derived per *submission* (see the fix in
 src/transfer/postgres.py::_sra_studies_batch_modifier), which is wrong in both
 directions: one submission can cover many studies, so each inherited its
 siblings' values; and a study's samples can span many submissions, so its own
-submission missed most of them. Measured against prod, ~12.6% of SRA studies
-carried a wrong organism list, and search filters on that column directly
-(`s.organisms @> ARRAY[...]`).
+submission missed most of them. Search filters on that column directly
+(`s.organisms @> ARRAY[...]`), so a wrong organism list is a wrong search
+result.
 
 This rewrites organisms / library_strategies / instrument_models / platforms /
 library_sources from the study's own experiments and samples, then refreshes the
 organism_growth_monthly matview that reads them (skip with --skip-refresh).
 
-An empty recompute never overwrites a stored value: ~4% of studies have samples
+An empty recompute never overwrites a stored value. Some studies have samples
 but no experiments linking them, and blanking those would drop them out of
 organism search entirely.
 
@@ -80,10 +80,10 @@ computed AS (
     FROM target t
 ),
 facts AS (
-    -- An empty recompute means "no evidence": roughly 4 in 100 studies have
-    -- samples but no experiments linking them, and blanking those would drop
-    -- some 29k studies. psycopg parses a percent sign even inside a comment,
-    -- so never write one here.
+    -- An empty recompute means "no evidence": a study can have samples with no
+    -- experiments linking them, and blanking those drops it out of organism
+    -- search. psycopg parses a percent sign even inside a comment, so never
+    -- write one here.
     SELECT
         c.accession,
         CASE WHEN cardinality(c.organisms) > 0

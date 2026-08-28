@@ -105,8 +105,8 @@ def _vote_row(
     """
     Return the vote and scan depth behind it.
 
-    Runs scanned, reads per run and deep-pass status separate shallow abstention
-    from deep abstention. params_json is NULL across all 193,748 rows.
+    Runs scanned, reads per run and deep-pass status separate shallow
+    abstention from deep abstention. params_json is NULL throughout.
     """
     vote = experiment.get("vote") or {}
     return (

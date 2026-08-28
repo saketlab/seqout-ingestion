@@ -4,9 +4,9 @@ DDBJ Genomic Expression Archive (GEA) ingest.
 MAGE-TAB, so parsing is entirely ingest.magetab (shared with src/ingest/ae.py).
 
 No novelty filter, unlike DRA: nothing in GEA is mirrored into GEO or
-ArrayExpress, so all ~735 public experiments are ingested.
+ArrayExpress, so every public experiment is ingested.
 
-Every GEA experiment carries Comment[BioProject], and ~48% of those BioProjects
+Every GEA experiment carries Comment[BioProject], and many of those BioProjects
 also exist in SRA as raw-read studies. SRA holds only the runs there, GEA the
 curated expression layer, so the unifier lets GEA pre-claim the raw study
 (gea_preclaim in unified_catalog.py) -- the rule ArrayExpress already applies.

@@ -245,8 +245,8 @@ def _stage_preflightx(
     Stage CSV, JSON and enrichment-DB preflightx routes.
 
     CSV is the run-grained spine. JSON adds experiment-grained evidence and
-    confidence; 99.6% of a 600-file sample was absent from the DB graded set.
-    The pinned DB subset (9,552 graded rows) is applied last.
+    confidence for the runs the DB graded set does not cover, which is most of
+    them. The pinned DB subset is applied last.
     """
     conn.execute("DROP TABLE IF EXISTS _pfx_run")
     conn.execute(_PFX_RUN_STAGING)

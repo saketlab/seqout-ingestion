@@ -186,9 +186,8 @@ def load_xrefs(driver: Driver, source: Source, root: Path) -> int:
     ``load_synonyms`` does two jobs -- MERGE the MAPS_TO edges and record the
     provenance. Use this instead when the edges are already in the graph and the
     CSV's pair set may have drifted from what was originally loaded: a
-    regenerated extract that reproduces 99.95% of its pairs would have the
-    remaining 0.05% MERGEd in *beside* the originals, which is not a rebuild but
-    a slow corruption.
+    regenerated extract MERGEs any pair it does not reproduce *beside* the
+    originals, which is a slow corruption rather than a rebuild.
 
     Every write is MATCH-based, so this can never create a node or a
     relationship. Terms in the CSV that are absent from the graph are skipped.

@@ -130,9 +130,9 @@ PLATFORM_TERMS: tuple[Term, ...] = (
     Term(r"issaac", ("%issaac%",)),
     Term(r"dogma[-_. ]?seq", ("%dogmaseq%", "%dogma_seq%")),
     # snmC-seq / snmCT-seq / sn-m3C-seq, the single-nucleus methylome family.
-    # The largest single contribution in the whole exercise: 647 + 129 studies
-    # on the enrichment channel alone, none of which carries an
-    # `assay_category` and none of which any shipped term matched.
+    # The largest single contribution here, all of it on the enrichment channel:
+    # none of these studies carries an `assay_category` and no shipped term
+    # matched them.
     Term(r"snm(?:3c|ct|c)\d?[-_. ]?seq", ("%snmc%", "%snm3c%")),
     Term(r"m3c[-_. ]?seq", ("%m3cseq%", "%m3c_seq%")),
     Term(r"sccrispr", ("%sccrispr%",)),

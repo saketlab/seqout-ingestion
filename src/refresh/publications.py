@@ -18,9 +18,8 @@ Three steps, in order:
                study's search ``tsv`` so the new papers are searchable.
 
 Both API steps are budgeted (``--limit-per-source``, ``--meta-limit``) because
-the unlinked backlog is ~1.5M studies, most of it ENA (measured 2026-08-08: ENA
-1,016,796, SRA 454,880, GEO 32,265, GSA 25,002, AE 65,551, GEA 735, DRA 1,178
-DDBJ-exclusive). A weekly run chips at that forever; it is not meant to finish.
+the unlinked backlog runs to millions of studies, most of it ENA. A weekly run
+chips at that forever; it is not meant to finish.
 ``pubmed_last_checked`` is the queue cursor -- stamped on every accession tried,
 whether or not a pmid came back, so the next run moves on instead of retrying
 the same misses. ``--recheck-after`` decides when a study becomes eligible
@@ -111,8 +110,8 @@ _SOURCES = (
         "study_accession",
         "coalesce(pubmed_id_pysradb, '') = ''",
     ),
-    # DDBJ-exclusive only: a mirrored DRP's SRA/ENA twin is canonical and already
-    # carries the pmid, so the DDBJ copy would cost ~17k NCBI calls nothing reads.
+    # DDBJ-exclusive only: a mirrored DRP's SRA/ENA twin is canonical and
+    # already carries the pmid, so the DDBJ copy costs NCBI calls nothing reads.
     # is_only_ddbj is int2 here, not boolean.
     _Source(
         Datasource.Dra,

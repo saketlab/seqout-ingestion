@@ -1,8 +1,8 @@
 """
 Fleet worker for retrying PubMed resolution with current pysradb.
 
-710,306 studies have no PubMed link. One accession per invocation spreads NCBI
-load across hosts and API keys; missing result files mean unattempted.
+One accession per invocation spreads NCBI load across hosts and API keys;
+missing result files mean unattempted.
 """
 
 from __future__ import annotations

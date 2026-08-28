@@ -15,11 +15,11 @@ VIRAL_BREADTH = 0.20
 # read as contamination or provenance rather than infection
 ENDOGENOUS_BREADTH = 0.50
 
-# bacterial and cell-culture references are 0.58-2.2 Mb, so a breadth meaning
-# "present" for an 8 kb virus means nothing here; the gate is an absolute
-# covered-bp floor plus a breadth far stricter than the 0.005 screening
-# heuristic behind is_bacterial_evidence. High-breadth panel evidence only:
-# related species map to the nearest of the panel's 27 pathogen genomes.
+# bacterial and cell-culture references are megabases, so a breadth meaning
+# "present" for a small viral genome means nothing here; the gate is an absolute
+# covered-bp floor plus a breadth far stricter than the screening heuristic
+# behind is_bacterial_evidence. High-breadth panel evidence only: related
+# species map to the nearest pathogen genome on the panel.
 BACT_BREADTH = 0.30
 BACT_COV_BP = 20_000
 
@@ -50,16 +50,16 @@ FLAG_PANEL: tuple[tuple[str, tuple[str, ...], str, float], ...] = (
     ),
     ("is_lcmv", ("virus",), r"^LCMV", VIRAL_BREADTH),
     # mouse genomes carry MLV/MMTV-like loci and lentiviral vectors carry HIV1
-    # and HTLV1 sequence. At 0.20 these balloon (MLV 244 -> 3,604, HIV1 42 ->
-    # 1,120) with no matching rise in the negative control, which is blind to
-    # both mechanisms, so a positive here reads as provenance.
+    # and HTLV1 sequence. A looser breadth inflates these with no matching rise
+    # in the negative control, which is blind to both mechanisms, so a positive
+    # here reads as provenance.
     ("is_mlv", ("virus",), r"^Murine_leukemia_virus", ENDOGENOUS_BREADTH),
     ("is_mmtv", ("virus",), r"^MMTV", ENDOGENOUS_BREADTH),
     ("is_hiv", ("virus",), r"^HIV", ENDOGENOUS_BREADTH),
     ("is_htlv", ("virus",), r"^HTLV", ENDOGENOUS_BREADTH),
     # Mycoplasma is invisible to every existing column: class='culture' is
-    # excluded from the bacterial screen, so runs carrying >=30% of an 840 kb
-    # genome all read as clean
+    # excluded from the bacterial screen, so a run carrying most of the genome
+    # still reads as clean
     (
         "is_mycoplasma",
         ("culture", "pathogen"),

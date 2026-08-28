@@ -191,8 +191,7 @@ def _matrix_vetoes_not_single_cell(conn: sqlite3.Connection) -> int:
 
     `assay_is_single_cell = 0` means no barcode structure in reads. Plate and
     no-whitelist chemistries can still be single-cell. Return NULL, not 1, to
-    preserve the read-derived boundary. Applies to 1,506 samples, 1,459 over
-    2,000 cells.
+    preserve the read-derived boundary.
     """
     cur = conn.execute(
         "UPDATE pentimento_sample SET assay_is_single_cell = NULL "
@@ -315,7 +314,7 @@ def build_rollups(
              ORDER BY f2.hpv_breadth DESC LIMIT 1),
             MAX(f.hpv_ambiguous),
             -- `measurable` gates the ABSENCE claim, not the presence one:
-            -- gating positives too hid 21 samples carrying real viral mass
+            -- gating positives too hides samples carrying real viral mass
             CASE WHEN MAX(g.any_viral) = 1 THEN 1
                  WHEN COALESCE(MAX(f.measurable), 0) = 0 THEN NULL ELSE 0 END,
             CASE WHEN MAX(g.any_viral_ev) = 1 THEN 1

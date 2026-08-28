@@ -159,8 +159,8 @@ def download(source: Source, root: Path, *, workers: int, force: bool) -> Path:
     """
     Fetch a source into ``raw/``, skipping it if the file is already there.
 
-    These are 30 MB - 700 MB files from publishers that rate-limit; re-download
-    only with ``force``, or by deleting the file.
+    These are large files from publishers that rate-limit; re-download only
+    with ``force``, or by deleting the file.
     """
     # Imported lazily: helpers pulls in psycopg/socks, and the parsing half of
     # this module has no reason to need a database driver.
@@ -194,8 +194,8 @@ def download(source: Source, root: Path, *, workers: int, force: bool) -> Path:
 
 def _load_obo_graph(path: Path) -> dict[str, Any]:
     """Read an OBO-JSON file and return its single graph object."""
-    # ponytail: whole-file json.load. ChEBI peaks around 6 GB of RAM; fine on the
-    # ingest box and this runs about once a year. Switch to ijson if that stops
+    # ponytail: whole-file json.load. ChEBI is the memory peak; fine on the
+    # ingest box, and this runs about once a year. Switch to ijson if that stops
     # being true.
     with path.open() as f:
         return json.load(f)["graphs"][0]
@@ -332,7 +332,7 @@ def _extract_mesh(source: Source, root: Path) -> int:
     ui_to_trees: dict[str, list[str]] = {}
     tree_to_ui: dict[str, str] = {}
 
-    # iterparse: the descriptor file is ~340 MB uncompressed.
+    # iterparse: the descriptor file does not fit comfortably in memory.
     with _open_maybe_gz(source.raw_path(root)) as fh:
         for _event, rec in ET.iterparse(fh, events=("end",)):  # noqa: S314
             if rec.tag != "DescriptorRecord":

@@ -15,7 +15,7 @@ divergences drove the code here:
 - dates: the livelist has no published column, so published_at falls back to
   SUBMISSION@submission_date.
 
-NCBI mirrors ~93% of DRA into SRA. All of public DRA is ingested anyway, with
+NCBI mirrors most of DRA into SRA. All of public DRA is ingested anyway, with
 is_only_ddbj marking the rest; --novelty-filter instead skips the mirrored ones.
 Either way the check runs against Postgres given --pg-url and the local SQLite
 dumps otherwise, and dra_ingest_provenance records which.
@@ -58,7 +58,7 @@ _LIVELIST_MIN_COLS = 6
 _ALIAS_COL = 6
 
 # DRP accessions sort inside ['DRP', 'DRQ'), which lets the primary-key index
-# do the work instead of scanning ~600k SRP rows with LIKE 'DRP%'.
+# do the work instead of scanning every SRP row with LIKE 'DRP%'.
 _DRP_LO = "DRP"
 _DRP_HI = "DRQ"
 

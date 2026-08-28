@@ -65,8 +65,8 @@ def _populate(table: str, sources: tuple[str, ...]) -> str:
 
     The ``IS DISTINCT FROM`` guard is not an optimisation, same as
     ``pg_fields.non_nulling_update``: without it every row with a publication is
-    rewritten into a dead tuple on every run, and on GEO it also re-fires the tsv
-    trigger for 232k rows. That is tolerable quarterly and not weekly -- see
+    rewritten into a dead tuple on every run, and on GEO it also re-fires the
+    tsv trigger for every one of them. Tolerable quarterly, not weekly -- see
     refresh/publications.py, which calls this on a schedule.
     """
     return f"""
@@ -116,7 +116,7 @@ def _pmid_fallback_populate(table: str, pmid_col: str) -> str:
 
 # GEO has its own fallback: unlike SRA/AE, its pmid columns are text[] arrays
 # (pubmed_id, pubmed_id_citation) plus the scalar pubmed_id_pysradb. Native
-# pubmed_id is already covered via study_publications (~97.5%), so only the two
+# pubmed_id is already covered via study_publications, so only the two
 # backfilled sources are folded here. Setting pub_tsv fires the GEO tsv trigger,
 # so tsv is rebuilt in the same pass, with no generated-column redefine.
 # To narrow to citation-only, drop the pubmed_id_pysradb UNION arm below.

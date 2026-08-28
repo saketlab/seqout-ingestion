@@ -43,8 +43,8 @@ class Source:
     #: Human-readable name, for logs and docs.
     title: str
 
-    #: Direct download. Verified reachable 2026-08-02; all are stable, versioned
-    #: publisher endpoints that always serve the current release.
+    #: Direct download. All are stable, versioned publisher endpoints that
+    #: always serve the current release.
     url: str
 
     #: Filename under raw/. Identical to what the publisher calls it, so a file
@@ -229,8 +229,7 @@ SOURCES: tuple[Source, ...] = (
         generic_terms=frozenset({"cell", "cells", "cell line"}),
         notes=(
             "Cell-line names and their many spellings (MCF-7 / MCF7 / MCF 7). "
-            "A flat catalogue, so synonyms only. ~700 MB of XML; parsed "
-            "streaming."
+            "A flat catalogue, so synonyms only. Large XML, parsed streaming."
         ),
     ),
     # MeSH is last on purpose: its label tags whatever it creates first, so it
@@ -248,8 +247,8 @@ SOURCES: tuple[Source, ...] = (
         derived_obo="mesh.json",
         notes=(
             "Descriptors only. Supplementary concept records (chemicals) and "
-            "qualifiers are deliberately skipped: they overlap ChEBI and would "
-            "add ~250k mostly-chemical nodes for little search benefit."
+            "qualifiers are skipped: they overlap ChEBI and would add "
+            "mostly-chemical nodes for little search benefit."
         ),
         label="MeSH",
     ),
