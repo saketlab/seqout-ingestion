@@ -49,6 +49,7 @@ from transfer.pg_fields import (
     _UNIFIED_METADATA_SELECT_COLS,
     non_nulling_update,
 )
+from transfer.pub_dates import refresh_study_pub_dates
 
 type _Modifier = Callable[[list[dict]], list[dict]]
 
@@ -1673,6 +1674,7 @@ def _transfer_study_publications(
                 "skipping study_publications orphan cleanup "
                 "(pass --prune-publications to enable)",
             )
+            refresh_study_pub_dates(pg_url)
             return
 
         with pg_conn.cursor() as cur:
@@ -1691,6 +1693,8 @@ def _transfer_study_publications(
                 "WHERE v.accession = sp.accession AND v.source = sp.source)",
             )
         pg_conn.commit()
+
+    refresh_study_pub_dates(pg_url)
 
 
 # source -> its cross_ref table; also the allow-list, so a source absent here

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Load a weekly stage directory into Postgres, adding rows only.
 #
-# Run after weekly_stage.sh and after reading its report. Every write here is
-# ON CONFLICT DO NOTHING, so an accession Postgres already holds keeps every
-# value it has. Pass --apply to write; the default reports the plan.
+# --apply ends by refreshing the matviews that read what it wrote. Without that
+# the load lands and the site keeps serving the previous numbers, which looks
+# exactly like the transfer never ran.
 #
 # The per-source *_DB_FILE variables are env overrides in the justfile, so
 # pointing them at the stage directory reuses the normal recipes unchanged.
@@ -16,7 +16,6 @@ APPLY=${APPLY:-0}
 cd "$(dirname "$0")/.."
 say() { echo "[$(date -u +%FT%TZ)] $*"; }
 
-# newest window under the stage dir, matching the justfile's own discovery
 stage_db() {
     local src=$1 latest
     # date-named windows only: the "empty" stand-in sorts after any date and
@@ -28,7 +27,7 @@ stage_db() {
     [ -f "$f" ] && echo "$f"
 }
 
-for src in sra geo ena ae dra gea gsa gsa_human; do
+for src in sra geo ena ae dra gea gsa gsa_human gsa_bioproject; do
     f=$(stage_db "$src") || true
     var=$(echo "$src" | tr '[:lower:]' '[:upper:]')_DB_FILE
     if [ -n "${f:-}" ]; then
@@ -70,4 +69,7 @@ done
 say "transfer gsa-organisms"
 .venv/bin/python ./src/main.py transfer gsa-organisms --pg-url "$PG_URL"
 
-say "done. Matview refresh is a separate step; see recipes/refresh_matviews.sql"
+say "refresh matviews"
+.venv/bin/python recipes/refresh_matviews.py
+
+say "done"

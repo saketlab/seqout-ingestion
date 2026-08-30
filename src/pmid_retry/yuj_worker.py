@@ -79,6 +79,13 @@ def main() -> int:
         return 4
 
     try:
+        from pysradb.sraweb import TransientAPIError
+
+        transient: tuple[type[BaseException], ...] = (TransientAPIError,)
+    except ImportError:
+        transient = ()
+
+    try:
         import pysradb
 
         version = getattr(pysradb, "__version__", "unknown")
@@ -94,7 +101,10 @@ def main() -> int:
     pmids: list[str] = []
     error = None
     try:
-        sra = SRAweb()
+        try:
+            sra = SRAweb(api_key=key) if key else SRAweb()
+        except TypeError:  # pysradb predating the api_key parameter
+            sra = SRAweb()
         df = getattr(sra, method)([accession])
         for _, row in df.iterrows():
             pmid = row.get("pmid")
@@ -105,10 +115,8 @@ def main() -> int:
             ):
                 pmids.append(str(pmid).strip())
     except KeyError:
-        # pysradb raises KeyError when the response lacks a pmid column: a real
-        # nothing-found result.
         pmids = []
-    except Exception as exc:
+    except (Exception, *transient) as exc:
         error = f"{type(exc).__name__}: {exc}"
         logger.error("%s failed: %s", accession, error)
 
@@ -123,15 +131,15 @@ def main() -> int:
         "elapsed_s": round(time.time() - started, 2),
         "checked_at": datetime.now(UTC).isoformat(),
     }
-    out.write_text(json.dumps(payload))
+    tmp = out.with_name(f"{out.name}.tmp{os.getpid()}")
+    tmp.write_text(json.dumps(payload))
+    tmp.replace(out)
     logger.info(
         "%s -> %d pmid(s)%s",
         accession,
         len(payload["pmids"]),
         " [ERROR]" if error else "",
     )
-    # A transport error must be non-zero so yuj retries the item; "no paper
-    # found" is a success and must not be retried forever.
     return 1 if error else 0
 
 

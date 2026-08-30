@@ -275,6 +275,32 @@ def pentimento(
             raise typer.Exit(1)
 
 
+@transfer_app.command("sc-stats")
+def sc_stats(
+    pg_url: str = typer.Option(..., envvar="PG_URL"),
+    sc_stats_db_file: Path = typer.Option(
+        ..., help="sc_stats.db from `sc_stats ingest`"
+    ),
+    is_overwrite: bool = typer.Option(
+        default=False,
+        help="OVERWRITE instead of the default non-nulling load. Only for a "
+        "sweep known to cover everything pg already holds: the sweep arrives "
+        "incrementally, so a partial staging file would blank columns an "
+        "earlier, larger pass had filled.",
+    ),
+    is_dry_run: bool = typer.Option(
+        default=False, help="report rows held and staged, write nothing"
+    ),
+) -> None:
+    """Load the sc_stats per-matrix QC summaries into pg."""
+    from transfer.sc_stats import sc_stats_transfer
+
+    counts = sc_stats_transfer(
+        pg_url, sc_stats_db_file, overwrite=is_overwrite, is_dry_run=is_dry_run
+    )
+    typer.echo(" ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+
+
 @transfer_app.command()
 def gard(
     pg_url: str = typer.Option(...),

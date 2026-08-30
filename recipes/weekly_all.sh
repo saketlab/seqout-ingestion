@@ -71,12 +71,9 @@ EOF
     exit 0
 fi
 
-say "3/4 transfer to postgres (insert-only)"
+say "3/4 transfer to postgres (insert-only), then refresh matviews"
 STAGE_DIR="$STAGE_DIR" bash recipes/weekly_transfer.sh --apply 2>&1 | tee -a "$LOG_DIR/all_transfer.log" | tail -8
 
-# Embedding is last because it reads unified_metadata and writes vectors keyed
-# by canonical accession; running it before the transfer would embed studies
-# postgres does not yet have. It needs the cuda env, which the recipes wrap.
 say "4/4 embed (similar-project search)"
 just embed_run                 2>&1 | tail -3
 just embed_coords              2>&1 | tail -3

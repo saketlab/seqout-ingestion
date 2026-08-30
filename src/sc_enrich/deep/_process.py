@@ -12,8 +12,6 @@ from typing import Any, cast
 
 import h5py
 
-# Import the two halves of the 'rds' extra independently. pyreadr reads most
-# .rds files unaided; rpy2 handles S4/Seurat objects through system R.
 try:
     import pyreadr
     from pyreadr.custom_errors import LibrdataError
@@ -50,12 +48,10 @@ from sc_enrich.deep.counter_common import FileType, RdsReadError
 
 logger = logging.getLogger(__name__)
 
-# last rpy2-read .rds class; one worker per process, so a module holder is safe
 _rds_state: dict[str, str] = {"class": ""}
 
 _rds_genes: dict[str, int] = {"genes": -1}
 
-# nnz of the last .mtx counted; -1 means unknown for raw/unfiltered checks.
 _mtx_nnz: dict[str, int] = {"nnz": -1}
 
 
@@ -562,6 +558,19 @@ _H5_GENE_SUFFIXES = (
 _H5_GENE_LEAVES = ("genes", "gene_names", "var_names")
 
 
+#: No reference annotation approaches this; a larger value means the count came
+#: off the wrong axis. Returning -1 makes that "unknown" rather than a confident
+#: lie, which is what every consumer of `genes` needs -- a study is far better
+#: served by a missing count than by its barcode count wearing a gene label.
+MAX_PLAUSIBLE_GENES = 200_000
+
+
+def _plausible_gene_count(n_genes: int) -> int:
+    if n_genes <= 1 or n_genes > MAX_PLAUSIBLE_GENES:
+        return -1
+    return n_genes
+
+
 def _h5_genes(f: Any) -> int:
     """Gene-axis length of a 10x-style .h5; -1 means unknown."""
     n_genes: int | None = None
@@ -581,22 +590,19 @@ def _h5_genes(f: Any) -> int:
                 n_genes = None
 
     f.visititems(find_features)
-    return n_genes if n_genes is not None and n_genes > 1 else -1
+    return _plausible_gene_count(n_genes) if n_genes is not None else -1
 
 
 def _h5ad_genes(f: Any) -> int:
     """Gene-axis length of an .h5ad; -1 means unknown."""
     if "var/_index" in f:
-        n = len(f["var/_index"])
-        return n if n > 1 else -1
+        return _plausible_gene_count(len(f["var/_index"]))
     if "X" in f:
         x = f["X"]
         if hasattr(x, "shape") and len(x.shape) == 2:  # noqa: PLR2004
-            n = x.shape[1]
-            return n if n > 1 else -1
+            return _plausible_gene_count(x.shape[1])
         if "shape" in x:
-            n = x["shape"][1]
-            return n if n > 1 else -1
+            return _plausible_gene_count(x["shape"][1])
     return -1
 
 
@@ -617,7 +623,13 @@ def count_h5_dims_via_http(url: str, file_type: FileType) -> tuple[int, int] | N
 
 
 def _mtx_genes(path: Path, chunk_size: int) -> int:
-    """Gene axis (rows) from an .mtx header (-1 if unparseable)."""
+    """
+    Gene axis from an .mtx header (-1 if unparseable).
+
+    Matrix Market gives "rows cols nnz" and says nothing about which axis is
+    which. 10x writes genes x cells, so rows is the default, but a cell-major
+    file returns its barcode count instead.
+    """
     try:
         with path.open("rb") as f:
             header = f.read(chunk_size)
@@ -629,11 +641,12 @@ def _mtx_genes(path: Path, chunk_size: int) -> int:
             continue
         parts = line.split()
         if len(parts) >= _min_parts:
+            axis = 1 if is_cell_major(path.name) else 0
             try:
-                n_genes = int(parts[0])
+                n_genes = int(parts[axis])
             except (ValueError, IndexError):
                 return -1
-            return n_genes if n_genes > 1 else -1
+            return _plausible_gene_count(n_genes)
     return -1
 
 
@@ -742,8 +755,7 @@ def _process_rds(path: Path, _: int) -> int:
         logger.error("unexpected object type in rds %s: %s", path, type(rds_df))
         return 0
 
-    n_genes = rds_df.shape[0]
-    _rds_genes["genes"] = n_genes if n_genes > 1 else -1
+    _rds_genes["genes"] = _plausible_gene_count(rds_df.shape[0])
     n_cells = rds_df.shape[1]
     return n_cells if n_cells > 1 else 0
 

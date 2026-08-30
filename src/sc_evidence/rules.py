@@ -32,6 +32,98 @@ class Term:
     like: tuple[str, ...]
 
 
+# Terms the /stats/sc-quality chart plots. Named so the CHEMISTRIES
+# registry below and the evidence vocabularies share one object: a guard
+# learned in either channel is then learned in both.
+_T_CELSEQ = Term(r"cel(?!l)[-_. ]?seq", ("%celseq%", "%cel_seq%"))
+_T_MARSSEQ = Term(r"mars[-_. ]?seq(?!uenc)", ("%marsseq%", "%mars_seq%"))
+_T_MICROWELL = Term(r"microwell[-_. ]?seq", ("%microwellseq%", "%microwell_seq%"))
+_T_PARSE = Term(r"parse ?bio|evercode", ("%parsebio%", "%parse_bio%", "%evercode%"))
+_T_SCIRNA = Term(r"(?<![a-z0-9])sci[-_. ]?rna", ("%scirna%", "%sci_rna%"))
+_T_SEQWELL = Term(r"seq[-_.]well", ("%seq_well%",))
+_T_SPLITSEQ = Term(r"split[-_. ]?seq(?!uenc)", ("%splitseq%", "%split_seq%"))
+_T_RHAPSODY = Term(r"bd[-_. ]?rhapsody", ("%bdrhapsody%", "%bd_rhapsody%"))
+_T_QUARTZ = Term(r"quartz[-_. ]?seq", ("%quartzseq%", "%quartz_seq%"))
+_T_INDROP = Term(r"(?<![a-z])indrop", ("%indrop%",))
+_T_PIPSEQ = Term(r"pipseq", ("%pipseq%",))
+_T_SMARTSEQ = Term(r"smart.?seq", ("%smartseq%", "%smart_seq%"))
+_T_DROPSEQ = Term(r"(?<!nano)drop.?seq", ("%dropseq%", "%drop_seq%"))
+
+
+@dataclass(frozen=True)
+class Chemistry:
+    """
+    One series on /stats/sc-quality, or one reason a matrix is kept off it.
+
+    `modality` is what the counts MEAN. Only `transcriptome` belongs on a chart
+    whose axes are UMIs and genes per cell: chromatin counts fragments over
+    peaks, spatial counts spots not cells, and a multiome deposits both halves
+    per sample with nothing in the filename to say which is which. Those are
+    excluded rather than labelled, so a NULL label keeps its one meaning --
+    "no rule matched" -- and a chemistry we have never seen stays countable
+    instead of vanishing into the same silence as a deliberate exclusion.
+    """
+
+    label: str | None
+    modality: str
+    terms: tuple[Term, ...]
+
+
+#: Ordered: the first matching entry wins, exactly as the SQL CASE evaluates.
+#: 10x is absent on purpose -- its ladder splits by chemistry version AND by
+#: evidence ("a read v4 is indistinguishable from v3"), which is control flow,
+#: not vocabulary, and stays hand-written in the matview.
+CHEMISTRIES: tuple[Chemistry, ...] = (
+    Chemistry(None, "chromatin", (Term(r"atac", ("%atac%",)),)),
+    Chemistry(None, "multiome", (Term(r"multiome", ("%multiome%",)),)),
+    Chemistry(
+        None,
+        "spatial",
+        (Term(r"visium", ("%visium%",)), Term(r"spatial", ("%spatial%",))),
+    ),
+    Chemistry("Drop-seq", "transcriptome", (_T_DROPSEQ,)),
+    Chemistry("Smart-seq", "transcriptome", (_T_SMARTSEQ,)),
+    # Evercode is Parse's commercial SPLiT-seq, so the two share a series.
+    Chemistry("SPLiT-seq/Parse", "transcriptome", (_T_SPLITSEQ, _T_PARSE)),
+    Chemistry("BD Rhapsody", "transcriptome", (_T_RHAPSODY,)),
+    Chemistry("PIPseq", "transcriptome", (_T_PIPSEQ,)),
+    Chemistry("inDrop", "transcriptome", (_T_INDROP,)),
+    Chemistry("CEL-seq", "transcriptome", (_T_CELSEQ,)),
+    Chemistry("Seq-Well", "transcriptome", (_T_SEQWELL,)),
+    Chemistry("sci-RNA-seq", "transcriptome", (_T_SCIRNA,)),
+    Chemistry("MARS-seq", "transcriptome", (_T_MARSSEQ,)),
+    Chemistry("Quartz-seq", "transcriptome", (_T_QUARTZ,)),
+    Chemistry("Microwell-seq", "transcriptome", (_T_MICROWELL,)),
+)
+
+#: markers around the region of the matview this module owns
+SQL_BEGIN = "-- BEGIN generated from sc_evidence.rules.CHEMISTRIES"
+SQL_END = "-- END generated from sc_evidence.rules.CHEMISTRIES"
+
+
+def chemistry_case_sql(expr: str = "assay_raw", indent: int = 13) -> str:
+    """
+    Render CHEMISTRIES as Postgres CASE branches.
+
+    Emits `~*` against `Term.regex`, NOT LIKE against `Term.like`. The like
+    patterns are deliberately loose SQLite gates -- `%cel_seq%` matches
+    `cellseq`, which is the whole reason the regex carries `(?!l)` -- so a CASE
+    built from them would drop every guard the trap notes record. Postgres ARE
+    supports the same lookahead and lookbehind syntax Python does, so the one
+    pattern string serves both.
+    """
+    pad = " " * indent
+    out = [pad + SQL_BEGIN]
+    for chem in CHEMISTRIES:
+        tests = [f"{expr} ~* '{t.regex}'" for t in chem.terms]
+        quoted = "'" + (chem.label or "").replace("'", "''") + "'"
+        label = "NULL" if chem.label is None else quoted
+        out.append(f"{pad}WHEN " + f"\n{pad}     OR ".join(tests))
+        out.append(f"{pad}  THEN {label}  -- {chem.modality}")
+    out.append(pad + SQL_END)
+    return "\n".join(out)
+
+
 def _like_any(expr: str, terms: Sequence[Term]) -> str:
     """
     Build the SQL predicate matching `expr` against any term.
@@ -82,8 +174,8 @@ GENERIC_TERMS: tuple[Term, ...] = (
     Term(r"sn[-_. ]?atac", ("%snatac%", "%sn_atac%")),
     Term(r"(?<![A-Za-z0-9])10x", ("%10x%",)),
     Term(r"chromium", ("%chromium%",)),
-    Term(r"smart.?seq", ("%smartseq%", "%smart_seq%")),
-    Term(r"(?<!nano)drop.?seq", ("%dropseq%", "%drop_seq%")),
+    _T_SMARTSEQ,
+    _T_DROPSEQ,
     Term(r"cite.?seq", ("%citeseq%", "%cite_seq%")),
     Term(r"multiome", ("%multiome%",)),
     Term(r"visium", ("%visium%",)),
@@ -96,27 +188,27 @@ GENERIC_TERMS: tuple[Term, ...] = (
 # rejected candidates are listed in the trap notes above.
 PLATFORM_TERMS: tuple[Term, ...] = (
     # CEL-seq / CEL-seq2. `(?!l)` stops `cel.?seq` matching `cellseq`.
-    Term(r"cel(?!l)[-_. ]?seq", ("%celseq%", "%cel_seq%")),
+    _T_CELSEQ,
     # MARS-seq. `(?!uenc)` guards facility wording around MARS sequencing.
-    Term(r"mars[-_. ]?seq(?!uenc)", ("%marsseq%", "%mars_seq%")),
+    _T_MARSSEQ,
     # SCRB-seq / mcSCRB-seq / msSCRB-seq.
     Term(r"(?:mc|ms)?scrb[-_. ]?seq", ("%scrbseq%", "%scrb_seq%")),
     # Microwell-seq. `seq` keeps platform prose such as microwell filters out.
-    Term(r"microwell[-_. ]?seq", ("%microwellseq%", "%microwell_seq%")),
+    _T_MICROWELL,
     # Parse Biosciences (SPLiT-seq commercialised). Avoid bare `parse`, which is
     # ordinary English; anchor on the company name and product line.
-    Term(r"parse ?bio|evercode", ("%parsebio%", "%parse_bio%", "%evercode%")),
+    _T_PARSE,
     # sci-RNA-seq / sci-RNA-seq3 and their ATAC sibling. Avoid bare `sci`; it is
     # too broad outside the assay names.
-    Term(r"(?<![a-z0-9])sci[-_. ]?rna", ("%scirna%", "%sci_rna%")),
+    _T_SCIRNA,
     Term(r"(?<![a-z0-9])sci[-_. ]?atac", ("%sciatac%", "%sci_atac%")),
     Term(r"(?<![a-z0-9])scifi", ("%scifi%",)),
     # Seq-Well requires the separator. Solid `seqwell` is seqWell Inc., which
     # sells bulk library-prep kits; the Shalek-lab assay is written Seq-Well.
-    Term(r"seq[-_.]well", ("%seq_well%",)),
+    _T_SEQWELL,
     # SHARE-seq and SPLiT-seq. `(?!uenc)` guards demultiplexing script names.
     Term(r"share[-_. ]?seq(?!uenc)", ("%shareseq%", "%share_seq%")),
-    Term(r"split[-_. ]?seq(?!uenc)", ("%splitseq%", "%split_seq%")),
+    _T_SPLITSEQ,
     # STRT-seq. Guards are per term; STRT sequencing is the assay phrasing.
     Term(r"(?<![a-z0-9])strt[-_. ]?seq", ("%strtseq%", "%strt_seq%")),
     # SureCell / ddSEQ (Bio-Rad). `(?<![a-z])ddseq` excludes `maddseq`.
@@ -126,7 +218,7 @@ PLATFORM_TERMS: tuple[Term, ...] = (
     # BD Rhapsody requires adjacent `BD`; bare `rhapsody` hit a flower cultivar
     # and a PacBio sample, so most new SRA studies were wrong. Cost: SRP308295 is
     # missed with "BD targeted multiplex Rhapsody analysis pipeline".
-    Term(r"bd[-_. ]?rhapsody", ("%bdrhapsody%", "%bd_rhapsody%")),
+    _T_RHAPSODY,
     Term(r"issaac", ("%issaac%",)),
     Term(r"dogma[-_. ]?seq", ("%dogmaseq%", "%dogma_seq%")),
     # snmC-seq / snmCT-seq / sn-m3C-seq, the single-nucleus methylome family.
@@ -136,10 +228,10 @@ PLATFORM_TERMS: tuple[Term, ...] = (
     Term(r"snm(?:3c|ct|c)\d?[-_. ]?seq", ("%snmc%", "%snm3c%")),
     Term(r"m3c[-_. ]?seq", ("%m3cseq%", "%m3c_seq%")),
     Term(r"sccrispr", ("%sccrispr%",)),
-    Term(r"quartz[-_. ]?seq", ("%quartzseq%", "%quartz_seq%")),
+    _T_QUARTZ,
     # inDrop. The boundary rejects vendor and genus collisions: `findrop`,
     # `raindrop`, `Cylindrophis`, `Cylindropuntia`, and `Cylindropsis`.
-    Term(r"(?<![a-z])indrop", ("%indrop%",)),
+    _T_INDROP,
     # Forward-coverage terms retained as named assays.
     Term(r"sugar[-_. ]?seq", ("%sugarseq%", "%sugar_seq%")),
     Term(r"tang ?2009", ("%tang2009%", "%tang_2009%")),
@@ -160,8 +252,8 @@ GEA_TERMS: tuple[Term, ...] = (
     Term(r"snrna", ("%snrna%",)),
     Term(r"(?<![A-Za-z0-9])10x", ("%10x%",)),
     Term(r"chromium", ("%chromium%",)),
-    Term(r"smart.?seq", ("%smartseq%", "%smart_seq%")),
-    Term(r"(?<!nano)drop.?seq", ("%dropseq%", "%drop_seq%")),
+    _T_SMARTSEQ,
+    _T_DROPSEQ,
 )
 
 # Enrichment `assay` vocabulary: normalised model values such as scRNA-Seq,
@@ -175,8 +267,8 @@ ENRICHED_TERMS: tuple[Term, ...] = (
     Term(r"snatac", ("%snatac%",)),
     Term(r"(?<![A-Za-z0-9])10x", ("%10x%",)),
     Term(r"chromium", ("%chromium%",)),
-    Term(r"smart.?seq", ("%smartseq%", "%smart_seq%")),
-    Term(r"(?<!nano)drop.?seq", ("%dropseq%", "%drop_seq%")),
+    _T_SMARTSEQ,
+    _T_DROPSEQ,
     Term(r"cite.?seq", ("%citeseq%", "%cite_seq%")),
     Term(r"visium", ("%visium%",)),
     Term(r"indrop", ("%indrop%",)),
@@ -214,7 +306,7 @@ ENRICHED_TERMS: tuple[Term, ...] = (
     Term(r"tang ?2009", ("%tang2009%", "%tang_2009%")),
     # Solid spelling in this channel. `%pip_seq%` catches unrelated names, and
     # `pip-seq` in archive prose is ambiguous.
-    Term(r"pipseq", ("%pipseq%",)),
+    _T_PIPSEQ,
 )
 
 # Controlled enrichment assay_category. Term lists stay because category is sparse.

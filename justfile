@@ -18,6 +18,7 @@ ENA_DB_FILE := env("ENA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ena/db/ | 
 AE_DB_FILE := env("AE_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/ae/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/ae/db/$latest/ae_metadata_$latest.db\""))
 GSA_DB_FILE := env("GSA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa/db/$latest/gsa_metadata_$latest.db\""))
 GSA_HUMAN_DB_FILE := env("GSA_HUMAN_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gsa_human/db/ | sort -r | head -1) && echo \"" + DATA_DIR + "/gsa_human/db/$latest/gsa_human_metadata_$latest.db\""))
+GSA_BIOPROJECT_DB_FILE := env("GSA_BIOPROJECT_DB_FILE", "")
 # tolerate missing dirs before first ingest
 DRA_DB_FILE := env("DRA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/dra/db/ 2>/dev/null | sort -r | head -1); if [ -n \"$latest\" ]; then echo \"" + DATA_DIR + "/dra/db/$latest/dra_metadata_$latest.db\"; fi"))
 GEA_DB_FILE := env("GEA_DB_FILE", shell("latest=$(ls " + DATA_DIR + "/gea/db/ 2>/dev/null | sort -r | head -1); if [ -n \"$latest\" ]; then echo \"" + DATA_DIR + "/gea/db/$latest/gea_metadata_$latest.db\"; fi"))
@@ -64,7 +65,7 @@ _ingest_args := " --output-dir " + DATA_DIR + " --start-date " + START_DATE + " 
 [private]
 _all_db_args := "--sra-db-file " + SRA_DB_FILE + " --geo-db-file " + GEO_DB_FILE + " --ena-db-file " + ENA_DB_FILE + " --ae-db-file " + AE_DB_FILE + " "
 [private]
-_gsa_db_args := "--gsa-db-file " + GSA_DB_FILE + " --gsa-human-db-file " + GSA_HUMAN_DB_FILE + " "
+_gsa_db_args := "--gsa-db-file " + GSA_DB_FILE + " --gsa-human-db-file " + GSA_HUMAN_DB_FILE + " " + (if GSA_BIOPROJECT_DB_FILE != "" { "--gsa-bioproject-db-file " + GSA_BIOPROJECT_DB_FILE + " " } else { "" })
 [private]
 _sc_extra_db_args := (if ENA_DELTA_DB_FILE != "" { "--ena-delta-db-file " + ENA_DELTA_DB_FILE + " " } else { "" }) + (if ENRICHED_DB_FILE != "" { "--enriched-db-file " + ENRICHED_DB_FILE + " " } else { "" })
 [private]
@@ -174,6 +175,17 @@ PREFLIGHT_TIER := env("PREFLIGHT_TIER", "high")
 PMID_RETRY_MANIFEST := env("PMID_RETRY_MANIFEST", DATA_DIR + "/pmid_retry/manifest.txt")
 PMID_RETRY_DB_FILE := env("PMID_RETRY_DB_FILE", DATA_DIR + "/pmid_retry/pmid_retry.db")
 PMID_RETRY_RESULTS_DIR := env("PMID_RETRY_RESULTS_DIR", env("HOME") + "/pmid_retry_pull")
+
+SC_STATS_DB_FILE := env("SC_STATS_DB_FILE", DATA_DIR + "/sc_stats/sc_stats.db")
+# Change this if required
+SC_STATS_RESULTS_DIR := env("SC_STATS_RESULTS_DIR", env("PULL_ROOT", "/data/saket") + "/sc_stats/results")
+
+[group("sc_stats")]
+sc_stats_ingest *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} sc_stats ingest \
+        --results-dir {{ SC_STATS_RESULTS_DIR }} \
+        --db-file {{ SC_STATS_DB_FILE }} \
+        {{ flags }}
 
 [group("pmid_retry")]
 pmid_retry_gaps *flags:
@@ -347,7 +359,13 @@ transfer_postgres *flags:
         {{ _gsa_db_args }} \
         {{ flags }}
 
-# Load pentimento into pg. --non-nulling: adds values, never blanks one.
+[group("transfer")]
+transfer_sc_stats *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer sc-stats \
+        --pg-url "$PG_URL" \
+        --sc-stats-db-file {{ SC_STATS_DB_FILE }} \
+        {{ flags }}
+
 [group("pentimento")]
 transfer_pentimento *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} transfer pentimento \
@@ -508,8 +526,7 @@ transfer_leiden_swap *flags:
         --labels-dir {{ LABELS_DIR }} \
         {{ flags }}
 
-# Weekly publication refresh. Runs on the VPS against postgres directly -- no
-# DATA_DIR, no sqlite. Installed as seqout-pubrefresh.timer (see deploy/).
+# Weekly publication refresh. 
 [group("refresh")]
 refresh_publications *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} refresh publications \
@@ -521,11 +538,34 @@ refresh_publications *flags:
         --timeout {{ TIMEOUT }} \
         {{ flags }}
 
-# How far the weekly runs have got: linked/unlinked per source, pmid backlog.
+# Build study_pub_dates by hand; refresh_publications rebuilds it weekly.
+[group("refresh")]
+refresh_pub_dates: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 \
+        -f sql/tables/study_pub_dates_pg.sql \
+        -c "REFRESH MATERIALIZED VIEW CONCURRENTLY study_pub_dates"
+
+# Rebuild tissue_microbe_rates behind /stats/tissue-microbes; rerun after a quant ingest.
+[group("refresh")]
+refresh_tissue_microbes: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 --single-transaction \
+        -f sql/tables/tissue_microbe_rates_pg.sql \
+        -c "SELECT count(*) AS cells FROM tissue_microbe_rates"
+    curl -fsS -X POST "${SEQOUT_API_BASE:-https://seqout.org/api}/cache/purge" >/dev/null \
+        && echo "cache purged"
+
+# Rebuild sc_quality_by_year behind /stats/sc-quality; rerun after an sc_stats sweep.
+[group("refresh")]
+refresh_sc_quality: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 --single-transaction \
+        -f sql/tables/sc_quality_by_year_pg.sql \
+        -c "SELECT count(*) AS cells FROM sc_quality_by_year"
+    curl -fsS -X POST "${SEQOUT_API_BASE:-https://seqout.org/api}/cache/purge" >/dev/null \
+        && echo "cache purged"
+
 [group("refresh")]
 refresh_status:
     {{ PYTHON }} ./src/main.py --log-level warning refresh status --pg-url "$PG_URL"
-# Pentimento: one SQLite joining cell counts + preflightx + fastq links + microbes
 PENTIMENTO_DB_FILE := env("PENTIMENTO_DB_FILE", DATA_DIR + "/pentimento/pentimento.db")
 NCOUNT_PERSAMPLE_DIR := env("NCOUNT_PERSAMPLE_DIR", "/data/share/ncount_persample_July14")
 PREFLIGHTX_DB_FILE := env("PREFLIGHTX_DB_FILE", "/home/saket/enrichment/enriched_metadata_v4_combined_July14.sqlite")
@@ -590,7 +630,7 @@ fetch_preflightx:
 GAPS_DIR := env("GAPS_DIR", QUANT_DIR + "/gaps")
 MAX_SAMPLES := env("MAX_SAMPLES", "500")
 FLEET_SRC := env("FLEET_SRC", env("HOME") + "/fleet.csv")
-FLEET_LOCAL := "yuj/fleet.local.csv"  # yuj/*/yuj.yaml refer to it as ../fleet.local.csv
+FLEET_LOCAL := "yuj/fleet.local.csv"  
 
 [group("backfill")]
 gaps *flags:
@@ -608,7 +648,6 @@ _fleet:
     @command cp -f {{ FLEET_SRC }} {{ FLEET_LOCAL }} && chmod 600 {{ FLEET_LOCAL }}
     @echo "fleet copied to {{ FLEET_LOCAL }} (edit this, never {{ FLEET_SRC }})"
 
-# Study accession list for one queue bucket, the fleet's input format.
 [group("sc_evidence")]
 sc_db_export bucket *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} sc_db export-accessions \
@@ -617,7 +656,6 @@ sc_db_export bucket *flags:
         --out-file {{ GAPS_DIR }}/queue_{{ bucket }}.txt \
         {{ flags }}
 
-# Scan the queue's preflightx bucket, including studies with FASTQ and no matrix.
 [group("backfill")]
 backfill_preflight_queue *flags: _fleet
     just sc_db_export preflightx --is-by-next-stage

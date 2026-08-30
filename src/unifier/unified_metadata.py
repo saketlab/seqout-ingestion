@@ -849,7 +849,7 @@ def _scan_gsa(gsa_db_file: Path, gsa_human_db_file: Path) -> SourceMap:
     m.num_experiments = dict(exp_count)
     m.num_samples = dict(sample_count)
 
-    # GSA-Human / HRA: open studies only. 
+    # GSA-Human / HRA: open studies only.
     conn = sqlite_connect(gsa_human_db_file)
     hra_library: dict[str, Counter[str]] = defaultdict(Counter[str])
     for study, strategy in conn.execute(

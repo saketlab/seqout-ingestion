@@ -7,7 +7,7 @@ one enrichment that goes stale on its own -- a dataset released in 2024 gets its
 paper in 2026 -- so it has to run where the data lives, on its own cadence, with
 no ``DATA_DIR`` and no per-source SQLite window slices to be reconciled against.
 
-Three steps, in order:
+Four steps, in order:
 
   1. resolve   studies carrying no publication at all -> pysradb (NCBI elink /
                literature search), writing ``pubmed_id_pysradb``. Never-checked
@@ -16,6 +16,8 @@ Three steps, in order:
                ``pysradb.pmid_info`` (NCBI efetch + OpenAlex journal metrics).
   3. tsv       ``pub_tsv_transfer``, which folds the paper titles into each
                study's search ``tsv`` so the new papers are searchable.
+  4. dates     ``refresh_study_pub_dates``, the indexed view the pub_date search
+               filters read.
 
 Both API steps are budgeted (``--limit-per-source``, ``--meta-limit``) because
 the unlinked backlog runs to millions of studies, most of it ENA. A weekly run
@@ -49,6 +51,7 @@ from backfill.backfill_utils import _chunked, _parse_pmid
 from backfill.pubmed_ids import _resolve_via_sraweb
 from backfill.pubmed_meta import UPSERT_SQL, _pmid_row_to_tuple
 from pipeline_types import Datasource
+from transfer.pub_dates import refresh_study_pub_dates
 from transfer.pub_tsv import pub_tsv_transfer
 
 logger = logging.getLogger(__name__)
@@ -224,6 +227,10 @@ def refresh_publications(
     else:
         logger.info("refreshing pub_tsv ...")
         pub_tsv_transfer(pg_url)
+
+    if not is_dry_run:
+        logger.info("refreshing study_pub_dates ...")
+        refresh_study_pub_dates(pg_url)
 
     logger.info("publication refresh done")
 

@@ -444,7 +444,7 @@ def _geocode_item(
     return result
 
 
-#: ArcGIS score floor. 
+#: ArcGIS score floor.
 _ARCGIS_MIN_SCORE = 0.85
 
 #: Words shared by thousands of institutions. A candidate matching only these
