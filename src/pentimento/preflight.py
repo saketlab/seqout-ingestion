@@ -38,13 +38,18 @@ CALL_SPECS: tuple[tuple[str, str, str, str | None], ...] = (
     ("preflightx_end", "end", "end", "preflightx_end_confidence"),
 )
 ASSAY_COLUMN = "preflightx_assay"
-# chemistry has no verdict/confidence pair, so it sits outside CALL_SPECS
+# chemistry grades itself outside the CALL_SPECS (verdict, confidence) shape
+ASSAY_CONFIDENCE_COLUMN = "preflightx_assay_confidence"
+# a read whose length merely matches a barcode geometry scores nothing here
+ASSAY_ONLIST_PCT_COLUMN = "preflightx_assay_onlist_pct"
 CALL_COLUMNS: tuple[str, ...] = (
     "preflightx_species",
     "preflightx_species_confidence",
     "preflightx_sex",
     "preflightx_sex_confidence",
     ASSAY_COLUMN,
+    ASSAY_CONFIDENCE_COLUMN,
+    ASSAY_ONLIST_PCT_COLUMN,
     "preflightx_modality",
     "preflightx_modality_confidence",
     "preflightx_bulk_vs_sc",
@@ -125,12 +130,27 @@ def extract(report: dict[str, Any]) -> dict[str, str]:
     called[ASSAY_COLUMN] = (
         chemistry.get("assay_display") or chemistry.get("assay_id") or ""
     )
+    called[ASSAY_CONFIDENCE_COLUMN] = str(chemistry.get("confidence") or "")
+    called[ASSAY_ONLIST_PCT_COLUMN] = _max_onlist_pct(chemistry)
     for column, section, key, confidence_column in CALL_SPECS:
         block = report.get(section) or {}
         called[column] = str(block.get(key) or "")
         if confidence_column:
             called[confidence_column] = str(block.get("confidence") or "")
     return called
+
+
+def _max_onlist_pct(chemistry: dict[str, Any]) -> str:
+    """
+    Best onlist overlap across the scored whitelists, as a string, '' when none.
+
+    Empty and 0 differ: empty means no onlist was scored, 0 means one was and
+    nothing matched.
+    """
+    scores = chemistry.get("whitelist_scores") or []
+    pcts = [s.get("pct") for s in scores if isinstance(s, dict)]
+    pcts = [p for p in pcts if isinstance(p, (int, float))]
+    return str(max(pcts)) if pcts else ""
 
 
 def _text(value: Any) -> str | None:

@@ -11,10 +11,13 @@ sc_enrich_app = typer.Typer()
 @sc_enrich_app.command()
 def classify(
     unified_metadata_db_file: Path = typer.Option(...),
+    assay_mapping_csv_file: Path = typer.Option(...),
     batch_size: int = typer.Option(5000),
     is_dry_run: bool = typer.Option(default=False),
 ) -> None:
-    sc_classify(unified_metadata_db_file, batch_size, is_dry_run)
+    sc_classify(
+        unified_metadata_db_file, assay_mapping_csv_file, batch_size, is_dry_run
+    )
 
 
 @sc_enrich_app.command("counter-setup")

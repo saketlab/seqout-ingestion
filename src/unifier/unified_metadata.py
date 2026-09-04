@@ -55,7 +55,7 @@ def build_unified_metadata(
 
     catalog = _load_unified_catalog(unified_catalog_db_file)
     pubmed_map = _load_pubmed_metadata(pubmed_metadata_db_file)
-    assay_map = _load_assay_mapping(assay_mapping_csv_file)
+    assay_map = load_assay_mapping(assay_mapping_csv_file)
     taxonomy = _load_taxonomy_mapping(taxonomy_mapping_csv_file)
 
     source_data: dict[str, SourceMap] = {}
@@ -239,13 +239,22 @@ def _load_pubmed_metadata(db_file: Path) -> dict[str, tuple[str | None, int | No
     return pubmed_mapping
 
 
-def _load_assay_mapping(csv_file: Path) -> dict[str, tuple[str, str]]:
+def load_assay_mapping(csv_file: Path) -> dict[str, tuple[str, str]]:
+    """Load raw_term -> (canonical_assay, category) from the assay mapping csv."""
     logger.info("loading assay mapping...")
     with csv_file.open() as f:
         assay_mapping = {
             row["raw_term"]: (row["canonical_assay"], row["category"])
             for row in csv.DictReader(f)
         }
+
+    # archives vary the case of a strategy, and a case miss maps to nothing
+    # folded keys are a fallback; they never shadow an exact term
+    folded: dict[str, tuple[str, str]] = {}
+    for raw, mapped in assay_mapping.items():
+        folded.setdefault(raw.casefold(), mapped)
+    for key, mapped in folded.items():
+        assay_mapping.setdefault(key, mapped)
 
     logger.info("\t%d entries loaded from assay mapping", len(assay_mapping))
     return assay_mapping
@@ -948,7 +957,8 @@ def _collapse_library(
     l1: dict[str, int] = {}
     l2: dict[str, int] = {}
     for raw, c in lib_counts.items():
-        mapped = assay_map.get(raw)
+        # Exact first, folded second: see the fallback note in load_assay_mapping.
+        mapped = assay_map.get(raw) or assay_map.get(raw.casefold())
         if mapped:
             canonical, category = mapped
             l1[category] = l1.get(category, 0) + c

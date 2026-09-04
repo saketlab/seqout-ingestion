@@ -55,11 +55,12 @@ _INSERTS: dict[str, str] = {
         INSERT OR REPLACE INTO _pfx_run (
             run_accession, experiment_accession, gsm_accession, study_accession,
             pfx_species, pfx_species_confidence, pfx_sex, pfx_sex_confidence,
-            pfx_assay, pfx_modality, pfx_modality_confidence,
+            pfx_assay, pfx_assay_confidence, pfx_assay_onlist_pct,
+            pfx_modality, pfx_modality_confidence,
             pfx_bulk_vs_sc, pfx_bulk_vs_sc_confidence,
             pfx_read_end, pfx_read_end_confidence,
             stated_sex, stated_assay, preflightx_source
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """,
     "preflightx_vote": """
         INSERT OR REPLACE INTO preflightx_vote (
@@ -135,6 +136,9 @@ CREATE TABLE IF NOT EXISTS _pfx_run (
     pfx_sex              TEXT,
     pfx_sex_confidence   TEXT,
     pfx_assay            TEXT,
+    pfx_assay_confidence TEXT,
+    -- onlist overlap for the winning chemistry
+    pfx_assay_onlist_pct REAL,
     -- the CSV route now carries these too, so a run reaches the spine with its
     -- modality already called instead of waiting for an experiment-grained overlay
     pfx_modality             TEXT,
@@ -295,7 +299,8 @@ def _expand_to_runs(conn: sqlite3.Connection) -> None:
         INSERT INTO run_preflightx (
             run_accession, experiment_accession, gsm_accession, study_accession,
             species_called, species_confidence, sex_verdict, sex_confidence,
-            assay, modality, modality_confidence, bulk_vs_sc,
+            assay, assay_confidence, assay_onlist_pct,
+            modality, modality_confidence, bulk_vs_sc,
             bulk_vs_sc_confidence, read_end, read_end_confidence,
             sex, preflightx_source
         )
@@ -303,6 +308,7 @@ def _expand_to_runs(conn: sqlite3.Connection) -> None:
                study_accession, pfx_species, pfx_species_confidence,
                pfx_sex, pfx_sex_confidence,
                COALESCE(pfx_assay, stated_assay),
+               pfx_assay_confidence, pfx_assay_onlist_pct,
                pfx_modality, pfx_modality_confidence,
                pfx_bulk_vs_sc, pfx_bulk_vs_sc_confidence,
                pfx_read_end, pfx_read_end_confidence,
@@ -322,6 +328,8 @@ def _expand_to_runs(conn: sqlite3.Connection) -> None:
             sex_verdict           = excluded.sex_verdict,
             sex_confidence        = excluded.sex_confidence,
             assay                 = excluded.assay,
+            assay_confidence      = excluded.assay_confidence,
+            assay_onlist_pct      = excluded.assay_onlist_pct,
             modality              = excluded.modality,
             modality_confidence   = excluded.modality_confidence,
             bulk_vs_sc            = excluded.bulk_vs_sc,

@@ -4,6 +4,7 @@ import queue
 import re
 import sqlite3
 import threading
+import unicodedata
 from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
@@ -410,17 +411,25 @@ def _geocode_item(
     if not cleaned:
         return None
 
+    # both providers answer anything; with no distinctive token nothing can
+    # be checked against the reply
+    if not _distinctive_tokens(cleaned):
+        return _empty_result(cleaned, "no distinctive token to verify against")
+
     result = _geocode(
         cleaned, arcgis_geocoder, _parse_arcgis, GeocodingProviders.Arcgis
     )
-    if (
-        result is None
-        or result.get("error")
-        or not _arcgis_is_plausible(cleaned, result)
-    ):
+    if result is None or result.get("error") or not _is_plausible(cleaned, result):
         result = _geocode(
             cleaned, osm_geocoder, _parse_osm, GeocodingProviders.Nominatim
         )
+        # the fallback needs the same gate; it answers what ArcGIS rejected
+        if (
+            result is not None
+            and not result.get("error")
+            and not _is_plausible(cleaned, result)
+        ):
+            result = _empty_result(cleaned, "no plausible match")
     if result is None:
         result = _empty_result(cleaned, "no result found")
 
@@ -506,6 +515,73 @@ _GENERIC_TOKENS = frozenset(
         "llc",
         "gmbh",
         "corp",
+        # role words that read as distinctive but name no place
+        "people",
+        "peoples",
+        "general",
+        "project",
+        "central",
+        # a field of study identifies a subject, not a place
+        # rarity cannot separate these: "acupuncture" is as rare as "wyoming"
+        "agricultural",
+        "agriculture",
+        "animal",
+        "biological",
+        "biomedical",
+        "cancer",
+        "environmental",
+        "fisheries",
+        "food",
+        "forestry",
+        "health",
+        "life",
+        "marine",
+        "molecular",
+        "plant",
+        "acupuncture",
+        "anatomy",
+        "biochemistry",
+        "bioinformatics",
+        "biology",
+        "biotechnology",
+        "cardiology",
+        "chemistry",
+        "dentistry",
+        "dermatology",
+        "ecology",
+        "endocrinology",
+        "engineering",
+        "epidemiology",
+        "genetics",
+        "genomics",
+        "gynecology",
+        "haematology",
+        "hematology",
+        "immunology",
+        "medicine",
+        "microbiology",
+        "neurology",
+        "neuroscience",
+        "nursing",
+        "nutrition",
+        "obstetrics",
+        "oncology",
+        "ophthalmology",
+        "orthopedics",
+        "parasitology",
+        "pathology",
+        "pediatrics",
+        "pharmacology",
+        "pharmacy",
+        "physiology",
+        "psychiatry",
+        "radiology",
+        "surgery",
+        "toxicology",
+        "urology",
+        "veterinary",
+        "virology",
+        "zoology",
         "co",
         "company",
     }
@@ -516,15 +592,336 @@ _GENERIC_TOKENS = frozenset(
 _MIN_TOKEN_LEN = 3
 
 
+#: Letters NFKD cannot decompose: a stroke or ligature is part of the glyph,
+#: not a combining mark, so "Wroclaw" never matched "Wroclaw" without this.
+_STROKED = str.maketrans(
+    {"ł": "l", "ø": "o", "đ": "d", "ð": "d", "þ": "th", "ß": "ss", "æ": "ae", "œ": "oe"}
+)
+
+
 def _distinctive_tokens(text: str) -> set[str]:
-    tokens = re.findall(r"[a-z0-9]+", text.lower())
-    return {t for t in tokens if t not in _GENERIC_TOKENS and len(t) >= _MIN_TOKEN_LEN}
+    # \w not [a-z0-9]: the ASCII class yields an empty set for CJK names
+    # the length floor applies only to ASCII; a short CJK name is a whole word
+    # fold diacritics first; archives and geocoders disagree on accents
+    folded = "".join(
+        ch
+        for ch in unicodedata.normalize("NFKD", text.lower().translate(_STROKED))
+        if not unicodedata.combining(ch)
+    )
+    tokens = re.findall(r"\w+", folded, re.UNICODE)
+    return {
+        t
+        for t in tokens
+        if t not in _GENERIC_TOKENS and (len(t) >= _MIN_TOKEN_LEN or not t.isascii())
+    }
 
 
-def _arcgis_is_plausible(query: str, result: dict[str, Any]) -> bool:
+#: Shortest real country name: Chad, Cuba, Iran, Mali, Oman, Togo.
+_MIN_COUNTRY_NAME_LEN = 4
+
+#: country names that are also a well-known place elsewhere, so naming one
+#: claims nothing: Georgia is usually the US state, Jersey is New Jersey
+_AMBIGUOUS_COUNTRY_WORDS = frozenset({"georgia", "jersey"})
+
+#: nationality adjectives that name a country as reliably as the country does
+#: "british" is absent: it collides with British Columbia
+_NATIONALITY = {
+    "chinese": "cn",
+    "german": "de",
+    "indian": "in",
+    "spanish": "es",
+    "french": "fr",
+    "italian": "it",
+    "japanese": "jp",
+    "korean": "kr",
+    "norwegian": "no",
+    "swedish": "se",
+    "danish": "dk",
+    "finnish": "fi",
+    "dutch": "nl",
+    "belgian": "be",
+    "swiss": "ch",
+    "austrian": "at",
+    "polish": "pl",
+    "russian": "ru",
+    "brazilian": "br",
+    "mexican": "mx",
+    "canadian": "ca",
+    "australian": "au",
+    "portuguese": "pt",
+    "greek": "gr",
+    "turkish": "tr",
+    "israeli": "il",
+    "egyptian": "eg",
+    "thai": "th",
+    "vietnamese": "vn",
+    "indonesian": "id",
+    "malaysian": "my",
+    "czech": "cz",
+    "hungarian": "hu",
+}
+
+#: Territories a claim of "cn" must not be judged against: each has its own
+#: code, and "the Chinese University of Hong Kong" is genuinely in hk.
+_COMPATIBLE = {"cn": {"cn", "hk", "mo", "tw"}}
+
+
+#: cities whose name alone fixes the country, used only to veto a
+#: contradicting answer, never to assign one
+#: entries must be unambiguous worldwide; Cambridge, Birmingham, Springfield,
+#: Victoria, San Jose, Santiago, Valencia, Alexandria, Hamilton and Richmond
+#: are absent because each names cities in more than one country
+_CITY_COUNTRY: dict[str, str] = {
+    # China
+    "beijing": "cn",
+    "shanghai": "cn",
+    "guangzhou": "cn",
+    "shenzhen": "cn",
+    "kunming": "cn",
+    "chengdu": "cn",
+    "wuhan": "cn",
+    "hangzhou": "cn",
+    "nanjing": "cn",
+    "tianjin": "cn",
+    "chongqing": "cn",
+    "xiamen": "cn",
+    "qingdao": "cn",
+    "changchun": "cn",
+    "harbin": "cn",
+    "shenyang": "cn",
+    "zhengzhou": "cn",
+    "lanzhou": "cn",
+    "urumqi": "cn",
+    "hefei": "cn",
+    "jinan": "cn",
+    "suzhou": "cn",
+    "ningbo": "cn",
+    "wenzhou": "cn",
+    "guiyang": "cn",
+    "nanchang": "cn",
+    "fuzhou": "cn",
+    "taiyuan": "cn",
+    # Japan
+    "tokyo": "jp",
+    "osaka": "jp",
+    "kyoto": "jp",
+    "nagoya": "jp",
+    "sapporo": "jp",
+    "fukuoka": "jp",
+    "sendai": "jp",
+    "tsukuba": "jp",
+    "hiroshima": "jp",
+    "okayama": "jp",
+    "kanazawa": "jp",
+    "yokohama": "jp",
+    # Korea
+    "seoul": "kr",
+    "busan": "kr",
+    "daejeon": "kr",
+    "gwangju": "kr",
+    "incheon": "kr",
+    "daegu": "kr",
+    # India
+    "mumbai": "in",
+    "bengaluru": "in",
+    "kolkata": "in",
+    "chennai": "in",
+    "hyderabad": "in",
+    "ahmedabad": "in",
+    "lucknow": "in",
+    "guwahati": "in",
+    "bhubaneswar": "in",
+    "thiruvananthapuram": "in",
+    "kanpur": "in",
+    "kharagpur": "in",
+    "varanasi": "in",
+    "chandigarh": "in",
+    "pune": "in",
+    # elsewhere, only where the name is globally unique
+    "singapore": "sg",
+    "helsinki": "fi",
+    "stockholm": "se",
+    "copenhagen": "dk",
+    "oslo": "no",
+    "reykjavik": "is",
+    "warsaw": "pl",
+    "krakow": "pl",
+    "budapest": "hu",
+    "bucharest": "ro",
+    "istanbul": "tr",
+    "ankara": "tr",
+    "tehran": "ir",
+    "riyadh": "sa",
+    "nairobi": "ke",
+    "kampala": "ug",
+    "addis": "et",
+    "johannesburg": "za",
+    "pretoria": "za",
+    "montevideo": "uy",
+    "bogota": "co",
+    "lima": "pe",
+    "quito": "ec",
+    "caracas": "ve",
+    "reykjavík": "is",
+    "ljubljana": "si",
+    "zagreb": "hr",
+    "bratislava": "sk",
+    "vilnius": "lt",
+    "tallinn": "ee",
+    "riga": "lv",
+    "minsk": "by",
+    "tashkent": "uz",
+    "almaty": "kz",
+    "bangkok": "th",
+    "hanoi": "vn",
+    "jakarta": "id",
+    "manila": "ph",
+    "colombo": "lk",
+    "kathmandu": "np",
+    "dhaka": "bd",
+    "islamabad": "pk",
+    "karachi": "pk",
+    "lahore": "pk",
+    "edinburgh": "gb",
+    "glasgow": "gb",
+    "manchester": "gb",
+    "liverpool": "gb",
+    "amsterdam": "nl",
+    "rotterdam": "nl",
+    "utrecht": "nl",
+    "leuven": "be",
+    "heidelberg": "de",
+    "leipzig": "de",
+    "dresden": "de",
+    "freiburg": "de",
+    "munich": "de",
+    "hamburg": "de",
+    "stuttgart": "de",
+    "gottingen": "de",
+    "marseille": "fr",
+    "toulouse": "fr",
+    "montpellier": "fr",
+    "grenoble": "fr",
+    "barcelona": "es",
+    "sevilla": "es",
+    "zaragoza": "es",
+    "milano": "it",
+    "torino": "it",
+    "bologna": "it",
+    "napoli": "it",
+    "lisboa": "pt",
+    "porto": "pt",
+    "vienna": "at",
+    "salzburg": "at",
+    "zurich": "ch",
+    "geneva": "ch",
+    "lausanne": "ch",
+    "basel": "ch",
+}
+
+
+def _claimed_cities(query: str) -> set[str]:
+    """Return country codes implied by a city the centre name states outright."""
+    return {
+        _CITY_COUNTRY[t]
+        for t in re.findall(r"[a-z]+", query.lower())
+        if t in _CITY_COUNTRY
+    }
+
+
+def _claimed_countries(query: str) -> set[str]:
+    """Country codes the centre name states outright."""
+    claimed = set()
+    tokens = re.findall(r"[a-z]+", query.lower())
+    for i, token in enumerate(tokens):
+        # "New Mexico" is not Mexico and "New Jersey" is not Jersey; the
+        # preceding word makes it a different place entirely.
+        if i and tokens[i - 1] == "new":
+            continue
+        if token in _AMBIGUOUS_COUNTRY_WORDS:
+            continue
+        if token in _NATIONALITY:
+            claimed.add(_NATIONALITY[token])
+            continue
+        # whole names only; pycountry resolves "am" to Armenia, "in" to India
+        if len(token) < _MIN_COUNTRY_NAME_LEN:
+            continue
+        try:
+            claimed.add(pycountry.countries.lookup(token).alpha_2.lower())
+        except LookupError:
+            continue
+    return claimed
+
+
+def _contradicts_named_country(query: str, result: dict[str, Any]) -> bool:
+    """Whether the answer's country conflicts with one the centre name states."""
+    # a stated city is evidence of the same kind as a stated country
+    # unioned, so a name mentioning both need only satisfy the set
+    claimed = _claimed_countries(query) | _claimed_cities(query)
+    code = (result.get("country_code") or "").lower()
+    if not claimed or not code:
+        return False
+    allowed = set()
+    for c in claimed:
+        allowed |= _COMPATIBLE.get(c, {c})
+    return code not in allowed
+
+
+def _ror_key(name: str) -> str:
+    """Comparison form of an institution name: no leading article, no punctuation."""
+    key = re.sub(r"^the\s+", "", (name or "").strip().lower())
+    key = re.sub(r"[^a-z0-9 ]+", " ", key)
+    return re.sub(r"\s+", " ", key).strip()
+
+
+def ror_label_index(index: dict | None) -> dict[str, str]:
     """
-    Whether an ArcGIS candidate answers the question that was asked.
+    Build {normalised label name: country code} for the veto below.
+
+    Label names only; ROR's acronyms map JGI to Tanzania and NIH to Thailand.
+    A name resolving to more than one country is dropped.
     """
+    codes: dict[str, set[str]] = {}
+    for entries in (index or {}).values():
+        for entry in entries:
+            types = entry.get("name_types") or []
+            if "acronym" in types or not ({"label", "ror_display"} & set(types)):
+                continue
+            key = _ror_key(entry.get("name_value") or "")
+            code = ((entry.get("geonames") or {}).get("country_code") or "").lower()
+            if key and code:
+                codes.setdefault(key, set()).add(code)
+    return {k: next(iter(v)) for k, v in codes.items() if len(v) == 1}
+
+
+def _ror_label_country(query: str, label_index: dict | None) -> str | None:
+    """Look a centre's full name up in the label index, or None."""
+    if not label_index or not query:
+        return None
+    cleaned = query.strip()
+    # An acronym cannot be verified this way, whichever side it appears on.
+    if " " not in cleaned or cleaned.isupper():
+        return None
+    return label_index.get(_ror_key(cleaned))
+
+
+def _contradicts_ror_country(
+    query: str, result: dict[str, Any], index: dict | None
+) -> bool:
+    """Whether an independent registry places this centre in another country."""
+    expected = _ror_label_country(query, index)
+    if not expected:
+        return False
+    actual = (result.get("country_code") or "").lower()
+    if not actual:
+        return False
+    return actual not in _COMPATIBLE.get(expected, {expected})
+
+
+def _is_plausible(
+    query: str, result: dict[str, Any], ror_index: dict | None = None
+) -> bool:
+    """Whether a geocoder candidate answers the question that was asked."""
     score = result.get("geocode_score")
     if score is not None and score < _ARCGIS_MIN_SCORE:
         return False
@@ -540,11 +937,13 @@ def _arcgis_is_plausible(query: str, result: dict[str, Any]) -> bool:
 
     wanted = _distinctive_tokens(query)
     if not wanted:
-        # nothing but generic words to match on; let Nominatim try instead
+        # nothing but generic words to match on; no provider can be verified
         return False
 
     if wanted & _distinctive_tokens(str(candidate)):
-        return True
+        if _contradicts_named_country(query, result):
+            return False
+        return not _contradicts_ror_country(query, result, ror_index)
 
     logger.debug(
         "arcgis rejected for '%s': got '%s' (score %s)", query, candidate, score
@@ -607,7 +1006,8 @@ def _score_ror_match(
     return score
 
 
-def _geocode_from_ror(
+def _geocode_from_ror(  # noqa: PLR0911
+    # separate guard clauses, so the rejecting check stays visible
     center_name: str,
     ror_index: dict[str, list[dict[str, Any]]] | None,
     accessions: list[str] | None = None,
@@ -658,6 +1058,12 @@ def _geocode_from_ror(
         if result_country not in country_set:
             return None
 
+    # ROR answers bypassed the plausibility gate entirely, because
+    # ROR runs before _geocode_item and _score_ror_match rewards acronym
+    # matches, so hold it to the same plausibility gate as the APIs
+    if not _is_plausible(cleaned, result):
+        return None
+
     return result
 
 
@@ -689,8 +1095,8 @@ def _parse_ror(query: str, entry: dict[str, Any]) -> dict[str, Any]:
         "latitude": details.get("lat"),
         "city": location_name,
         "state": state_name,
-        "country_code": country_code,
-        "country": country_name,
+        "country_code": _canonical_country(country_code, country_name)[0],
+        "country": _canonical_country(country_code, country_name)[1],
         "geocode_score": 1.0,
         "source": "ror",
     }
@@ -746,8 +1152,12 @@ def _parse_osm(query: str, location: Location | None) -> dict[str, Any]:
         "territory": addr.get("territory"),
         "metro_area": _first(addr.get("municipality"), extra.get("is_in:city")),
         "postcode": addr.get("postcode"),
-        "country_code": addr.get("country_code"),
-        "country": addr.get("country"),
+        "country_code": _canonical_country(
+            addr.get("country_code"), addr.get("country")
+        )[0],
+        # Nominatim answers in the local language ("Suisse", "Brasil"), so the
+        # canonical English name replaces it here rather than downstream.
+        "country": _canonical_country(addr.get("country_code"), addr.get("country"))[1],
         "geocode_score": raw.get("importance"),
         "source": "osm",
     }
@@ -795,11 +1205,35 @@ def _parse_arcgis(query: str, location: Location | None) -> dict[str, Any]:
         "territory": attrs.get("Territory"),
         "metro_area": attrs.get("MetroArea"),
         "postcode": attrs.get("Postal"),
-        "country_code": country_code.lower() if country_code else None,
-        "country": country,
+        "country_code": _canonical_country(country_code, country)[0],
+        "country": _canonical_country(country_code, country)[1],
         "geocode_score": score / 100 if score else None,
         "source": "arcgis",
     }
+
+
+def _canonical_country(
+    code: str | None, name: str | None
+) -> tuple[str | None, str | None]:
+    """Reduce a provider's country to one canonical (alpha-2 lower, English name)."""
+    country = None
+    if code:
+        code = code.strip()
+        country = (
+            pycountry.countries.get(alpha_2=code.upper())
+            if len(code) == 2  # noqa: PLR2004
+            else pycountry.countries.get(alpha_3=code.upper())
+        )
+    if country is None and name:
+        try:
+            country = pycountry.countries.lookup(name.strip())
+        except LookupError:
+            country = None
+    if country is None:
+        # Nothing resolvable: keep the provider's own strings rather than
+        # discard evidence, but do not invent a code.
+        return (code.lower() if code else None), name
+    return country.alpha_2.lower(), country.name
 
 
 def _load_cache(cache_file: Path | None) -> dict[str, dict[str, Any]]:

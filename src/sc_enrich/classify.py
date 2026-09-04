@@ -7,6 +7,8 @@ from pathlib import Path
 from tqdm import tqdm
 
 from helpers import exec_query_from_file, sqlite_connect
+from sc_enrich.assay import promote
+from unifier.unified_metadata import load_assay_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -111,9 +113,11 @@ SC_FTS_QUERY = (
 
 def sc_classify(
     unified_metadata_db_file: Path,
+    assay_mapping_csv_file: Path,
     batch_size: int,
     is_dry_run: bool,
 ) -> None:
+    assay_map = load_assay_mapping(assay_mapping_csv_file)
     conn = sqlite_connect(str(unified_metadata_db_file))
     logger.info("re-building fts index, might take a while...")
     _build_fts_index(conn)
@@ -135,6 +139,15 @@ def sc_classify(
     )
     candidates.update(row[0] for row in cursor.fetchall())
 
+    # a stored modality makes a study a candidate whatever its prose says
+    # the FTS phrase "scrna seq" misses "scRNA sequencing", which tokenises
+    # to scrna + sequencing
+    cursor = conn.execute(
+        "SELECT canonical_accession FROM unified_metadata "
+        "WHERE single_cell_modality IS NOT NULL AND single_cell_modality <> ''",
+    )
+    candidates.update(row[0] for row in cursor.fetchall())
+
     conn.executescript(
         "CREATE TEMP TABLE IF NOT EXISTS _sc_candidates ("
         "  canonical_accession TEXT PRIMARY KEY"
@@ -149,7 +162,8 @@ def sc_classify(
         )
 
     rows = conn.execute(
-        "SELECT m.canonical_accession, m.title, m.description, m.dominant_assay_l2 "
+        "SELECT m.canonical_accession, m.title, m.description, m.dominant_assay_l2, "
+        "m.dominant_assay_l1, m.single_cell_status "
         "FROM unified_metadata m "
         "JOIN _sc_candidates c ON m.canonical_accession = c.canonical_accession",
     ).fetchall()
@@ -158,8 +172,19 @@ def sc_classify(
     sc_count = 0
     modality_counter: Counter[str] = Counter()
     updates: list[tuple[bool, str | None, str]] = []
+    # library_strategy has no single-cell vocabulary, so a study measured as
+    # single-cell still reads as bulk here until the modality is promoted.
+    promotions: list[tuple[str, str, str]] = []
+    promotion_counter: Counter[str] = Counter()
 
-    for accession, title, description, dominant_assay_l2 in tqdm(
+    for (
+        accession,
+        title,
+        description,
+        dominant_assay_l2,
+        dominant_assay_l1,
+        single_cell_status,
+    ) in tqdm(
         rows,
         unit="acc",
         desc="classifying studies",
@@ -177,10 +202,23 @@ def sc_classify(
 
         if modality:
             modality_counter[modality] += 1
+            promoted = promote(
+                modality,
+                single_cell_status,
+                dominant_assay_l1,
+                dominant_assay_l2,
+                assay_map,
+            )
+            if promoted:
+                promotions.append((*promoted, accession))
+                promotion_counter[f"{promoted[0]} / {promoted[1]}"] += 1
 
     logger.info("single-cell studies: %d", sc_count)
     for mod, cnt in sorted(modality_counter.items(), key=lambda x: -x[1]):
         logger.info("  %s: %d", mod, cnt)
+    logger.info("assay promotions: %d", len(promotions))
+    for pair, cnt in sorted(promotion_counter.items(), key=lambda x: -x[1]):
+        logger.info("  %s: %d", pair, cnt)
 
     if is_dry_run:
         conn.execute("DROP TABLE IF EXISTS unified_metadata_fts")
@@ -197,6 +235,18 @@ def sc_classify(
             "UPDATE unified_metadata SET is_single_cell = ?, "
             "single_cell_modality = ? WHERE canonical_accession = ?",
             updates_batch,
+        )
+        conn.commit()
+
+    for i in tqdm(
+        range(0, len(promotions), batch_size),
+        unit="batch",
+        desc="promoting assays",
+    ):
+        conn.executemany(
+            "UPDATE unified_metadata SET dominant_assay_l1 = ?, "
+            "dominant_assay_l2 = ? WHERE canonical_accession = ?",
+            promotions[i : i + batch_size],
         )
         conn.commit()
 

@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS pentimento_run (
     sex_confidence        TEXT,   -- 'low'|'medium'|'high'
     assay                 TEXT,
     assay_is_single_cell  BOOLEAN,
+    assay_confidence      TEXT,   -- 'low'|'medium'|'high'
+    -- onlist overlap for the called chemistry
+    -- NULL when no onlist was scored, never 0
+    assay_onlist_pct      DOUBLE PRECISION,
     -- Cell vs nucleus, measured from the reads. The text route
     -- (unified_metadata.single_cell_modality) only knows this when the authors
     -- wrote it down; this column is the read-derived answer.

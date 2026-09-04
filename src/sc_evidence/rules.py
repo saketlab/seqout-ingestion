@@ -49,6 +49,17 @@ _T_PIPSEQ = Term(r"pipseq", ("%pipseq%",))
 _T_SMARTSEQ = Term(r"smart.?seq", ("%smartseq%", "%smart_seq%"))
 _T_DROPSEQ = Term(r"(?<!nano)drop.?seq", ("%dropseq%", "%drop_seq%"))
 
+# UMI-bearing revisions; must precede their generic term in CHEMISTRIES.
+_T_SMARTSEQ3 = Term(
+    r"smart[-_. ]?seq[-_. ]?3", ("%smartseq3%", "%smart_seq3%", "%smart_seq_3%")
+)
+_T_CELSEQ2 = Term(
+    r"cel(?!l)[-_. ]?seq[-_. ]?2", ("%celseq2%", "%cel_seq2%", "%cel_seq_2%")
+)
+_T_QUARTZ2 = Term(
+    r"quartz[-_. ]?seq[-_. ]?2", ("%quartzseq2%", "%quartz_seq2%", "%quartz_seq_2%")
+)
+
 
 @dataclass(frozen=True)
 class Chemistry:
@@ -62,6 +73,11 @@ class Chemistry:
     excluded rather than labelled, so a NULL label keeps its one meaning --
     "no rule matched" -- and a chemistry we have never seen stays countable
     instead of vanishing into the same silence as a deliberate exclusion.
+
+    Modality `reads` also excludes: the protocol carries no UMI, so its counts
+    are reads and scale with sequencing depth rather than molecules captured.
+    Smart-seq2, CEL-seq1 and Quartz-seq1 sit there, with their UMI-bearing
+    successors listed ahead of them.
     """
 
     label: str | None
@@ -82,17 +98,20 @@ CHEMISTRIES: tuple[Chemistry, ...] = (
         (Term(r"visium", ("%visium%",)), Term(r"spatial", ("%spatial%",))),
     ),
     Chemistry("Drop-seq", "transcriptome", (_T_DROPSEQ,)),
-    Chemistry("Smart-seq", "transcriptome", (_T_SMARTSEQ,)),
+    Chemistry("Smart-seq3", "transcriptome", (_T_SMARTSEQ3,)),
+    Chemistry(None, "reads", (_T_SMARTSEQ,)),
     # Evercode is Parse's commercial SPLiT-seq, so the two share a series.
     Chemistry("SPLiT-seq/Parse", "transcriptome", (_T_SPLITSEQ, _T_PARSE)),
     Chemistry("BD Rhapsody", "transcriptome", (_T_RHAPSODY,)),
     Chemistry("PIPseq", "transcriptome", (_T_PIPSEQ,)),
     Chemistry("inDrop", "transcriptome", (_T_INDROP,)),
-    Chemistry("CEL-seq", "transcriptome", (_T_CELSEQ,)),
+    Chemistry("CEL-seq2", "transcriptome", (_T_CELSEQ2,)),
+    Chemistry(None, "reads", (_T_CELSEQ,)),
     Chemistry("Seq-Well", "transcriptome", (_T_SEQWELL,)),
     Chemistry("sci-RNA-seq", "transcriptome", (_T_SCIRNA,)),
     Chemistry("MARS-seq", "transcriptome", (_T_MARSSEQ,)),
-    Chemistry("Quartz-seq", "transcriptome", (_T_QUARTZ,)),
+    Chemistry("Quartz-seq2", "transcriptome", (_T_QUARTZ2,)),
+    Chemistry(None, "reads", (_T_QUARTZ,)),
     Chemistry("Microwell-seq", "transcriptome", (_T_MICROWELL,)),
 )
 

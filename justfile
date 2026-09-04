@@ -47,7 +47,7 @@ KEYWORDS_DIR := env("KEYWORDS_DIR", DATA_DIR + "/embed/keywords")
 
 NCBI_KEYS_FILE := env("NCBI_KEYS_FILE", DATA_DIR + "/keys/ncbi.txt")
 OPENALEX_KEYS_FILE := env("OPENALEX_KEYS_FILE", DATA_DIR + "/keys/openalex.txt")
-ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", DATA_DIR + "/data/assay_mapping.csv")
+ASSAY_MAPPING_FILE := env("ASSAY_MAPPING_FILE", justfile_directory() + "/data/assay_mapping.csv")
 TAXONOMY_MAPPING_FILE := env("TAXONOMY_MAPPING_FILE", DATA_DIR + "/data/ncbi_taxonomy_common_names.csv")
 DATA_DIR_LOCAL := env("DATA_DIR_LOCAL", "/data/saket")
 
@@ -302,6 +302,7 @@ geocode *flags:
 sc_enrich_classify *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} sc_enrich classify \
         --unified-metadata-db-file {{ UNIFIED_METADATA_DB_FILE }} \
+        --assay-mapping-csv-file {{ ASSAY_MAPPING_FILE }} \
         --batch-size {{ BATCH_SIZE }} \
         {{ flags }}
 

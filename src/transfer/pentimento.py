@@ -58,7 +58,7 @@ _SAMPLE_COLS = [
     "unfiltered",
     "n_runs",
     "n_runs_measurable",
-    # Taken from the rollup's own list so added pentimento_sample columns travel to Postgres.
+    # from the rollup's list, so added columns travel to Postgres
     *(c for c, _, _ in PICKED_COLUMNS),
     "calls_ambiguous",
     "flags",
@@ -85,6 +85,8 @@ _RUN_COLS = [
     "sex_confidence",
     "assay",
     "assay_is_single_cell",
+    "assay_confidence",
+    "assay_onlist_pct",
     "modality",
     "modality_confidence",
     "bulk_vs_sc",

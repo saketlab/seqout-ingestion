@@ -179,7 +179,9 @@ def _load_ae(ae_db_file: Path) -> dict[str, tuple[str, str, list[dict]]]:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 links = json.loads(links_json)
 
-        result[acc] = (_clean_string(title), _clean_string(desc), links)
+        # `links or []`: json.loads("null") is None, and _build_catalog_tuples
+        # iterates this. One study with a JSON null should not end the build.
+        result[acc] = (_clean_string(title), _clean_string(desc), links or [])
     return result
 
 

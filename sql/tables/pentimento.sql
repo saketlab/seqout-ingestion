@@ -68,6 +68,10 @@ CREATE TABLE IF NOT EXISTS run_preflightx (
     assay                 TEXT,
     assay_display         TEXT,   -- human-readable chemistry, e.g. "10x 3' v3"
     assay_is_single_cell  INTEGER,
+    assay_confidence      TEXT,   -- 'low'|'medium'|'high', NOT numeric
+    -- overlap between observed barcodes and the winning chemistry's onlist
+    -- NULL when no onlist was scored, never 0
+    assay_onlist_pct      REAL,
     -- Cell vs nucleus from intron fraction and mitochondrial %. sc_enrich reads
     -- author wording; this field is read-derived. Nuclei retain unspliced
     -- transcripts and lose cytoplasmic mitochondria. Use modality_reads_scanned
@@ -77,9 +81,9 @@ CREATE TABLE IF NOT EXISTS run_preflightx (
     intron_frac            REAL,
     mito_pct               REAL,
     modality_reads_scanned INTEGER,
-    -- Read geometry. bulk_vs_sc is called off R1 length structure, so it is
-    -- independent of assay_is_single_cell (which comes from barcode whitelist
-    -- hits); disagreement is informative.
+    -- read geometry from the R1 length profile
+    -- assay_is_single_cell can come from R1 length too, so agreement with it is
+    -- not corroboration unless assay_onlist_pct backs the chemistry call
     bulk_vs_sc             TEXT,   -- 'single_cell'|'bulk'|'bulk_or_5prime_broken'|'uncertain'
     bulk_vs_sc_confidence  TEXT,
     -- `end` is a SQL keyword, hence read_end.

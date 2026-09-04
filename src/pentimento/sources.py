@@ -297,6 +297,16 @@ def _col(row: dict[str, str], name: str) -> str | None:
     return (row.get(name) or "").strip() or None
 
 
+def _float(value: str | None) -> float | None:
+    """Onlist overlap as a number. Absent and unparseable both mean not scored."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def load_preflightx_csvs(
     annotated_dir: Path, source: str = "csv"
 ) -> Iterator[tuple[Any, ...]]:
@@ -334,6 +344,8 @@ def load_preflightx_csvs(
                         _col(row, "preflightx_sex"),
                         _col(row, "preflightx_sex_confidence"),
                         _col(row, "preflightx_assay"),
+                        _col(row, "preflightx_assay_confidence"),
+                        _float(_col(row, "preflightx_assay_onlist_pct")),
                         _col(row, "preflightx_modality"),
                         _col(row, "preflightx_modality_confidence"),
                         _col(row, "preflightx_bulk_vs_sc"),
@@ -377,7 +389,7 @@ def load_microbe_quant(quant_dir: Path) -> Iterator[tuple[Any, ...]]:
                     if len(rec) < QUANT_NCOL or rec[0] == "virus":
                         continue
                     if rec[0] == "__total_reads__":
-                        # Empty __total_reads__ keeps total_reads NULL; ENA omitted the answer.
+                        # an empty value keeps total_reads NULL
                         total_reads = _as_int(rec[1])
                         continue
                     if rec[0] == "__run__":
