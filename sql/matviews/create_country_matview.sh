@@ -1,38 +1,27 @@
--- One row per study, any archive or technology, scoped by submitter country,
--- plus facet/summary/points rollups. Backs /country/{code}/{summary,facets,
--- projects} and the country map.
---
--- Pulled 2026-09-14 from pysradb-server/scripts/create_country_matview.sh
--- (that repo's actual source of truth -- kept a copy here too since this repo
--- now owns the singlecell_study/longread_study matviews country_facet and
--- country_summary join against). Keep both copies in sync by hand until one
--- is retired.
---
--- Kept as its own matview because unified_metadata (~1.8M rows) has poor
--- cache locality for a per-country scan: a plain indexed
--- `WHERE country_code_iso2 = ...` took 4-12s for a 16k-study country and 142s
--- for the US (514k studies) in production. Ordering the defining query by
--- country clusters matching rows together on disk so a country page loads
--- from a handful of pages instead of scattered random I/O.
---
--- Depends on unified_metadata, study_download_summary, singlecell_study
--- (sql/matviews/singlecell_pg.sql), and longread_study
--- (sql/matviews/longread_pg.sql) already existing -- run those first.
---
--- DROP plus CREATE, not IF NOT EXISTS, so a definition change is applied.
--- Postgres only; run with `just country_matview`. Not part of the SQLite
--- schema test, which is why it lives outside sql/tables.
+#!/bin/bash
+set -e
 
-DROP MATERIALIZED VIEW IF EXISTS country_facet;
-DROP MATERIALIZED VIEW IF EXISTS country_summary;
-DROP MATERIALIZED VIEW IF EXISTS country_study CASCADE;
+# One row per study, any archive or technology, scoped by submitter country.
+#
+# Kept as its own matview because unified_metadata (~1.8M rows) has poor
+# cache locality for a per-country scan: a plain indexed
+# `WHERE country_code_iso2 = ...` took 4-12s for a 16k-study country and 142s
+# for the US (514k studies) in production. Ordering the defining query by
+# country clusters matching rows together on disk so a country page loads
+# from a handful of pages instead of scattered random I/O.
+
+DATABASE_URL="${DATABASE_URL:-$(grep '^DATABASE_URL=' .env | cut -d= -f2-)}"
+
+echo "Creating country_study ..."
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+DROP MATERIALIZED VIEW IF EXISTS country_study;
 
 CREATE MATERIALIZED VIEW country_study AS
-SELECT u.canonical_accession AS study_accession,
+SELECT u.canonical_accession                                   AS study_accession,
        u.title,
-       u.dominant_scientific_name AS organism,
-       u.dominant_assay_l1 AS assay_l1,
-       u.dominant_assay_l2 AS assay_l2,
+       u.dominant_scientific_name                              AS organism,
+       u.dominant_assay_l1                                     AS assay_l1,
+       u.dominant_assay_l2                                     AS assay_l2,
        CASE u.source
            WHEN 'ae' THEN 'ArrayExpress'
            WHEN 'geo' THEN 'GEO'
@@ -42,7 +31,7 @@ SELECT u.canonical_accession AS study_accession,
            WHEN 'dra' THEN 'DRA'
            WHEN 'gea' THEN 'GEA'
            ELSE upper(u.source)
-       END AS source,
+       END                                                     AS source,
        u.country,
        u.country_code_iso2,
        u.n_samples,
@@ -65,6 +54,8 @@ ANALYZE country_study;
 -- Precomputed so /country/{code}/facets doesn't re-aggregate organism/assay
 -- values (long-tailed, thousands of distinct values for a big country) on
 -- every request; capped to the top 40 values per facet per country.
+DROP MATERIALIZED VIEW IF EXISTS country_facet;
+
 CREATE MATERIALIZED VIEW country_facet AS
 WITH raw AS (
     SELECT country_code_iso2, 'organism' AS facet, organism AS value, count(*) AS studies
@@ -119,24 +110,27 @@ ANALYZE country_facet;
 -- Precomputed for the same reason as country_facet: a live aggregate over
 -- country_study costs as much as the largest country (up to ~514k rows for
 -- the US) on every /country/{code}/summary request.
+DROP MATERIALIZED VIEW IF EXISTS country_summary;
+
 CREATE MATERIALIZED VIEW country_summary AS
-SELECT cs.country_code_iso2 AS country_code_iso2,
-       count(*) AS studies,
-       sum(cs.n_samples) AS samples,
-       sum(cs.n_experiments) AS experiments,
-       count(*) FILTER (WHERE cs.has_fastq) AS studies_with_fastq,
-       count(*) FILTER (WHERE cs.has_sra) AS studies_with_sra,
-       count(*) FILTER (WHERE cs.organism = 'Homo sapiens') AS studies_human,
-       count(*) FILTER (WHERE cs.is_single_cell) AS studies_single_cell,
-       count(*) FILTER (WHERE lr.study_accession IS NOT NULL) AS studies_long_read,
-       count(DISTINCT cs.organism) AS n_organisms,
-       min(cs.year) AS first_year,
-       max(cs.year) AS last_year
+SELECT cs.country_code_iso2                                   AS country_code_iso2,
+       count(*)                                                AS studies,
+       sum(cs.n_samples)                                       AS samples,
+       sum(cs.n_experiments)                                   AS experiments,
+       count(*) FILTER (WHERE cs.has_fastq)                    AS studies_with_fastq,
+       count(*) FILTER (WHERE cs.has_sra)                      AS studies_with_sra,
+       count(*) FILTER (WHERE cs.organism = 'Homo sapiens')    AS studies_human,
+       count(*) FILTER (WHERE cs.is_single_cell)               AS studies_single_cell,
+       count(*) FILTER (WHERE lr.study_accession IS NOT NULL)  AS studies_long_read,
+       count(DISTINCT cs.organism)                             AS n_organisms,
+       min(cs.year)                                            AS first_year,
+       max(cs.year)                                            AS last_year
 FROM country_study cs
 LEFT JOIN longread_study lr ON lr.study_accession = cs.study_accession
 GROUP BY cs.country_code_iso2;
 
-CREATE UNIQUE INDEX idx_country_summary_country ON country_summary(country_code_iso2);
+CREATE UNIQUE INDEX idx_country_summary_country
+  ON country_summary(country_code_iso2);
 ANALYZE country_summary;
 
 -- Geocoded institution clusters per country, for map/OG rendering. Reading
@@ -168,3 +162,6 @@ ORDER BY country_code_iso2, n DESC;
 
 CREATE INDEX idx_country_points_country ON country_points(country_code_iso2);
 ANALYZE country_points;
+SQL
+
+echo "Done."

@@ -808,7 +808,6 @@ GARD_ONTOLOGY_DIR := env("GARD_ONTOLOGY_DIR", QUANT_DIR + "/ontology")
 PG_SSH_HOST := env("PG_SSH_HOST", "sramap@167.114.208.177")
 PG_SOCKET_PORT := env("PG_SOCKET_PORT", "15433")
 PG_SOCKET_URL := "postgresql://sramap@127.0.0.1:" + PG_SOCKET_PORT + "/pysradb"
-SERVER_REPO := env("SERVER_REPO", justfile_directory() + "/../pysradb-server")
 
 [private]
 _pg_tunnel:
@@ -847,8 +846,7 @@ gard_index: _pg_tunnel
 
 [group("disease")]
 disease_matview collection: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_rare_disease_matview.sh {{ collection }}
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_rare_disease_matview.sh {{ collection }}
 
 # Long-read collection behind /technology/longread and the long_read search
 # filter. Reads the experiment tables, so it needs no transfer of its own; rerun
@@ -868,12 +866,11 @@ singlecell_matview: _pg_tunnel
     @echo "single-cell stack rebuilt: /singlecell/{summary,facets,projects}"
 
 # Per-country collection behind /country/{code}/{summary,facets,projects}.
-# Pulled from pysradb-server/scripts/create_country_matview.sh.
 # Depends on singlecell_study and longread_study; run those first, or use
 # refresh_technology_matviews for the whole stack in order.
 [group("technology")]
 country_matview: _pg_tunnel
-    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/country_pg.sql
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_country_matview.sh
     @echo "country stack rebuilt: /country/{code}/{summary,facets,projects}"
 
 # Full longread -> singlecell -> country rebuild in dependency order. Run this
@@ -908,18 +905,31 @@ longread_chem_collect:
 
 [group("disease")]
 alias_matview: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_disease_alias_matview.sh
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_disease_alias_matview.sh
 
 [group("disease")]
 inheritance_matview: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_disease_inheritance_matview.sh
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_disease_inheritance_matview.sh
 
 [group("gard")]
 downloads_matview: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_study_download_matview.sh
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_study_download_matview.sh
+
+[group("stats")]
+organism_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_organism_matview.sh
+
+[group("stats")]
+platform_matviews: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_platform_matviews.sh
+
+[group("stats")]
+database_growth_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_database_growth_matview.sh
+
+[group("stats")]
+database_volume_growth_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/refresh_database_volume_growth.sh
 
 [group("gard")]
 gard_matview: _pg_tunnel (disease_matview "gard")
