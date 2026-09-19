@@ -1,18 +1,11 @@
 """
-Pipeline to enrich a batch of accessions into an already-correct SQLite.
+Enrich accessions and load guarded results into SQLite.
 
-STAGES
-------
-1  enrich   the selected module per accession, with the guards applied to the
-            four frames before the CSVs are written.  Audit rows accumulate in
-            the same 12 columns as ``enrichment_corrections_log``.
-2  ingest   the CSVs into the batch SQLite, plus the audit log.
-3  corpus   organism truth from the SOURCE archives, for rows whose sample frame
-            never stated a taxid.  Needs ``--tier-scripts-dir``.
-4  verify   re-run every shipped detector against the batch DB and require zero.
-            Needs ``--tier-scripts-dir``.  A pipeline that claims correctness
-            without re-checking is what produced the mess this replaces.
-
+Stages:
+1. Enrich and guard four frames per accession; write CSVs and 12-column audit rows.
+2. Ingest CSVs and the audit log into the batch database.
+3. Fill missing taxids from source archives (requires ``--tier-scripts-dir``).
+4. Run all shipped detectors and require zero findings (same requirement).
 """
 
 from __future__ import annotations
@@ -64,23 +57,27 @@ def read_accessions(spec: str | Path) -> list[str]:
     return out
 
 
+_SQLITE_CACHE_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+
+
 def load_projects(accessions: list[str], cache: Path | None) -> dict:
     """Projects from a prefetched cache if given, else the seqout bulk endpoint."""
     if cache:
-        with Path(cache).open("rb") as handle:
+        cache = Path(cache)
+        if cache.suffix in _SQLITE_CACHE_SUFFIXES:
+            from enrich.projects import load_projects_sqlite
+
+            return load_projects_sqlite(accessions, cache)
+        with cache.open("rb") as handle:
             blob = pickle.load(handle)  # noqa: S301
         projects = (
             blob["projects"] if isinstance(blob, dict) and "projects" in blob else blob
         )
         return {a: projects[a] for a in accessions if a in projects}
 
-    from enrich.projects import fetch_projects
+    from enrich.projects import fetch_projects_batched
 
-    got = {}
-    for i in range(0, len(accessions), 25):
-        for project in fetch_projects(accessions[i : i + 25]):
-            got[project.accession] = project
-    return got
+    return fetch_projects_batched(accessions)
 
 
 def enrich_batch(
@@ -95,6 +92,7 @@ def enrich_batch(
     species: dict | None = None,
     declared: bool = True,
     verbose: bool = False,
+    embedding_only: bool = False,
 ) -> tuple[list[tuple], dict[str, int]]:
     """Enrich every project, guard the frames, write four CSVs each."""
     from enrich import declared as declared_mod
@@ -133,6 +131,7 @@ def enrich_batch(
                 embedding_model=embedding_model,
                 cellosaurus=True,
                 verbose=verbose,
+                embedding_only=embedding_only,
                 **(species or {}),
             )
         except Exception as exc:  # one study must not kill the batch
@@ -187,10 +186,9 @@ def _is_complete(acc: str, out_dir: Path) -> bool:
 
 def _write_declared(pre: pd.DataFrame, path: Path) -> None:
     """
-    Both INSDC axes and every ENA typed value, VERBATIM.
+    Preserve both INSDC axes and all ENA typed values verbatim.
 
-    ``insdc_conflict`` marks a sample whose own experiments declare different
-    strategies.  That is information, and this file is where it stays visible.
+    ``insdc_conflict`` flags samples whose experiments declare different strategies.
     """
     from enrich.declared import ENA_PREFIX
 
@@ -307,8 +305,7 @@ def run_shards(
         procs.append(
             (
                 i,
-                # S603: cmd is this interpreter re-invoking this same CLI on a
-                # shard file we just wrote. No shell.
+                # S603: re-invoke this CLI on our shard file without a shell.
                 subprocess.Popen(  # noqa: S603
                     cmd,
                     env=env,

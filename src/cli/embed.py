@@ -59,11 +59,9 @@ def cluster_leiden_coarse(
     levels: int = typer.Option(3, help="How many levels to add above the current root"),
 ) -> None:
     """
-    Add levels COARSER than the Leiden root by agglomerating it.
+    Add coarser levels above the Leiden root by agglomeration.
 
-    `cluster-leiden` splits top-down, so its coarsest level is the root -- nothing
-    exists above it. This agglomerates that root into super-clusters. New levels nest
-    over the old ones, so labels already generated for finer levels stay valid.
+    New levels nest over existing clusters, preserving finer-level labels.
     """
     from embed.cluster_leiden_coarse import compute_coarse_leiden_clusters
 
@@ -82,6 +80,25 @@ def neighbors(
     compute_neighbors(chroma_db_dir, neighbors_db_file, k, query_chunk)
 
 
+@embed_app.command("neighbors-quick")
+def neighbors_quick(
+    chroma_db_dir: Path = typer.Option(...),
+    pg_url: str = typer.Option(..., envvar="PG_URL"),
+    k: int = typer.Option(300),
+    query_chunk: int = typer.Option(1024),
+) -> None:
+    """
+    Backfill similar projects after `embed run`.
+
+    Write {accession, distance} neighbors directly to Postgres for geo/sra rows
+    without neighbors, using non-nulling upserts. Skips UMAP and neighbors.sqlite3.
+    See src/embed/quick_neighbors.py for coverage.
+    """
+    from embed.quick_neighbors import push_new_neighbors
+
+    push_new_neighbors(chroma_db_dir, pg_url, k, query_chunk)
+
+
 @embed_app.command()
 def labels(
     chroma_db_dir: Path = typer.Option(...),
@@ -96,11 +113,10 @@ def labels(
     ),
 ) -> None:
     """
-    One-shot labelling: read chroma, extract keywords, and LLM-label in one pass.
+    Read Chroma, extract keywords, and generate LLM labels in one pass.
 
-    For a large clustering prefer the two-phase flow (`precompute-keywords` then
-    `label-from-keywords`): it caches the keywords so a re-run needs no chroma and
-    no 5-minute doc reload.
+    For large clusterings, use `precompute-keywords` then `label-from-keywords`
+    to avoid reloading Chroma on reruns.
     """
     from embed.labels import generate_labels
 
@@ -126,9 +142,9 @@ def precompute_keywords(
     ),
 ) -> None:
     """
-    Phase 1 (run once): cache TF-IDF keywords + centroids to keywords_<level>.csv.
+    Cache Chroma TF-IDF keywords and centroids in keywords_<level>.csv.
 
-    Reads chroma (the slow part). `label-from-keywords` then needs no chroma at all.
+    Run once before `label-from-keywords`.
     """
     from embed.labels import precompute_keywords as run
 
@@ -149,10 +165,9 @@ def label_from_keywords(
     ),
 ) -> None:
     """
-    Phase 2 (repeatable): LLM-label from the cached keywords.
+    Generate LLM labels from cached keywords, resuming interrupted runs.
 
-    No chroma / no TF-IDF / no doc reload -> starts in seconds and resumes cleanly,
-    so an interrupted run just picks up where it stopped.
+    Requires no Chroma or TF-IDF reload.
     """
     from embed.labels import label_from_keywords as run
 

@@ -38,6 +38,14 @@ def publications(
     skip_meta: bool = typer.Option(default=False),
     skip_tsv: bool = typer.Option(default=False),
     is_dry_run: bool = typer.Option(default=False),
+    sources: list[str] = typer.Option(
+        None,
+        "--source",
+        help="Repeatable. Resolve ONLY these datasources (e.g. --source gsa). "
+        "The resolve step processes sources in a fixed order and one source "
+        "hanging blocks every source after it, so this is also how to reach "
+        "a source stuck behind a slow one.",
+    ),
 ) -> None:
     """Resolve missing publications, fetch their metadata, refresh pub_tsv."""
     refresh_publications(
@@ -55,6 +63,7 @@ def publications(
         skip_meta,
         skip_tsv,
         is_dry_run,
+        sources=sources or None,
     )
 
 
@@ -76,7 +85,7 @@ def repair_titles(
     skip_tsv: bool = typer.Option(default=False),
     is_dry_run: bool = typer.Option(default=False),
 ) -> None:
-    """Re-fetch pubmed titles cut short at an inline tag, then refresh pub_tsv."""
+    """Repair PubMed titles truncated at inline tags, then refresh pub_tsv."""
     repair_truncated_titles(
         pg_url,
         ncbi_keys_file,
@@ -93,5 +102,5 @@ def repair_titles(
 def status(
     pg_url: str = typer.Option(..., "--pg-url", envvar="PG_URL"),
 ) -> None:
-    """Publication coverage per source -- how far the weekly runs have got."""
+    """Show publication coverage per source."""
     typer.echo(publication_status(pg_url))

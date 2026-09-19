@@ -1,38 +1,22 @@
 """
-Weekly publication refresh, run on the VPS straight against production Postgres.
+Refresh publication links and metadata directly in production Postgres.
 
-Every other stage buffers through SQLite on the lab box and pushes over a tunnel
-(see READ-THIS.md). This one deliberately does not. Publication linkage is the
-one enrichment that goes stale on its own -- a dataset released in 2024 gets its
-paper in 2026 -- so it has to run where the data lives, on its own cadence, with
-no ``DATA_DIR`` and no per-source SQLite window slices to be reconciled against.
+Run weekly on the VPS, independently of SQLite ingest windows: papers can
+appear years after their data. No DATA_DIR is required.
 
-Four steps, in order:
+Steps:
+1. Resolve unlinked studies via pysradb into pubmed_id_pysradb, prioritizing
+   never-checked studies, then the oldest checks.
+2. Fetch missing pubmed_metadata via NCBI efetch and OpenAlex.
+3. Fold publication titles into study search vectors via pub_tsv_transfer.
+4. Refresh the indexed publication-date view via refresh_study_pub_dates.
 
-  1. resolve   studies carrying no publication at all -> pysradb (NCBI elink /
-               literature search), writing ``pubmed_id_pysradb``. Never-checked
-               studies go first, then the least-recently-checked.
-  2. metadata  pmids a study references but ``pubmed_metadata`` does not hold ->
-               ``pysradb.pmid_info`` (NCBI efetch + OpenAlex journal metrics).
-  3. tsv       ``pub_tsv_transfer``, which folds the paper titles into each
-               study's search ``tsv`` so the new papers are searchable.
-  4. dates     ``refresh_study_pub_dates``, the indexed view the pub_date search
-               filters read.
+--limit-per-source and --meta-limit bound API work. Every attempted study
+gets pubmed_last_checked, including misses; --recheck-after controls when
+it becomes eligible again. `refresh status` reports live database coverage.
 
-Both API steps are budgeted (``--limit-per-source``, ``--meta-limit``) because
-the unlinked backlog runs to millions of studies, most of it ENA. A weekly run
-chips at that forever; it is not meant to finish.
-``pubmed_last_checked`` is the queue cursor -- stamped on every accession tried,
-whether or not a pmid came back, so the next run moves on instead of retrying
-the same misses. ``--recheck-after`` decides when a study becomes eligible
-again, which is what picks up papers published after we first looked.
-
-Nothing here deletes, and nothing here is lost on the next lab-box transfer:
-``postgres.py`` upserts through ``non_nulling_update()``, so an incoming NULL
-``pubmed_id_pysradb`` from a fresh SQLite window loses to what we wrote.
-
-Progress is the database itself -- ``refresh status`` reads it back, and the
-numbers move while the run is in flight.
+No rows are deleted. Non-nulling transfer upserts preserve resolved PMIDs
+when a later SQLite window supplies NULL.
 """
 
 import logging
@@ -44,7 +28,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import psycopg
-from pysradb.sraweb import SRAweb
+from pysradb.sraweb import SRAweb, TransientAPIError
 from tqdm import tqdm
 
 from backfill.backfill_utils import _chunked, _parse_pmid
@@ -61,18 +45,14 @@ class _Source(NamedTuple):
     datasource: Datasource
     table: str
     acc_col: str
-    # "this study has no publication linked from any column". Every table also
-    # carries pubmed_last_checked, which is the queue cursor, not a linkage.
+    # No publication linked from any column; pubmed_last_checked is only a cursor.
     unlinked: str
-    # the rows this job is responsible for at all. DRA is the only source where
-    # that is not the whole table; keeping it separate from `unlinked` is what
-    # stops `refresh status` from counting out-of-scope rows as "linked".
+    # Scope is separate from linkage so status excludes out-of-scope DRA rows.
     scope: str = "TRUE"
 
 
-# GSA-Human has no table of its own in postgres; its studies live in gsa_studies.
-# gsa_projects.pubmed_id (jsonb) is left out: it has no join back to a study, and
-# GSA is deliberately outside pub_tsv anyway (see transfer/pub_tsv.py).
+# GSA-Human shares gsa_studies. Exclude gsa_projects.pubmed_id: it has no study
+# join, and GSA is outside pub_tsv (see transfer/pub_tsv.py).
 _SOURCES = (
     _Source(
         Datasource.Sra,
@@ -113,9 +93,8 @@ _SOURCES = (
         "study_accession",
         "coalesce(pubmed_id_pysradb, '') = ''",
     ),
-    # DDBJ-exclusive only: a mirrored DRP's SRA/ENA twin is canonical and
-    # already carries the pmid, so the DDBJ copy costs NCBI calls nothing reads.
-    # is_only_ddbj is int2 here, not boolean.
+    # Only DDBJ-exclusive studies need lookups; mirrors use SRA/ENA PMIDs.
+    # is_only_ddbj is int2, not boolean.
     _Source(
         Datasource.Dra,
         "dra_studies",
@@ -126,15 +105,9 @@ _SOURCES = (
     ),
 )
 
-# Every pmid any study points at, from every column that can hold one. The regex
-# doubles as the NULL/''/garbage filter; geo's arrays and the scalar text
-# columns all reduce to the same shape. '0' is in there and is not a pmid, hence
-# the leading [1-9].
-#
-# Known residue: a pmid pubmed and OpenAlex both refuse to resolve never lands in
-# pubmed_metadata, so it stays in this backlog and is retried every week. That is
-# bounded and visible in `refresh status`; a "tried and failed" marker would fix
-# it, at the cost of never retrying after a transient NCBI outage.
+# Collect referenced PMIDs across arrays and scalar columns; the regex rejects
+# NULL, empty, malformed and zero values. Unresolvable PMIDs stay in the backlog
+# and retry weekly, allowing recovery from transient API failures.
 _REFERENCED_PMIDS = """
     SELECT DISTINCT p FROM (
         SELECT pubmed_id_pysradb AS p FROM sra_studies
@@ -159,12 +132,9 @@ _MISSING_PMIDS = f"""
     LIMIT %s
 """  # noqa: S608
 
-# Titles fetched before sraweb.py switched to itertext() stop at the first inline
-# tag: "... through P2Y<sub>12</sub> receptor." was stored as "... through P2Y".
-# _MISSING_PMIDS never revisits a row that already exists, so they need their own
-# queue. PubMed titles end in punctuation; a cut one ends mid-word. The heuristic
-# over-matches (an epmc-sourced title with no full stop is re-fetched for
-# nothing), which costs efetch quota and nothing else; the upsert is idempotent.
+# Older efetch parsing truncated titles at inline tags. Existing metadata is
+# absent from _MISSING_PMIDS, so repair it separately using missing terminal
+# punctuation as a heuristic. False positives cost quota; upserts are idempotent.
 _TRUNCATED_TITLE_PMIDS = r"""
     SELECT pmid FROM pubmed_metadata
     WHERE title IS NOT NULL AND title <> '' AND title !~ '[.?!)\]]$'
@@ -172,8 +142,7 @@ _TRUNCATED_TITLE_PMIDS = r"""
     LIMIT %s
 """
 
-# Same columns and same conflict handling as the sqlite twin; only the
-# placeholder style differs. Derived rather than copied so the two cannot drift.
+# Derive the Postgres upsert from SQLite SQL to keep columns and conflicts aligned.
 _PG_UPSERT = UPSERT_SQL.replace("?", "%s")
 
 
@@ -192,6 +161,7 @@ def refresh_publications(
     skip_meta: bool,
     skip_tsv: bool,
     is_dry_run: bool,
+    sources: list[str] | None = None,
 ) -> None:
     """Resolve missing publications, fetch their metadata, refresh ``pub_tsv``."""
     ncbi_keys = _read_keys(ncbi_keys_file)
@@ -207,6 +177,7 @@ def refresh_publications(
             retries,
             timeout,
             is_dry_run,
+            sources=sources,
         )
 
     if not skip_meta:
@@ -245,14 +216,11 @@ def repair_truncated_titles(
     skip_tsv: bool,
     is_dry_run: bool,
 ) -> None:
-    """One-off: re-fetch titles the pre-``itertext()`` efetch parser cut short.
+    """
+    Repair titles truncated by the pre-itertext() efetch parser.
 
-    Titles only. Deliberately not ``_metadata_step``: ``pmid_info`` re-fetches a
-    citation count per pmid from OpenAlex (17k singleton requests for data we
-    already hold) and returns a whole row, which ``UPSERT_SQL`` writes wholesale
-    -- with journal metrics skipped that would blank ``journal_h_index`` and
-    friends on every row it touched. Only ``title`` was ever wrong, so only
-    ``title`` is written, and only when efetch gives back something non-empty.
+    Update only non-empty titles. Avoid pmid_info and full-row upserts, which
+    would refetch citation counts and could erase existing journal metrics.
     """
     with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
         cur.execute("SET statement_timeout = 0")
@@ -263,9 +231,7 @@ def repair_truncated_titles(
     if is_dry_run or not pmids:
         return
 
-    # keys are optional here, unlike the weekly run: this is ~175 efetch batches,
-    # about a minute even at NCBI's unkeyed 3/s, and the keys file lives on the
-    # VPS while the backlog is small enough to clear from a laptop.
+    # API keys are optional for this small, one-off efetch backlog.
     ncbi_keys = _read_keys(ncbi_keys_file) if ncbi_keys_file else [None]
     pbar = _pbar(len(pmids), "pubmed titles", "pmid")
     written = sum(
@@ -303,14 +269,9 @@ _TITLE_UPDATE = """
     UPDATE pubmed_metadata SET title = %s WHERE pmid = %s AND title <> %s
 """
 
-# study_publications.publications is a denormalized copy of pubmed_metadata rows
-# (postgres.py::_transfer_study_publications builds it on the lab box), and it is
-# what the API returns and what pub_tsv's main path indexes; repairing
-# pubmed_metadata alone changes nothing a user can see. Titles only: every other
-# key in those objects is still whatever the transfer wrote.
-#
-# Non-array publications would make jsonb_array_elements throw, hence the
-# typeof guard; the outer IS DISTINCT FROM keeps this to the rows that move.
+# Refresh titles in the denormalized study_publications copy used by the API
+# and pub_tsv. Preserve other keys, guard against non-array JSON, and update
+# only changed rows.
 _SYNC_STUDY_PUBLICATION_TITLES = """
     UPDATE study_publications sp
     SET publications = q.pubs
@@ -344,7 +305,7 @@ def _title_worker(
     retries: int,
     timeout: int,
 ) -> int:
-    """efetch a batch, keep the title, drop the rest of the row on the floor."""
+    """Fetch a PMID batch and retain only titles."""
     sra = SRAweb(api_key=key, retries=retries, timeout=timeout, verbose=False)
     updated = 0
 
@@ -352,10 +313,11 @@ def _title_worker(
         for batch in _chunked(data, batch_size):
             results: dict[str, dict] = {}
             try:
-                # private, but it is the efetch half of pmid_info without the
-                # OpenAlex half; the public entry point cannot skip that.
+                # Use the private efetch helper to skip pmid_info's OpenAlex requests.
                 sra._fetch_pmid_metadata_ncbi(batch, results)  # noqa: SLF001
-            except Exception:
+            except (Exception, TransientAPIError):
+                # pysradb's TransientAPIError inherits BaseException; catch it explicitly
+                # so one failed batch does not abort the run.
                 logger.exception("efetch failed for a batch of %d", len(batch))
                 results = {}
 
@@ -389,11 +351,15 @@ def _resolve_step(
     retries: int,
     timeout: int,
     is_dry_run: bool,
+    sources: list[str] | None = None,
 ) -> None:
+    wanted_sources = (
+        [s for s in _SOURCES if s.datasource in sources] if sources else _SOURCES
+    )
     targets: dict[_Source, list[str]] = {}
     with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
         cur.execute("SET statement_timeout = 0")
-        for source in _SOURCES:
+        for source in wanted_sources:
             targets[source] = _unlinked_accessions(
                 cur,
                 source,
@@ -446,11 +412,10 @@ def _unlinked_accessions(
     limit: int,
 ) -> list[str]:
     """
-    Return the oldest-checked unlinked studies, never-checked ones first.
+    Return unlinked studies by oldest check, with never-checked studies first.
 
-    Seq-scans the study table once per run. Deliberately un-indexed: a partial
-    index on (pubmed_last_checked) would have to be maintained on every transfer
-    to save a few seconds a week.
+    Scan once per run; avoid maintaining a timestamp index on every transfer
+    for this weekly query.
     """
     cur.execute(
         f"""
@@ -487,7 +452,8 @@ def _resolve_worker(
                     updates = _resolve_dra(sra, conn, batch)
                 else:
                     updates = _resolve_via_sraweb(sra, source.datasource, batch)
-            except Exception:
+            except (Exception, TransientAPIError):
+                # Catch TransientAPIError explicitly because it inherits BaseException.
                 logger.exception(
                     "%s: failed to resolve a batch of %d",
                     source.datasource,
@@ -496,8 +462,7 @@ def _resolve_worker(
                 updates = []
 
             with conn.cursor() as cur:
-                # stamped whether or not a pmid came back, so a miss is not
-                # retried next week, which makes the queue advance.
+                # Stamp misses too, so the queue advances.
                 cur.execute(
                     f"UPDATE {source.table} SET pubmed_last_checked = current_date"  # noqa: S608
                     f" WHERE {source.acc_col} = ANY(%s)",
@@ -523,10 +488,10 @@ def _resolve_dra(
     batch: list[str],
 ) -> list[tuple[str, str]]:
     """
-    Resolve a DRP to a pmid via its BioProject -- DRA carries no pubmed link.
+    Resolve a DRP's PMID via BioProject; DRA has no direct publication link.
 
-    Must go through fetch_bioproject_pmids, which resolves to an NCBI UID first:
-    efetch by accession reads only the digits, so PRJDB13786 returns PRJNA13786.
+    Resolve the NCBI UID first: efetch by accession reads only the digits,
+    so PRJDB13786 would return PRJNA13786.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -575,8 +540,7 @@ def _metadata_step(
     if is_dry_run or not pmids:
         return
 
-    # one worker per NCBI key, each paired with an OpenAlex key (they are rate
-    # limited independently, and there are usually fewer OpenAlex ones).
+    # Pair one worker per NCBI key with independently rate-limited OpenAlex keys.
     keys = [
         (ncbi, openalex_keys[i % len(openalex_keys)])
         for i, ncbi in enumerate(ncbi_keys)
@@ -629,7 +593,8 @@ def _meta_worker(
                     for _, row in info.iterrows()
                     if _parse_pmid(row.get("pmid"))
                 ]
-            except Exception:
+            except (Exception, TransientAPIError):
+                # Catch TransientAPIError explicitly because it inherits BaseException.
                 logger.exception("pmid_info failed for a batch of %d", len(batch))
                 rows = []
 
@@ -644,14 +609,12 @@ def _meta_worker(
     return written
 
 
-# The formats transfer/postgres.py's _parse_date accepts, minus its import: that
-# module pulls the whole ingest stack (openpyxl, libarchive, h5py) in behind it,
-# and this one has to run on a box that holds nothing but postgres and the API.
+# Match transfer/postgres.py date formats without importing its ingest dependencies.
 _PUB_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d/%m/%Y", "%Y%m%d")
 
 
 def _pg_row(row: dict) -> tuple:
-    """Build the sqlite tuple, coercing pub_date -- DATE here, TEXT there."""
+    """Build the sqlite tuple, coercing pub_date: DATE here, TEXT there."""
     values = list(_pmid_row_to_tuple(row))
     values[4] = _parse_pub_date(values[4])
     return tuple(values)
@@ -760,7 +723,7 @@ def _run_workers(
     pbar: tqdm,
     **kwargs: object,
 ) -> list[int]:
-    """One thread per API key -- NCBI rate-limits per key, so more is not faster."""
+    """One thread per API key: NCBI rate-limits per key, not by thread count."""
     num_workers = min(len(keys), len(data))
     shards: list[list[str]] = [[] for _ in range(num_workers)]
     for i, item in enumerate(data):

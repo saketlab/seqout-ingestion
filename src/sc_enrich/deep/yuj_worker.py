@@ -36,6 +36,7 @@ from sc_enrich.deep._process import (
     is_cell_major,
     last_mtx_nnz,
     last_rds_class,
+    process_tar_with_genes,
 )
 from sc_enrich.deep.counter_common import DownloadLink, FileType, RdsReadError
 
@@ -104,9 +105,8 @@ _WHITELIST_SIZES = frozenset(
     {737280, 6794880, 4526976, 3571200, 6390720, 1000000, 900000},
 )
 _MIN_NNZ_PER_CELL = 20
-# For matrices with fewer features than _MIN_NNZ_PER_CELL, judge filtered-vs-raw
-# by density relative to the feature count. 0.5 sits in the empty band between
-# the filtered cluster (>=0.8) and the raw tail (<0.2).
+# For low-feature matrices, compare density with the feature count. The 0.5
+# cutoff separates observed filtered (>=0.8) and raw (<0.2) matrices.
 _MIN_LOW_FEATURE_DENSITY = 0.5
 _MAX_TARS_SCANNED = 2
 _MAX_TAR_META_MEMBERS = 50
@@ -120,8 +120,7 @@ _BARCODE_COL_HINTS = (
     "cellname",
     "cell_barcode",
 )
-# named biological annotations only; numeric clusters (ident/leiden/louvain) have
-# their own category and would wrongly inflate has_celltype
+# Count named biological annotations only; numeric clusters inflate has_celltype.
 _CELLTYPE_COL_HINTS = (
     "celltype",
     "cell_type",
@@ -350,15 +349,12 @@ _OUT_DIR = Path("results")
 
 _DEFAULT_SOCKS = "10.195.102.16:1080"
 
-# Opt-in: fetch NCBI supplementary files over HTTPS. GEO records links as ftp://;
-# some subnets intercept port 21 with a proxy whose 403 ftplib reports as a
-# protocol error. The worker then records a matrix-free study.
-# ftp.ncbi.nlm.nih.gov serves the same paths over HTTPS. Off by default to
-# preserve existing job behaviour.
+# Opt into HTTPS for NCBI files when proxies intercept FTP. NCBI serves the
+# same paths over HTTPS; default to FTP for compatibility.
 _FORCE_HTTP = os.environ.get("SC_FORCE_HTTP", "") == "1"
 
-# hard per-accession wall-clock: download paths lack idle-stall timeouts; timed-out
-# items record 0 and count as done, letting the run converge
+# Cap accession runtime because downloads lack stall timeouts. Timed-out
+# items record 0 and count as done.
 _PER_ITEM_DEADLINE = int(os.environ.get("SC_ITEM_DEADLINE", "1800"))
 
 
@@ -527,12 +523,17 @@ def process_accession(
                 logger.debug("unable to find file type for %s", dest_path)
                 return (0, -1, "", "")
             file_type, sniffed_path = result
-            n = _get_sc_count(sniffed_path, file_type, chunk_size)
-            g = gene_count_for(sniffed_path, file_type, chunk_size) if n > 0 else -1
+            if file_type == FileType.Tar:
+                # Count genes per member; the enclosing tar has no gene axis.
+                n, g, fmt = process_tar_with_genes(sniffed_path, chunk_size)
+            else:
+                n = _get_sc_count(sniffed_path, file_type, chunk_size)
+                g = gene_count_for(sniffed_path, file_type, chunk_size) if n > 0 else -1
+                fmt = file_type.value
             if sniffed_path != dest_path:
                 sniffed_path.unlink(missing_ok=True)
             rds = last_rds_class() if file_type == FileType.Rds else ""
-            return (n, g, file_type.value, rds) if n > 0 else (0, -1, "", "")  # noqa: TRY300
+            return (n, g, fmt, rds) if n > 0 else (0, -1, "", "")  # noqa: TRY300
         except RdsReadError as exc:
             _record_rds_failure(output_dir, accession, link.url, exc.reason)
             return (0, -1, "", "")
@@ -582,10 +583,8 @@ def process_accession(
             s["rds_class"] = rds_class
 
     for link in dl_links:
-        # A per-GSM tar holds one matrix per sample; stream members separately so
-        # each attributes to its own GSM.
-        # Under SC_FORCE_HTTP this FTP streamer is skipped; HTTPS handling below does
-        # the same work on hosts where port 21 is intercepted.
+        # Stream per-GSM matrices separately to preserve sample attribution.
+        # SC_FORCE_HTTP skips this FTP path; HTTPS handling below does the same work.
         if (
             link.type == FileType.Tar
             and "ebi.ac.uk" not in link.url
@@ -603,9 +602,8 @@ def process_accession(
                         key = _sample_key(link.url, accession)
                     _merge(key, m_cells, m_genes, m_fmt, "", m_nnz, mname)
                 continue
-        # A blocked ftp download and a genuinely empty file both return no cells, so
-        # ftp zeroes are retried over https before being trusted. The except path
-        # matters because intercepted port 21 raises before a return-value check.
+        # Retry FTP zeroes and exceptions over HTTPS: blocked transfers can look
+        # like empty files or raise before the cell-count check.
         retryable = not _FORCE_HTTP and "ebi.ac.uk" not in link.url
         try:
             n_cells, n_genes, fmt, rds_class = count_link(link)
@@ -631,8 +629,7 @@ def process_accession(
             link.url,
         )
 
-    # metadata scan is best-effort: if it trips the deadline, keep the counts rather
-    # than letting main() discard the whole item as a stall
+    # Keep counts if the optional metadata scan exceeds the deadline.
     try:
         metadata = _scan_metadata(
             links,
@@ -655,9 +652,8 @@ def _is_unfiltered(cells: int, nnz: int, genes: int, src: str) -> bool:
     if cells in _WHITELIST_SIZES:
         return True
     if 0 < genes < _MIN_NNZ_PER_CELL:
-        # nnz/cells is bounded by feature count. HTO and ADT libraries carry 2-14
-        # features, so compare against achievable density: filtered low-feature
-        # matrices are near-dense, raw ones are mostly empty droplets.
+        # HTO/ADT libraries have few features; use relative density to distinguish
+        # filtered matrices from mostly empty raw droplets.
         return nnz > 0 and cells > 0 and nnz < cells * genes * _MIN_LOW_FEATURE_DENSITY
     if nnz > 0 and cells > 0 and nnz < cells * _MIN_NNZ_PER_CELL:
         return True
@@ -666,8 +662,7 @@ def _is_unfiltered(cells: int, nnz: int, genes: int, src: str) -> bool:
 
 
 def _sample_key(url: str, accession: str) -> str:
-    # match the basename only: GEO FTP paths carry a GSMxxxxnnn directory stub
-    # whose literal nnn truncates a full-URL match into a colliding id
+    # Match basenames: GEO directory stubs like GSMxxxxnnn can produce colliding IDs.
     m = re.search(r"GSM\d+", url.rsplit("/", 1)[-1])
     if m:
         return m.group(0)
@@ -694,15 +689,14 @@ def _parse_header(line: str, name: str) -> list[str]:
     elif low.endswith(".tsv"):
         delim = "\t"
     else:
-        # .txt is not reliably tab-delimited (R write.table defaults to space); pick
-        # the most frequent
+        # Infer the delimiter; R write.table often uses spaces in .txt files.
         delim = max(("\t", ",", ";", " "), key=line.count)
     return [c.strip().strip('"').strip("'") for c in line.split(delim)]
 
 
 def _match_field(col: str, hints: tuple[str, ...]) -> bool:
-    # exact token match, so age hits age_years but never percentage; distinctive
-    # multi-part hints like orig.ident also get a substring fallback
+    # Token matching lets age match age_years, not percentage; multi-part hints
+    # such as orig.ident also allow substring matches.
     low = col.lower()
     toks = set(re.split(r"[^a-z0-9]+", low))
     for h in hints:
@@ -736,8 +730,7 @@ def _header_info(first: str, second: str, name: str) -> dict[str, Any]:
     low = [c.lower() for c in cols]
     row = _parse_header(second, name) if second.strip() else []
     named_barcode = any(h in c for c in low for h in _BARCODE_COL_HINTS)
-    # an unnamed row index is either an empty header cell or the R write.table
-    # default, which omits the rowname header and leaves the data row one wider
+    # R row indexes use an empty header or leave data rows one column wider.
     has_unnamed_index = bool(row) and (
         (bool(cols) and cols[0] == "") or len(row) > len(cols)
     )
@@ -814,8 +807,8 @@ def _scan_tar_metadata(
     timeout: int,
     proxy: str | None,
 ) -> dict[str, dict[str, Any]]:
-    # records tar url + member path so the file stays retrievable via tar -xOf;
-    # a streamed tar has no random access, hence the member cap
+    # Keep tar URL and member path for retrieval via tar -xOf; cap members
+    # because streamed tars lack random access.
     ftp_url = tar_url.replace("https://", "ftp://", 1)
     by_key: dict[str, dict[str, Any]] = {}
     probed = 0

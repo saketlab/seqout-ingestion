@@ -6,7 +6,7 @@ import shutil
 import tarfile
 import tempfile
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
 
@@ -100,8 +100,7 @@ RELIABLE_TYPES = frozenset(
     {FileType.Mtx, FileType.Barcodes, FileType.H5, FileType.H5ad, FileType.Rds},
 )
 
-# cell-by-gene matrices have cells as rows, so these are kept despite the "gene"
-# in the name and counted by row
+# These cell-by-gene matrices count cells by row despite "gene" in the name.
 CELL_MAJOR_HINTS = (
     "cell_by_gene",
     "cellxgene",
@@ -291,15 +290,20 @@ def _get_sc_count(  # noqa: PLR0911
     return 0
 
 
-def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> int:
-    try:
-        with tarfile.open(path, "r:*") as tar:
-            max_count = 0
-            extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+def _iter_tar_members(
+    path: Path, chunk_size: int, tmp_dir: Path | None = None
+) -> Iterator[tuple[FileType, Path]]:
+    """
+    Extract classifiable tar members to temporary files.
 
+    Yield (resolved_type, sniffed_path); each file is deleted before the next
+    member. Shared by the cell-only and cell-plus-gene processing paths.
+    """
+    with tarfile.open(path, "r:*") as tar:
+        extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+        try:
             for member in tar.getmembers():
-                name = member.name.lower()
-                file_type = _classify_file(name)
+                file_type = _classify_file(member.name.lower())
                 if file_type == FileType.Unknown:
                     continue
 
@@ -325,26 +329,59 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
                         decompressed.unlink(missing_ok=True)
                     continue
 
-                file_type, sniffed_path = result
-                single_cell_count = _get_sc_count(
-                    sniffed_path,
-                    file_type,
-                    chunk_size,
-                    tmp_dir=extract_dir,
-                )
+                resolved, sniffed_path = result
+                yield resolved, sniffed_path
                 Path(tmp_path).unlink(missing_ok=True)
-
                 if sniffed_path != tmp_path:
                     sniffed_path.unlink(missing_ok=True)
-                max_count = max(max_count, single_cell_count)
-
+        finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
 
+
+def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> int:
+    try:
+        max_count = 0
+        for resolved, sniffed_path in _iter_tar_members(path, chunk_size, tmp_dir):
+            max_count = max(
+                max_count,
+                _get_sc_count(sniffed_path, resolved, chunk_size, tmp_dir=tmp_dir),
+            )
     except Exception:
         logger.exception("failed to process %s", path)
         return -1
     else:
         return max_count
+
+
+def process_tar_with_genes(
+    path: Path, chunk_size: int, tmp_dir: Path | None = None
+) -> tuple[int, int, str]:
+    """
+    Count cells and genes per local tar member for the SC_FORCE_HTTP fallback.
+
+    Read genes before each temporary file is deleted. Return
+    (best_cells, best_genes, best_format), maximizing cells and genes independently
+    because triplet counts may come from different members. For mtx results,
+    the caller reads nnz through last_mtx_nnz().
+    """
+    best_cells, best_genes, best_format = 0, -1, ""
+    try:
+        for resolved, sniffed_path in _iter_tar_members(path, chunk_size, tmp_dir):
+            count = _get_sc_count(sniffed_path, resolved, chunk_size, tmp_dir=tmp_dir)
+            genes = (
+                gene_count_for(sniffed_path, resolved, chunk_size) if count > 0 else -1
+            )
+            # Prefer mtx on cell-count ties so last_mtx_nnz() reflects the selected format.
+            if count > best_cells or (
+                count == best_cells and count > 0 and resolved == FileType.Mtx
+            ):
+                best_cells, best_format = count, resolved.value
+            best_genes = max(best_genes, genes)
+    except Exception:
+        logger.exception("failed to process %s", path)
+        return -1, -1, ""
+    else:
+        return best_cells, best_genes, best_format
 
 
 def _member_head(f: Any, name: str, max_bytes: int) -> bytes:
@@ -543,8 +580,7 @@ def count_h5_via_http(url: str, file_type: FileType) -> int | None:
         reader.close()
 
 
-# feature/gene axis datasets in a 10x-style .h5 (CellRanger v2 "genes", v3
-# "features") plus h5ad-in-h5 "var" indexes; matched by suffix on the h5 path
+# 10x HDF5 gene axes (v2 genes, v3 features) and h5ad var indexes; match path suffixes.
 _H5_GENE_SUFFIXES = (
     "/features/id",
     "/features/name",
@@ -558,10 +594,7 @@ _H5_GENE_SUFFIXES = (
 _H5_GENE_LEAVES = ("genes", "gene_names", "var_names")
 
 
-#: No reference annotation approaches this; a larger value means the count came
-#: off the wrong axis. Returning -1 makes that "unknown" rather than a confident
-#: lie, which is what every consumer of `genes` needs -- a study is far better
-#: served by a missing count than by its barcode count wearing a gene label.
+# Counts above this bound indicate the wrong axis; return -1 (unknown).
 MAX_PLAUSIBLE_GENES = 200_000
 
 
@@ -624,11 +657,10 @@ def count_h5_dims_via_http(url: str, file_type: FileType) -> tuple[int, int] | N
 
 def _mtx_genes(path: Path, chunk_size: int) -> int:
     """
-    Gene axis from an .mtx header (-1 if unparseable).
+    Read the gene-axis length from an .mtx header; return -1 if unparseable.
 
-    Matrix Market gives "rows cols nnz" and says nothing about which axis is
-    which. 10x writes genes x cells, so rows is the default, but a cell-major
-    file returns its barcode count instead.
+    Assume 10x genes-by-cells orientation: Matrix Market stores dimensions
+    without axis labels, so cell-major files would yield barcode counts.
     """
     try:
         with path.open("rb") as f:

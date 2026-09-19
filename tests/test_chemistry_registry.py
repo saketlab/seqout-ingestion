@@ -1,4 +1,4 @@
-"""The matview's chemistry ladder is generated, and stays that way."""
+"""Keep the generated chemistry ladder in sync with its source rules."""
 
 import subprocess
 import sys
@@ -13,8 +13,7 @@ RENDER = ROOT / "recipes/sc_stats_gap/render_chemistry_case.py"
 
 
 def test_the_checked_in_sql_matches_the_registry():
-    # the whole point of generating it: editing rules.py without re-rendering,
-    # or hand-editing the ladder, must fail rather than drift silently
+    # Detect rule changes without regeneration and manual edits to the ladder.
     r = subprocess.run(  # noqa: S603
         [sys.executable, str(RENDER), "--check"],
         capture_output=True,
@@ -39,8 +38,7 @@ def test_exclusions_carry_a_modality_and_no_label():
 
 def test_generated_sql_uses_the_guarded_regex_not_the_loose_like():
     sql = chemistry_case_sql()
-    # the like patterns are deliberately loose SQLite gates; %cel_seq% matches
-    # cellseq, which is exactly what the regex guard exists to stop
+    # Loose SQL LIKE gates also match cellseq; the regex must reject it.
     assert "cel(?!l)" in sql
     assert "bd[-_. ]?rhapsody" in sql
     assert "%cel_seq%" not in sql
@@ -51,15 +49,15 @@ def test_generated_sql_uses_the_guarded_regex_not_the_loose_like():
     ("value", "label"),
     [
         ("CEL-Seq2", "CEL-seq2"),
-    ("CEL-Seq", None),
-    ("Smart-Seq3", "Smart-seq3"),
-    ("Smart-Seq3Xpress", "Smart-seq3"),
-    ("Smart-Seq 3", "Smart-seq3"),
-    ("Smartseq3 Rna-Seq", "Smart-seq3"),
-    ("Smart-Seq2", None),
-    ("Smart-Seq V4 Ultra Low Input Rna Kit", None),
-    ("Quartz-Seq2", "Quartz-seq2"),
-    ("Quartz-Seq", None),
+        ("CEL-Seq", None),
+        ("Smart-Seq3", "Smart-seq3"),
+        ("Smart-Seq3Xpress", "Smart-seq3"),
+        ("Smart-Seq 3", "Smart-seq3"),
+        ("Smartseq3 Rna-Seq", "Smart-seq3"),
+        ("Smart-Seq2", None),
+        ("Smart-Seq V4 Ultra Low Input Rna Kit", None),
+        ("Quartz-Seq2", "Quartz-seq2"),
+        ("Quartz-Seq", None),
         ("cellseq", None),
         ("BD Rhapsody", "BD Rhapsody"),
         ("Rhapsody cultivar", None),

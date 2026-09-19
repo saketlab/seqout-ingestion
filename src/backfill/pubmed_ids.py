@@ -5,6 +5,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
 
+import psycopg
+from psycopg import sql as psycopg_sql
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
@@ -57,8 +59,7 @@ MISSING_QUERIES: dict[Datasource, str] = {
         "SELECT study_accession FROM ena_studies"
         " WHERE (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
     ),
-    # DDBJ-exclusive only. The SRA/ENA twin of a mirrored DRP is canonical and
-    # already carries the pmid, so the DDBJ copy costs NCBI calls nothing reads.
+    # Only DDBJ-exclusive studies need lookups; mirrored DRPs use SRA/ENA PMIDs.
     Datasource.Dra: (
         "SELECT accession FROM dra_studies"
         " WHERE is_only_ddbj = 1"
@@ -76,9 +77,8 @@ MISSING_QUERIES: dict[Datasource, str] = {
         " WHERE (pubmed_id IS NULL OR pubmed_id = '' OR pubmed_id = '[]')"
         " AND (pubmed_id_pysradb IS NULL OR pubmed_id_pysradb = '')"
     ),
-    # Controlled-access HRA studies publish no samples, experiments or runs, so
-    # a pmid on one links to nothing downstream. They are four fifths of the
-    # archive and each costs a PubMed search, which is the slowest stage here.
+    # Skip controlled-access HRA studies: they expose no downstream records
+    # and each requires a costly PubMed search.
     Datasource.GsaHuman: (
         "SELECT accession FROM gsa_human_studies"
         " WHERE access = 'Open'"
@@ -149,8 +149,7 @@ BACKFILLED_PMID_QUERIES: dict[Datasource, str] = {
     ),
 }
 
-# CRA/HRA/E-GEAD have no NCBI record to elink. ae_to_pmid: literature search, smallest
-# pmid (the originating paper). DRA resolves by BioProject.
+# CRA/HRA/E-GEAD use literature search and the smallest PMID; DRA uses BioProject.
 SRAWEB_RESOLVERS: dict[Datasource, tuple[str, str]] = {
     Datasource.Sra: ("sra_to_pmid", "srp_accession"),
     Datasource.Ena: ("sra_to_pmid", "srp_accession"),
@@ -165,6 +164,33 @@ PMID_RESOLVERS: dict[Datasource, str] = {
     **{k: v[0] for k, v in SRAWEB_RESOLVERS.items()},
     Datasource.Dra: "_resolve_dra",
 }
+
+# Sources with pubmed_last_checked in Postgres. gsa_human uses the local check
+# because its table is not transferred (see transfer/gsa.py).
+PG_ALREADY_CHECKED_SOURCES = frozenset(DATASOURCE_TABLE_MAPPING) - {
+    Datasource.GsaHuman,
+}
+
+
+def _fetch_pg_already_checked(pg_url: str, datasource: Datasource) -> set[str]:
+    """
+    Return accessions already resolved or checked for a PMID in Postgres.
+
+    Overlapping ingest windows reset the SQLite check timestamp. Consult
+    Postgres to avoid repeat nightly lookups; `refresh publications` handles
+    papers published after the first check.
+    """
+    if datasource not in PG_ALREADY_CHECKED_SOURCES:
+        return set()
+    table = DATASOURCE_TABLE_MAPPING[datasource]
+    column = DATASOURCE_COLUMN_MAPPING[datasource]
+    query = psycopg_sql.SQL(
+        "SELECT {column} FROM {table} WHERE pubmed_last_checked IS NOT NULL",
+    ).format(column=psycopg_sql.Identifier(column), table=psycopg_sql.Identifier(table))
+    conn: psycopg.Connection
+    with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
+        cur.execute(query)
+        return {row[0] for row in cur.fetchall()}
 
 
 def backfill_pubmed_ids(
@@ -183,6 +209,7 @@ def backfill_pubmed_ids(
     retries: int,
     timeout: int,
     process_all: bool = False,  # noqa:  FBT002
+    pg_url: str | None = None,
 ) -> None:
     if not any(
         (
@@ -222,9 +249,12 @@ def backfill_pubmed_ids(
     already_checked = 0
     num_has_original = 0
     num_backfilled = 0
+    num_skipped_via_pg = 0
 
     for datasource, db_file in mapping.items():
         table = DATASOURCE_TABLE_MAPPING[datasource]
+
+        pg_checked = _fetch_pg_already_checked(pg_url, datasource) if pg_url else set()
 
         with sqlite_connect(db_file) as conn:
             missing_query = MISSING_QUERIES[datasource]
@@ -243,19 +273,25 @@ def backfill_pubmed_ids(
             num_backfilled += conn.execute(backfilled_query).fetchone()[0]
 
             per_datasource_missing_pubmed_ids = conn.execute(missing_query).fetchall()
+            still_missing = [item for (item,) in per_datasource_missing_pubmed_ids]
             missing_by_datasource[datasource] = [
-                item for (item,) in per_datasource_missing_pubmed_ids
+                item for item in still_missing if item not in pg_checked
             ]
+            num_skipped_via_pg += len(still_missing) - len(
+                missing_by_datasource[datasource],
+            )
 
     total_missing = sum(len(v) for v in missing_by_datasource.values())
     logger.info(
         "%d total, across {%s} datasources | %d have original pid"
-        " | %d via pysradb | %d checked | %d to check (%.2f%%)",
+        " | %d via pysradb | %d checked | %d already checked in postgres"
+        " | %d to check (%.2f%%)",
         total,
         ",".join(str(d) for d in mapping),
         num_has_original,
         num_backfilled,
         already_checked,
+        num_skipped_via_pg,
         total_missing,
         (total_missing * 100) / total if total else 0,
     )
@@ -325,7 +361,7 @@ def _resolve_via_sraweb(
 
 
 def _dra_bioprojects(db_file: Path) -> dict[str, str]:
-    """DRP -> its PRJDB, from the external_id json ingest wrote."""
+    """Map a DRP to its PRJDB accession from ingested external_id JSON."""
     with sqlite_connect(db_file) as conn:
         rows = conn.execute(
             "SELECT accession, external_id FROM dra_studies "
@@ -347,10 +383,10 @@ def _resolve_dra(
     bioprojects: dict[str, str],
 ) -> list[tuple[str, str]]:
     """
-    DRP -> pmid via its BioProject; DRA studies carry no pubmed link of their own.
+    Resolve a DRP's PMID via BioProject; DRA has no direct publication link.
 
-    Must go through fetch_bioproject_pmids, which resolves to an NCBI UID first:
-    efetch by accession reads only the digits, so PRJDB13786 returns PRJNA13786.
+    Resolve the NCBI UID first: efetch by accession reads only the digits,
+    so PRJDB13786 would return PRJNA13786.
     """
     wanted = {acc: bioprojects[acc] for acc in batch if acc in bioprojects}
     if not wanted:

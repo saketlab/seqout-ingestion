@@ -90,6 +90,16 @@ def batch(
     stage1_only: bool = typer.Option(
         default=False, help="enrich only; used internally by --workers"
     ),
+    embedding_only: bool = typer.Option(
+        default=False,
+        help="no LLM call anywhere -- no Ollama/vLLM server needed. A field "
+        "with a directly matched column keeps that column's raw value "
+        "verbatim; everything else stays NULL. Ingests into the _fast twin "
+        "of every table, never the trusted ones a normal run writes. Stages "
+        "3/4 (organism truth, detector verify) are skipped: they check the "
+        "trusted tables, which this run never touches. See "
+        "docs/superpowers/specs/2026-09-14-embedding-only-enrichment.md",
+    ),
     verbose: bool = typer.Option(default=False),
 ) -> None:
     """
@@ -145,6 +155,8 @@ def batch(
             passthrough += ["--cache-file", str(cache_file)]
         if not declared:
             passthrough += ["--no-declared"]
+        if embedding_only:
+            passthrough += ["--embedding-only"]
         batch_mod.run_shards(accessions, csv_dir, workers, passthrough)
         audits = batch_mod.collect_audits(csv_dir)
     else:
@@ -166,6 +178,7 @@ def batch(
             species=species,
             declared=declared,
             verbose=verbose,
+            embedding_only=embedding_only,
         )
         logger.info("inline guard totals: %s", json.dumps(totals, sort_keys=True))
 
@@ -176,9 +189,16 @@ def batch(
     logger.info("2/4 ingest CSVs + install audit log")
     if db_file.exists():
         db_file.unlink()  # fresh batch DB for this run
-    counts = store.ingest(csv_dir, db_file, unified_db_file)
+    counts = store.ingest(csv_dir, db_file, unified_db_file, fast=embedding_only)
     store.install_corrections(db_file, audits)
     logger.info("ingested: %s", json.dumps(counts, sort_keys=True))
+
+    if embedding_only:
+        logger.info(
+            "3/4 corpus and 4/4 verify SKIPPED: --embedding-only wrote the _fast "
+            "tables, which the shipped detectors don't check"
+        )
+        return
 
     if tier_scripts_dir is None:
         logger.warning(
@@ -195,9 +215,8 @@ def batch(
 
     logger.info("4/4 verify: every shipped detector must find zero")
     found = batch_mod.detector_counts(tier_scripts_dir, db_file)
-    # bad_label_samples counts rows where LLM tissue disagrees with CVCL primary
-    # site. Under --tierc-policy=evidence, study naming adjudicates those lines;
-    # the ledger is what the post-hoc tier would act on.
+    # bad_label_samples counts LLM/CVCL tissue conflicts. The evidence policy
+    # resolves them using study names; the ledger supports post-hoc correction.
     failures = {k: v for k, v in found.items() if v != 0 and k != "bad_label_samples"}
     logger.info("detectors: %s", json.dumps(found, sort_keys=True))
     if failures:
@@ -216,17 +235,21 @@ def ingest(
     limit: int = typer.Option(
         None, help="stop after this many studies, for a smoke run"
     ),
+    embedding_only: bool = typer.Option(
+        default=False,
+        help="route into the _fast twin of every table, matching "
+        "the batch that produced these CSVs -- see `enrich batch --embedding-only`",
+    ),
 ) -> None:
     """
-    Load a results dir into SQLite.
+    Load result CSVs into SQLite after a fleet pull.
 
-    Fleet batches run this after CSVs are pulled back. Upserts refresh rows and
-    preserve absent rows.
+    Upserts refresh existing rows and preserve rows absent from the results.
     """
     from enrich import batch as batch_mod
     from enrich import store
 
-    counts = store.ingest(csv_dir, db_file, unified_db_file, limit)
+    counts = store.ingest(csv_dir, db_file, unified_db_file, limit, fast=embedding_only)
     n = store.install_corrections(db_file, batch_mod.collect_audits(csv_dir))
     logger.info("ingest: %s (+%d audit rows)", json.dumps(counts, sort_keys=True), n)
 
@@ -234,7 +257,12 @@ def ingest(
 @enrich_app.command()
 def prefetch(
     accession_file: Path = typer.Option(..., help="one accession per line"),
-    cache_file: Path = typer.Option(..., help="metadata_cache.pkl to write"),
+    cache_file: Path = typer.Option(
+        ...,
+        help="cache to write -- .pkl/.pickle for the pickle format, "
+        ".db/.sqlite/.sqlite3 for the SQLite format (easier to `deploy: "
+        "payload` to a yuj fleet host as one file)",
+    ),
     batch_size: int = typer.Option(25, help="accessions per bulk API call"),
 ) -> None:
     """
@@ -244,25 +272,53 @@ def prefetch(
     """
     import pickle
 
-    from enrich.batch import read_accessions
-    from enrich.projects import fetch_projects
+    from enrich.batch import _SQLITE_CACHE_SUFFIXES, read_accessions
+    from enrich.projects import fetch_projects_batched, write_projects_sqlite
 
     accessions = read_accessions(accession_file)
-    projects = {}
-    for i in range(0, len(accessions), batch_size):
-        for project in fetch_projects(accessions[i : i + batch_size]):
-            projects[project.accession] = project
-        logger.info("prefetched %d/%d", len(projects), len(accessions))
+    projects = fetch_projects_batched(
+        accessions,
+        batch_size,
+        on_batch=lambda _projects, done, total: logger.info(
+            "prefetched %d/%d", done, total
+        ),
+    )
     missing = [a for a in accessions if a not in projects]
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    with cache_file.open("wb") as handle:
-        pickle.dump({"projects": projects}, handle)
+    if cache_file.suffix in _SQLITE_CACHE_SUFFIXES:
+        write_projects_sqlite(list(projects.values()), cache_file)
+    else:
+        with cache_file.open("wb") as handle:
+            pickle.dump({"projects": projects}, handle)
     logger.info(
         "cached %d projects to %s (%d unresolved)",
         len(projects),
         cache_file,
         len(missing),
     )
+
+
+@enrich_app.command("select-candidates")
+def select_candidates(
+    output_file: Path = typer.Option(
+        ...,
+        help="one representative accession per line, ready for "
+        "`enrich batch --accession-file`",
+    ),
+    pg_url: str = typer.Option(..., envvar="PG_URL"),
+) -> None:
+    """
+    Pick one accession per Postgres canonical study for embedding-only enrichment.
+
+    Prefer ae > geo > sra > ena > gsa > dra > gea (see enrich.candidates).
+    Feed the output to `enrich batch --embedding-only` to avoid enriching mirrors.
+    """
+    from enrich.candidates import fetch_candidates
+
+    rows = fetch_candidates(pg_url)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    output_file.write_text("\n".join(acc for _, _, acc in rows) + "\n")
+    logger.info("wrote %d accessions to %s", len(rows), output_file)
 
 
 @enrich_app.command("ontology-map")

@@ -29,16 +29,30 @@ a CSV) or a comma-separated list.
 
 Commands:
 
-    enrich batch          enrich, guard, ingest, then corpus and verify
-    enrich ingest         load a results dir into SQLite without re-enriching
-    enrich prefetch       cache project metadata for an offline worker
-    enrich ontology-map   re-map an enriched CSV after the ontology tables change
+    enrich batch              enrich, guard, ingest, then corpus and verify
+    enrich ingest             load a results dir into SQLite without re-enriching
+    enrich prefetch           cache project metadata for an offline worker
+    enrich ontology-map       re-map an enriched CSV after the ontology tables change
+    enrich select-candidates  pick one representative accession per deduped study
 
 `--module` selects the wrapper, `enrich.evidence_gate` by default or
 `enrich.archive_fields`. `--stage1-only` enriches without ingesting,
 `--skip-enrich` reuses CSVs already on disk, and `--expected-taxid` with
 `--expected-species` arms the species gate. ENRICH_MODEL, ENRICH_MODULE,
 EXPECTED_TAXID and EXPECTED_SPECIES set the same four.
+
+`--embedding-only` (`ENRICH_EMBEDDING_ONLY` for the yuj worker) calls no LLM
+at all -- no Ollama/vLLM server needed on the host. A field with a directly
+matched sample-metadata column keeps that column's raw value verbatim
+(`source="embedding"`); everything else stays NULL. `enrich batch`/`enrich
+ingest` route this into the `_fast` twin of every table (`enriched_samples_fast`,
+`ontology_samples_fast`, ...), never the tables a full LLM run writes to, and
+skip stages 3/4 (they check the trusted tables). `enrich select-candidates`
+feeds it: one accession per deduped `unified_metadata.canonical_accession`
+group, by source richness (`ae > geo > sra > ena > gsa > dra > gea`), read
+straight from Postgres. See
+docs/superpowers/specs/2026-09-14-embedding-only-enrichment.md and
+`yuj/embed_only_enrich/` for the fleet job.
 
 
 Prompt are in prompts.yaml, keyed `<field>_primary` for the
