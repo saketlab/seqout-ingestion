@@ -34,7 +34,9 @@ DATASOURCE_COLUMN_MAPPING: dict[Datasource, str] = {
     Datasource.Ena: "study_accession",
     Datasource.Dra: "accession",
     Datasource.Gea: "accession",
-    Datasource.Gsa: "accession",
+    # transfer/gsa.py renames this to study_accession in Postgres, mirroring
+    # ENA's shape; the local sqlite column (sql/tables/gsa.sql) stays "accession".
+    Datasource.Gsa: "study_accession",
     Datasource.GsaHuman: "accession",
 }
 

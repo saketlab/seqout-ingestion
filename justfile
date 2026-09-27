@@ -331,6 +331,7 @@ geocode *flags:
         --cache-file {{ GEOCODING_CACHE_FILE }} \
         --save-every {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
+        --pg-url "$PG_URL" \
         {{ flags }}
 
 [group("sc_enrich")]
@@ -804,6 +805,7 @@ NORD_DB_FILE := env("NORD_DB_FILE", QUANT_DIR + "/nord/nord.db")
 NORD_CSV_FILE := env("NORD_CSV_FILE", QUANT_DIR + "/nord/rare_diseases.csv")
 INHERITANCE_DB_FILE := env("INHERITANCE_DB_FILE", QUANT_DIR + "/inheritance/inheritance.db")
 GARD_ONTOLOGY_DIR := env("GARD_ONTOLOGY_DIR", QUANT_DIR + "/ontology")
+ONTOLOGY_CLOSURE_DB_FILE := env("ONTOLOGY_CLOSURE_DB_FILE", QUANT_DIR + "/ontology_closure/ontology_closure.db")
 
 PG_SSH_HOST := env("PG_SSH_HOST", "sramap@167.114.208.177")
 PG_SOCKET_PORT := env("PG_SOCKET_PORT", "15433")
@@ -844,6 +846,38 @@ gard_index: _pg_tunnel
     psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 \
         -f sql/indexes/ontology_ancestors_pg.sql
 
+# Full-DAG closure (mondo/uberon/cl/efo) behind resolve_ontology_term and the
+# Beacon includeDescendantTerms filter; the ontology_* group above rebuilds
+# the Neo4j query-expansion graph instead.
+[group("ontology_closure")]
+ontology_closure_build *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology_closure build \
+        --output-db-file {{ ONTOLOGY_CLOSURE_DB_FILE }} \
+        {{ flags }}
+
+[group("ontology_closure")]
+ontology_closure_verify_sqlite *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology_closure verify-sqlite \
+        --db-file {{ ONTOLOGY_CLOSURE_DB_FILE }} \
+        {{ flags }}
+
+[group("ontology_closure")]
+ontology_closure_transfer *flags: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ontology-closure \
+        --pg-url "{{ PG_SOCKET_URL }}" \
+        --db-file {{ ONTOLOGY_CLOSURE_DB_FILE }} \
+        {{ flags }}
+
+[group("ontology_closure")]
+ontology_closure_filtering_terms: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ontology-closure-filtering-terms \
+        --pg-url "{{ PG_SOCKET_URL }}"
+
+[group("ontology_closure")]
+ontology_closure_verify_pg: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ontology-closure-verify-pg \
+        --pg-url "{{ PG_SOCKET_URL }}"
+
 [group("disease")]
 disease_matview collection: _pg_tunnel
     DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_rare_disease_matview.sh {{ collection }}
@@ -873,12 +907,53 @@ country_matview: _pg_tunnel
     DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_country_matview.sh
     @echo "country stack rebuilt: /country/{code}/{summary,facets,projects}"
 
-# Full longread -> singlecell -> country rebuild in dependency order. Run this
-# instead of the three recipes above individually: longread_study CASCADEs
-# into the other two on every DROP, so running them out of order or alone
-# leaves a dependent matview missing until this is run.
+# Full longread -> singlecell -> country/tissue/disease-ontology/perturbation/
+# spatial rebuild in dependency order. longread_study CASCADEs into country,
+# tissue and disease_ontology directly on each DROP; perturbation and spatial
+# CASCADE transitively through singlecell_study instead. Run this rather than
+# the recipes above individually, or a dependent matview stays missing.
 [group("technology")]
-refresh_technology_matviews: longread_matview singlecell_matview country_matview
+refresh_technology_matviews: longread_matview singlecell_matview country_matview tissue_matview disease_ontology_matview perturbation_matview spatial_matview
+
+# ChEBI lexicon behind singlecell_perturbation_study; downloads chebi.obo once
+# (delete data/perturbation/chebi.obo to refresh), then replaces
+# perturbation_lexicon whole. No model: every hit is a ChEBI id.
+[group("technology")]
+perturbation_lexicon: _pg_tunnel
+    mkdir -p data/perturbation
+    test -s data/perturbation/chebi.obo || { curl -fsSL -o data/perturbation/chebi.obo.gz https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi.obo.gz && gunzip -kf data/perturbation/chebi.obo.gz; }
+    PYTHONPATH=src {{ PYTHON }} -m perturbation.lexicon data/perturbation/chebi.obo data/perturbation/lexicon.tsv
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/tables/perturbation_lexicon_pg.sql
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -c "BEGIN; TRUNCATE perturbation_lexicon;" -c "\\copy perturbation_lexicon FROM 'data/perturbation/lexicon.tsv' WITH (FORMAT csv, DELIMITER E'\\t', HEADER true)" -c "COMMIT;"
+    @echo "perturbation_lexicon loaded"
+
+# Single-cell perturbation studies (genetic/chemical/other) with confidence,
+# readout assay and matrix/FASTQ availability. CASCADE-dropped whenever
+# singlecell_study rebuilds, hence the refresh_technology_matviews entry.
+[group("technology")]
+perturbation_matview: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/singlecell_perturbation_pg.sql
+    @echo "perturbation view rebuilt: singlecell_perturbation_study"
+
+# Platform lexicon behind spatial_study's `platforms`/`resolution`/
+# `technology` columns. Hand-curated (unlike perturbation_lexicon), so this
+# just applies sql/tables/spatial_platform_lexicon_pg.sql directly: no
+# download, no generation script. Run this before spatial_matview after
+# editing a row in that file; a plain spatial_matview run will fail loudly
+# (empty-lexicon guard) rather than silently miss every platform.
+[group("technology")]
+spatial_platform_lexicon: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/tables/spatial_platform_lexicon_pg.sql
+    @echo "spatial_platform_lexicon loaded"
+
+# Spatial transcriptomics studies, with named platform(s), resolution and
+# technology class. Depends on singlecell_study and spatial_platform_lexicon;
+# CASCADE-dropped whenever singlecell_study is rebuilt, hence the
+# refresh_technology_matviews entry.
+[group("technology")]
+spatial_matview: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/spatial_pg.sql
+    @echo "spatial view rebuilt: spatial_study"
 
 LONGREAD_CHEM_DIR := env("LONGREAD_CHEM_DIR", QUANT_DIR + "/longread_chemistry")
 LONGREAD_CHEM_DB := env("LONGREAD_CHEM_DB", LONGREAD_CHEM_DIR + "/longread_chemistry.db")
@@ -933,6 +1008,37 @@ database_volume_growth_matview: _pg_tunnel
 
 [group("gard")]
 gard_matview: _pg_tunnel (disease_matview "gard")
+
+# Any-MONDO-term collection behind /disease/{term}/{summary,facets,projects},
+# distinct from disease_matview (rare/nord catalogues only). Needs
+# study_canonical already built. Not declared as a dependency here: just
+# reruns a prerequisite on every invocation, and this and tissue_matview
+# would otherwise CASCADE-drop each other's _term view on every solo rebuild.
+[group("ontology")]
+disease_ontology_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_ontology_matview.sh disease
+    @echo "disease-ontology stack rebuilt: /disease/{term}/{summary,facets,projects}"
+
+# Any-UBERON-term collection behind /tissue/{term}/{summary,facets,projects}.
+# Needs study_canonical already built; see disease_ontology_matview above.
+[group("ontology")]
+tissue_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_ontology_matview.sh tissue
+    @echo "tissue stack rebuilt: /tissue/{term}/{summary,facets,projects}"
+
+# Maps every accession to one canonical winner per study so
+# tissue_study/disease_study_ontology don't double-count aliased studies.
+# Rerun via refresh_ontology_matviews, not alone: a standalone run
+# CASCADEs onto both _term views with nothing left in the chain to rebuild them.
+[group("ontology")]
+study_canonical: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" {{ PYTHON }} sql/matviews/build_study_canonical.py
+
+# The only supported way to rebuild the three targets above: one
+# study_canonical pass then both matviews, in one invocation so no later
+# prerequisite rerun CASCADE-drops what an earlier step just built.
+[group("ontology")]
+refresh_ontology_matviews: study_canonical tissue_matview disease_ontology_matview
 
 [group("disease")]
 disease_all: gard_fetch gard_inheritance gard_transfer \

@@ -14,7 +14,7 @@ def delta(
     pg_url: str = typer.Option(..., envvar="PG_URL"),
     source_db_file: Path = typer.Option(...),
     out_db_file: Path = typer.Option(...),
-    table: list[str] = typer.Option(  # noqa: B008
+    table: list[str] = typer.Option(
         ...,
         "--table",
         help="Repeatable. Transfer task names to include, e.g. --table sra_studies.",
@@ -336,6 +336,39 @@ def inheritance(
     from transfer.inheritance import inheritance_transfer
 
     inheritance_transfer(pg_url, inheritance_db_file)
+
+
+@transfer_app.command("ontology-closure")
+def ontology_closure(
+    pg_url: str = typer.Option(...),
+    db_file: Path = typer.Option(
+        ..., help="ontology_closure.db from `ontology_closure build`"
+    ),
+) -> None:
+    """Load the ontology closure and term labels into pg."""
+    from transfer.ontology_closure import ontology_closure_transfer
+
+    ontology_closure_transfer(pg_url, db_file)
+
+
+@transfer_app.command("ontology-closure-filtering-terms")
+def ontology_closure_filtering_terms(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Rebuild beacon_filtering_terms from ontology_samples_v4 + ontology_closure."""
+    from transfer.ontology_closure import ontology_closure_filtering_terms as run
+
+    run(pg_url)
+
+
+@transfer_app.command("ontology-closure-verify-pg")
+def ontology_closure_verify_pg(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Read-only: confirm the closure landed and the descendant filter uses an index."""
+    from transfer.ontology_closure import ontology_closure_verify_pg as run
+
+    run(pg_url)
 
 
 @transfer_app.command("longread-chemistry")

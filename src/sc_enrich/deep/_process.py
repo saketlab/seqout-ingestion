@@ -12,36 +12,47 @@ from typing import Any, cast
 
 import h5py
 
-try:
-    import pyreadr
-    from pyreadr.custom_errors import LibrdataError
-except ImportError:
-    _PYREADR_HINT = (
-        "reading .rds files needs pyreadr. install with: uv pip install pyreadr"
-    )
+# pyreadr and rpy2 are imported LAZILY (via _pyreadr()/_ro() below), not at
+# module load. Both are native-code bridges (pyreadr wraps librdata in C;
+# rpy2 links a system R), and both have failed in ways that are NOT
+# catchable Python exceptions on some fleet hosts -- pyreadr's librdata has
+# segfaulted outright on a free-threaded Python 3.14 build, and rpy2 has
+# raised cffi's ffi.error (not ImportError) on an ABI-mismatched R install.
+# Importing either at module level means every item on an affected host
+# crashes on startup, not just .rds ones, since yuj_worker imports this
+# module unconditionally. Deferring the import to first actual .rds use
+# confines the damage to .rds items only -- everything else on the host
+# keeps working.
 
-    class LibrdataError(Exception):  # placeholder so except LibrdataError resolves
-        pass
 
-    class _MissingPyreadr:
-        def __getattr__(self, _name: str) -> object:
-            raise ImportError(_PYREADR_HINT)
+class LibrdataError(Exception):
+    """Re-exported lazily from pyreadr.custom_errors; see _pyreadr()."""
 
-    pyreadr = _MissingPyreadr()  # type: ignore[assignment]
 
-try:  # fallback for S4/Seurat objects; needs system R
-    import rpy2.robjects as ro
-except ImportError:
-    _R_HINT = (
-        "this .rds needs the rpy2 fallback, which requires a system R install. "
-        "install with: uv sync --extra rds"
-    )
+def _pyreadr() -> Any:
+    global LibrdataError  # noqa: PLW0603 - swapped for the real class on first success
+    try:
+        import pyreadr as _pyreadr_mod
+        from pyreadr.custom_errors import LibrdataError as _RealLibrdataError
+    except ImportError as exc:
+        msg = "reading .rds files needs pyreadr. install with: uv sync --extra rds"
+        raise ImportError(msg) from exc
+    LibrdataError = _RealLibrdataError  # noqa: PLW0603
+    return _pyreadr_mod
 
-    class _MissingR:  # any attribute access raises the friendly hint
-        def __getattr__(self, _name: str) -> object:
-            raise ImportError(_R_HINT)
 
-    ro = _MissingR()  # type: ignore[assignment]
+def _ro() -> Any:
+    try:
+        import rpy2.robjects as _ro_mod
+    except Exception as exc:  # noqa: BLE001 - rpy2 fails in more ways than ImportError
+        # A missing package raises ImportError, but a present-but-ABI-mismatched
+        # rpy2/R pair raises cffi's ffi.error instead.
+        msg = (
+            "this .rds needs the rpy2 fallback, which requires a system R "
+            "install. install with: uv sync --extra rds"
+        )
+        raise ImportError(msg) from exc
+    return _ro_mod
 
 from helpers import ftp_data_stream, open_http_range
 from sc_enrich.deep.counter_common import FileType, RdsReadError
@@ -655,6 +666,85 @@ def count_h5_dims_via_http(url: str, file_type: FileType) -> tuple[int, int] | N
         reader.close()
 
 
+def _h5ad_obs_columns(f: Any) -> list[str]:
+    """obs column names of an already-open .h5ad; [] if no obs group."""
+    if "obs" not in f:
+        return []
+    try:
+        return [k for k in f["obs"] if k not in ("_index", "__categories")]
+    except Exception:  # noqa: BLE001 (a malformed obs group must not crash the scan)
+        return []
+
+
+def h5ad_obs_columns_via_http(url: str) -> list[str] | None:
+    """obs column names of an .h5ad over HTTP range reads; None = full download needed.
+
+    Cheap: HDF5 group listing needs only the file's metadata, not its data, so
+    this reads a few KB regardless of the file's actual size.
+    """
+    reader = open_http_range(url.replace("ftp://", "https://", 1))
+    if reader is None:
+        return None
+    try:
+        with h5py.File(reader, "r") as f:
+            return _h5ad_obs_columns(f)
+    except (OSError, ValueError, KeyError):
+        return None
+    finally:
+        reader.close()
+
+
+def h5ad_obs_columns_local(path: Path) -> list[str]:
+    """obs column names of a local .h5ad file."""
+    try:
+        with h5py.File(path, "r") as f:
+            return _h5ad_obs_columns(f)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+_RDS_COLUMNS_R = """
+get_cols <- function(obj) {
+  if (inherits(obj, "Seurat")) return(colnames(obj@meta.data))
+  if (inherits(obj, "SeuratObject")) return(colnames(obj@meta.data))
+  if (inherits(obj, "SingleCellExperiment")) {
+    return(colnames(SummarizedExperiment::colData(obj)))
+  }
+  if (inherits(obj, "cell_data_set")) {
+    return(colnames(SummarizedExperiment::colData(obj)))
+  }
+  if (is.data.frame(obj)) return(colnames(obj))
+  character(0)
+}
+get_cols(obj)
+"""
+
+
+def _rds_columns_rpy2(path: Path) -> list[str]:
+    try:
+        ro = _ro()
+        ro.r(f'obj <- readRDS("{path}")')
+        cols = ro.r(_RDS_COLUMNS_R)
+        return [str(c) for c in cols]
+    except Exception:  # noqa: BLE001 (unreadable object -> no columns, not a crash)
+        return []
+
+
+def rds_columns(path: Path) -> list[str]:
+    """Column names of a local .rds file's data.frame / meta.data, via whichever
+    reader (pyreadr, then rpy2) can open it. [] on any failure -- callers treat
+    that as "no evidence", not as a positive or negative signal.
+    """
+    try:
+        result = _pyreadr().read_r(path)
+    except Exception:  # noqa: BLE001
+        return _rds_columns_rpy2(path)
+    if not result:
+        return []
+    obj = next(iter(result.values()))
+    return [str(c) for c in obj.columns] if hasattr(obj, "columns") else []
+
+
 def _mtx_genes(path: Path, chunk_size: int) -> int:
     """
     Read the gene-axis length from an .mtx header; return -1 if unparseable.
@@ -773,7 +863,7 @@ def _process_rds(path: Path, _: int) -> int:
     _rds_state["class"] = ""
     _rds_genes["genes"] = -1
     try:
-        result = pyreadr.read_r(path)
+        result = _pyreadr().read_r(path)
     except LibrdataError:
         return _process_rds_rpy2(path)
 
@@ -795,6 +885,7 @@ def _process_rds(path: Path, _: int) -> int:
 def _process_rds_rpy2(path: Path) -> int:
     _rds_state["class"] = ""
     try:
+        ro = _ro()
         ro.r(f'obj <- readRDS("{path}")')
     except Exception as exc:
         # S4 class is often undefined, e.g. monocle3 missing for a cell_data_set

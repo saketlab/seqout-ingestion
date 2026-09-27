@@ -13,6 +13,7 @@ from cli.ingest import ingest_app
 from cli.inheritance import inheritance_app
 from cli.nord import nord_app
 from cli.ontology import ontology_app
+from cli.ontology_closure import ontology_closure_app
 from cli.pentimento import pentimento_app
 from cli.pmid_retry import pmid_retry_app
 from cli.refresh import refresh_app
@@ -65,6 +66,7 @@ cli.add_typer(embed_app, name="embed")
 cli.add_typer(enrich_app, name="enrich")
 cli.add_typer(age_app, name="age")
 cli.add_typer(ontology_app, name="ontology")
+cli.add_typer(ontology_closure_app, name="ontology_closure")
 cli.add_typer(refresh_app, name="refresh")
 cli.add_typer(gard_app, name="gard")
 cli.add_typer(nord_app, name="nord")

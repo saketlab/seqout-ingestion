@@ -2,6 +2,7 @@ import csv
 import json
 import logging
 import re
+import sqlite3
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -183,6 +184,28 @@ def build_unified_metadata(
         conn.execute("PRAGMA synchronous=NORMAL")
 
         exec_query_from_file("tables/unified_metadata.sql", conn=conn)
+
+        # CREATE TABLE IF NOT EXISTS is a no-op against a file predating a
+        # schema change, so a column added to the .sql file never reaches an
+        # existing on-disk table -- sc_count_last_checked and single_cell_status
+        # both hit this as "no such column" in different downstream stages.
+        # Diff against a fresh in-memory build of the same DDL instead of
+        # special-casing one column at a time.
+        existing_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(unified_metadata)")
+        }
+        mem_conn = sqlite3.connect(":memory:")
+        exec_query_from_file("tables/unified_metadata.sql", conn=mem_conn)
+        desired_cols = [
+            (r[1], r[2])
+            for r in mem_conn.execute("PRAGMA table_info(unified_metadata)")
+        ]
+        mem_conn.close()
+        for col_name, col_type in desired_cols:
+            if col_name not in existing_cols:
+                conn.execute(
+                    f"ALTER TABLE unified_metadata ADD COLUMN {col_name} {col_type}",
+                )
 
         cols = list(rows[0].keys())
         placeholders = ", ".join(["?"] * len(cols))

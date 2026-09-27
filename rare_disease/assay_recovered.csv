@@ -1,0 +1,886 @@
+study_accession,sample,disease,mondo_id,stated_assay_category,stated_assay,mismatch_case,reads_assay,reads_assay_raw,cells,genes,sex_verdict,species_called
+GSE129609,GSM4002707,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3962,,unknown,unknown
+GSE129609,GSM4002708,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2690,,unknown,unknown
+GSE129609,GSM4002709,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3309,,unknown,unknown
+GSE129609,GSM4002711,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,4895,,unknown,
+GSE129609,GSM4002712,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3000,,unknown,unknown
+GSE129609,GSM4002713,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,6215,,unknown,unknown
+GSE129609,GSM4002715,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3763,,unknown,Mus_musculus
+GSE129609,GSM4002716,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2632,,unknown,unknown
+GSE129609,GSM4002717,episodic angioedema with eosinophilia,MONDO:0500000,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2064,,unknown,Mus_musculus
+GSE129730,GSM3720942,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,3765,,unknown,unknown
+GSE129730,GSM3720944,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,1947,,unknown,unknown
+GSE129730,GSM3720945,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,9886,,unknown,unknown
+GSE130119,GSM4002707,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,3962,,unknown,unknown
+GSE130119,GSM4002708,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,2690,,unknown,unknown
+GSE130119,GSM4002709,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,3309,,unknown,unknown
+GSE130119,GSM4002711,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,4895,,unknown,
+GSE130119,GSM4002712,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,3000,,unknown,unknown
+GSE130119,GSM4002713,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,6215,,unknown,unknown
+GSE130119,GSM4002715,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,3763,,unknown,Mus_musculus
+GSE130119,GSM4002716,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,2632,,unknown,unknown
+GSE130119,GSM4002717,episodic angioedema with eosinophilia,MONDO:0500000,,Drop-Seq,unstated,Drop-seq,Drop-seq,2064,,unknown,Mus_musculus
+GSE135497,GSM4012674,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8482,,unknown,unknown
+GSE135497,GSM4012675,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8481,,unknown,unknown
+GSE135497,GSM4012676,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7483,,unknown,unknown
+GSE135497,GSM4012677,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7485,,unknown,unknown
+GSE135497,GSM4012678,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,17949,,unknown,unknown
+GSE135497,GSM4012679,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,17941,,unknown,unknown
+GSE135497,GSM4012680,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,unknown,unknown
+GSE135497,GSM4012682,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7995,,unknown,unknown
+GSE135497,GSM4012683,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,unknown,unknown
+GSE135497,GSM4012688,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10986,,unknown,unknown
+GSE135497,GSM4012689,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10993,,unknown,unknown
+GSE135497,GSM4012690,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7420,,unknown,unknown
+GSE135497,GSM4012691,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10363,,unknown,unknown
+GSE135497,GSM4012692,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10298,,unknown,unknown
+GSE135497,GSM4012693,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9947,,unknown,unknown
+GSE135497,GSM4012694,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5345,,unknown,Pan_paniscus
+GSE135497,GSM4012695,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8816,,unknown,unknown
+GSE135497,GSM4012696,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9634,,unknown,unknown
+GSE135497,GSM4012697,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8433,,unknown,Pan_paniscus
+GSE135497,GSM4012698,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9461,,unknown,Pan_paniscus
+GSE135497,GSM4012699,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10121,,unknown,unknown
+GSE135497,GSM4012700,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8195,,unknown,Pan_paniscus
+GSE135497,GSM4012701,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8468,,unknown,Pan_paniscus
+GSE135497,GSM4012702,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8958,,unknown,unknown
+GSE135497,GSM4012703,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9518,,unknown,Pan_paniscus
+GSE135497,GSM4012704,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8718,,unknown,unknown
+GSE135497,GSM4012705,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3659,,unknown,unknown
+GSE135497,GSM4012706,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8140,,unknown,unknown
+GSE135497,GSM4012707,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4808,,unknown,unknown
+GSE135497,GSM4012708,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10328,,unknown,unknown
+GSE135497,GSM4012709,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10251,,unknown,unknown
+GSE135497,GSM4012710,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10790,,unknown,unknown
+GSE135497,GSM4012711,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8855,,unknown,unknown
+GSE135497,GSM4012712,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10532,,unknown,unknown
+GSE135497,GSM4012713,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10416,,unknown,unknown
+GSE135497,GSM4012714,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10775,,unknown,unknown
+GSE135497,GSM4012715,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3313,,unknown,unknown
+GSE135497,GSM4012716,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8768,,unknown,unknown
+GSE135497,GSM4012717,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9450,,unknown,unknown
+GSE135497,GSM4012718,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9897,,unknown,unknown
+GSE135497,GSM4012719,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8396,,unknown,unknown
+GSE135497,GSM4012720,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8552,,unknown,unknown
+GSE135497,GSM4265995,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,680,,unknown,unknown
+GSE135497,GSM4265998,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,401,,unknown,unknown
+GSE135497,GSM4266000,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,326,,unknown,unknown
+GSE135497,GSM4266004,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8980,,unknown,unknown
+GSE135497,GSM4266006,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,514,,unknown,unknown
+GSE135497,GSM4266012,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,1991,,unknown,unknown
+GSE135497,GSM4266014,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9000,,unknown,unknown
+GSE135497,GSM4266017,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7965,,unknown,unknown
+GSE140203,GSM4156595,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,SHARE-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),5,,unknown,unknown
+GSE140203,GSM4156596,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,SHARE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5,,unknown,unknown
+GSE140203,GSM4156597,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,SHARE-Seq,unstated,Drop-seq,Drop-seq,5,,unknown,Rattus_norvegicus
+GSE141851,GSM4512672,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,SCNT-Seq,unstated,Drop-seq,Drop-seq,7000,,unknown,
+GSE141851,GSM4512692,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,SCNT-Seq,unstated,Drop-seq,Drop-seq,800,,unknown,unknown
+GSE141851,GSM4512693,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,SCNT-Seq,unstated,Drop-seq,Drop-seq,800,,unknown,unknown
+GSE141851,GSM4512695,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,SCNT-Seq,unstated,Drop-seq,Drop-seq,600,,unknown,unknown
+GSE141851,GSM4512696,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,SCNT-Seq,unstated,Drop-seq,Drop-seq,400,,unknown,unknown
+GSE142564,GSM4231967,autoimmune myocarditis,MONDO:0022519,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10651,28692,unknown,Mus_musculus
+GSE142564,GSM4231968,autoimmune myocarditis,MONDO:0022519,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,11240,28692,unknown,Mus_musculus
+GSE147457,GSM4431301,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,492,,unknown,Homo_sapiens
+GSE147457,GSM4431303,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,323,,female,
+GSE147457,GSM4431310,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1171,,unknown,Homo_sapiens
+GSE147457,GSM4431317,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,5028,,female,
+GSE148842,GSM4483741,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,1698,,female,
+GSE148842,GSM4483742,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,4456,,female,
+GSE148842,GSM4483743,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,14480,,male,
+GSE148842,GSM4483744,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,6671,,male,
+GSE148842,GSM4483745,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3944,,male,
+GSE148842,GSM4483746,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,7120,,male,
+GSE148842,GSM4483747,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,4808,,male,
+GSE148842,GSM4483748,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,4130,,male,
+GSE148842,GSM4483749,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2685,,male,
+GSE148842,GSM4483750,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,7087,,male,
+GSE148842,GSM4483751,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,1178,,male,
+GSE148842,GSM4483752,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,7368,,,
+GSE148842,GSM4483753,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3591,,male,
+GSE148842,GSM4483754,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2510,,male,
+GSE148842,GSM4483755,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2569,,,
+GSE148842,GSM4483756,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1493,,male,
+GSE148842,GSM4483757,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1403,,male,
+GSE148842,GSM4483758,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1831,,male,
+GSE148842,GSM4483759,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,7508,,female,
+GSE148842,GSM4483760,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,7784,,female,
+GSE148842,GSM4483761,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,15896,,female,
+GSE148842,GSM4483762,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,2681,,female,
+GSE148842,GSM4483763,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,6751,,male,
+GSE148842,GSM4483764,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,6542,,male,
+GSE148842,GSM4483765,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,6122,,male,
+GSE148842,GSM4483766,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,3098,,male,
+GSE148842,GSM4483768,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,3555,,male,
+GSE148842,GSM4483769,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,4057,,male,
+GSE148842,GSM4483770,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1117,,male,
+GSE148842,GSM4483771,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,805,,male,
+GSE148842,GSM4483772,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1121,,,
+GSE148842,GSM4483773,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1989,,,
+GSE149383,GSM3972674,adult acute monocytic leukemia,MONDO:0000875,,Drop-Seq,unstated,Drop-seq,Drop-seq,2635,,unknown,Homo_sapiens
+GSE149383,GSM3972676,adult acute monocytic leukemia,MONDO:0000875,,Drop-Seq,unstated,Drop-seq,Drop-seq,3213,,unknown,Homo_sapiens
+GSE149574,GSM6267486,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Prox-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8668,36601,male,Homo_sapiens
+GSE149574,GSM6267487,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Prox-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8669,,uncertain,
+GSE151137,GSM4567139,glioblastoma,MONDO:0018177,,Scope-Seq2,unstated,10x Chromium 3' v1,10x Chromium 3' v1,9063,,unknown,Homo_sapiens
+GSE151137,GSM4567140,glioblastoma,MONDO:0018177,,Scope-Seq2,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1957,,,
+GSE152212,GSM4609172,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,501,,unknown,Homo_sapiens
+GSE152212,GSM4609173,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,3001,,unknown,Homo_sapiens
+GSE152212,GSM4609177,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,2001,,unknown,Homo_sapiens
+GSE152212,GSM4609180,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,2501,,unknown,unknown
+GSE152212,GSM4609183,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,2201,,unknown,Homo_sapiens
+GSE152212,GSM4609184,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,2601,,unknown,unknown
+GSE152212,GSM4609185,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1251,,unknown,unknown
+GSE152212,GSM4609192,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,2601,,unknown,unknown
+GSE152212,GSM4609202,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,3601,,unknown,unknown
+GSE152212,GSM4609210,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,711,,unknown,unknown
+GSE152212,GSM4609215,Leber congenital amaurosis,MONDO:0018998,,Drop-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,1651,,unknown,unknown
+GSE152469,GSM4616298,B-cell chronic lymphocytic leukemia,MONDO:0004948,,CITE-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,33695,,,
+GSE152469,GSM4616299,B-cell chronic lymphocytic leukemia,MONDO:0004948,,CITE-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,33695,,male,
+GSE152469,GSM4616300,B-cell chronic lymphocytic leukemia,MONDO:0004948,,CITE-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,33695,,,
+GSE153637,GSM4648528,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,136465,,unknown,Homo_sapiens
+GSE153637,GSM4648529,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,136570,,male,Homo_sapiens
+GSE153637,GSM4648530,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,136448,,uncertain,Homo_sapiens
+GSE153637,GSM4648532,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,128629,,male,Homo_sapiens
+GSE153637,GSM4648533,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,138056,,uncertain,Homo_sapiens
+GSE153637,GSM4648534,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,109037,,male,Homo_sapiens
+GSE153637,GSM4648535,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,136425,,male,Homo_sapiens
+GSE153637,GSM4648536,adult acute monocytic leukemia,MONDO:0000875,,RNA-Seq,unstated,Drop-seq,Drop-seq,118279,,male,Homo_sapiens
+GSE154386,GSM4670211,dengue disease,MONDO:0005502,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,5086,33694,male,Homo_sapiens
+GSE157244,GSM4762807,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,11374,31053,male,Mus_musculus
+GSE157244,GSM4762810,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3581,27998,male,Mus_musculus
+GSE157244,GSM4762812,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2,10x Chromium 3' v2,4986,27998,male,Mus_musculus
+GSE157244,GSM4762813,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,7284,31053,male,Mus_musculus
+GSE157244,GSM4762816,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,6888,27998,male,Mus_musculus
+GSE157244,GSM4762818,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6860,27998,male,Mus_musculus
+GSE157244,GSM4762820,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4578,27998,male,Mus_musculus
+GSE157244,GSM4762821,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3003,27998,male,Mus_musculus
+GSE157244,GSM4762823,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,1757,27998,male,Mus_musculus
+GSE157244,GSM4762825,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3103,27998,male,Mus_musculus
+GSE157244,GSM4762827,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,12150,27998,male,Mus_musculus
+GSE157244,GSM4762832,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3959,27998,male,Mus_musculus
+GSE157244,GSM4762834,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2,10x Chromium 3' v2,2138,27998,male,Mus_musculus
+GSE157244,GSM4762836,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2,10x Chromium 3' v2,2309,27998,male,Mus_musculus
+GSE157244,GSM4762838,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,9491,27998,male,Mus_musculus
+GSE157244,GSM4762842,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5296,31053,male,Mus_musculus
+GSE157244,GSM4762845,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2,10x Chromium 3' v2,9262,31053,male,Mus_musculus
+GSE157244,GSM4762846,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,17415,27998,male,Mus_musculus
+GSE157244,GSM4762848,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,13298,27998,male,Mus_musculus
+GSE158003,GSM4783935,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,212,,unknown,unknown
+GSE158003,GSM4783936,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,213,,,
+GSE158003,GSM4783937,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,153,,unknown,unknown
+GSE158003,GSM4783938,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,156,,unknown,unknown
+GSE158003,GSM4783939,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,230,,,
+GSE158003,GSM4783940,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,153,,unknown,unknown
+GSE158003,GSM4783941,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,154,,unknown,unknown
+GSE158003,GSM4783942,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,229,,unknown,unknown
+GSE158003,GSM4783943,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,157,,unknown,unknown
+GSE158003,GSM4783944,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,152,,unknown,unknown
+GSE158003,GSM4783945,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,235,,unknown,unknown
+GSE158003,GSM4783946,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,160,,,
+GSE158003,GSM4783947,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,150,,unknown,unknown
+GSE158003,GSM4783948,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,234,,unknown,unknown
+GSE158003,GSM4783949,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,152,,unknown,unknown
+GSE158003,GSM4783950,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,151,,unknown,unknown
+GSE158003,GSM4783951,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,220,,,
+GSE158003,GSM4783955,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,153,,unknown,unknown
+GSE158003,GSM4783956,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,162,,unknown,unknown
+GSE158003,GSM4783957,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,237,,unknown,unknown
+GSE158003,GSM4783958,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,156,,,
+GSE158003,GSM4783959,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,150,,unknown,unknown
+GSE158003,GSM4783960,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,227,,unknown,unknown
+GSE158003,GSM4783961,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,147,,unknown,unknown
+GSE158003,GSM4783962,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,150,,unknown,unknown
+GSE158003,GSM4783964,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,166,,unknown,unknown
+GSE158003,GSM4783965,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,153,,,
+GSE158003,GSM4783966,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,214,,unknown,unknown
+GSE158003,GSM4783967,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,154,,unknown,unknown
+GSE158003,GSM4783968,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,152,,,
+GSE158003,GSM4783969,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,242,,unknown,unknown
+GSE158003,GSM4783970,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,149,,unknown,unknown
+GSE158003,GSM4783971,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,161,,,
+GSE158003,GSM4783972,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,153,,unknown,unknown
+GSE158003,GSM4783973,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,154,,unknown,unknown
+GSE158003,GSM4783974,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,146,,unknown,unknown
+GSE158003,GSM4783975,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,156,,unknown,unknown
+GSE158003,GSM4783976,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Other,unstated,Drop-seq,Drop-seq,153,,unknown,unknown
+GSE158003,GSM4783977,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Other,unstated,Drop-seq,Drop-seq,152,,unknown,unknown
+GSE158003,GSM4783978,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Other,unstated,Drop-seq,Drop-seq,160,,unknown,unknown
+GSE158003,GSM4783979,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Hypr-Seq,unstated,Drop-seq,Drop-seq,271,,,
+GSE158003,GSM4783980,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,94,,unknown,unknown
+GSE158003,GSM4783981,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,95,,unknown,unknown
+GSE158003,GSM4783982,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,95,,unknown,unknown
+GSE158003,GSM4783983,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,94,,unknown,unknown
+GSE158003,GSM4783984,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,157,,,
+GSE158003,GSM4783985,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,132,,unknown,unknown
+GSE158003,GSM4783986,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,133,,unknown,unknown
+GSE158003,GSM4783987,childhood acute myeloid leukemia,MONDO:0004996,,Hypr-Seq,unstated,Drop-seq,Drop-seq,132,,unknown,unknown
+GSE158003,GSM4783988,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,252,,unknown,unknown
+GSE158003,GSM4783989,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,252,,,
+GSE158003,GSM4783990,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,252,,,
+GSE158003,GSM4783991,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,252,,unknown,unknown
+GSE158003,GSM4783999,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1026,,unknown,unknown
+GSE158003,GSM4784000,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1027,,unknown,unknown
+GSE158003,GSM4784001,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1034,,,
+GSE158003,GSM4784002,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1026,,,
+GSE158003,GSM4784003,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1028,,unknown,unknown
+GSE158003,GSM4784004,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1030,,,
+GSE158003,GSM4784005,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1024,,unknown,unknown
+GSE158003,GSM4784006,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,Hypr-Seq,unstated,Drop-seq,Drop-seq,1026,,unknown,unknown
+GSE158474,GSM4813909,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7846,31053,unknown,unknown
+GSE161263,GSM4904122,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1192,,unknown,Homo_sapiens
+GSE161263,GSM4904123,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3034,,unknown,unknown
+GSE161263,GSM4904124,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3338,,unknown,Homo_sapiens
+GSE161741,GSM4913839,small cell lung carcinoma,MONDO:0008433,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,3726,28692,unknown,
+GSE161741,GSM4913840,small cell lung carcinoma,MONDO:0008433,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4254,28692,unknown,
+GSE163558,GSM5004180,gastric cancer,MONDO:0001056,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2866,33538,female,
+GSE163558,GSM5004181,gastric cancer,MONDO:0001056,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9226,33538,female,
+GSE163558,GSM5004183,gastric cancer,MONDO:0001056,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2777,33538,female,
+GSE163793,GSM4987477,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2001,,unknown,Mus_musculus
+GSE163793,GSM4987478,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,scRNA-Seq,unstated,Drop-seq,Drop-seq,4001,,unknown,Mus_musculus
+GSE164430,GSM5009535,hepatocellular carcinoma,MONDO:0007256,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),6684,121472,female,Homo_sapiens
+GSE164430,GSM5009536,hepatocellular carcinoma,MONDO:0007256,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v1,10x Chromium 3' v1,6797,121472,unknown,unknown
+GSE164430,GSM5009537,hepatocellular carcinoma,MONDO:0007256,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),8266,121472,unknown,Mus_musculus
+GSE164430,GSM5009538,hepatocellular carcinoma,MONDO:0007256,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v1,10x Chromium 3' v1,8602,121472,unknown,Mus_musculus
+GSE168354,GSM5136498,epithelioid hemangioendothelioma,MONDO:0015523,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5850,31053,male,Mus_musculus
+GSE168354,GSM5136499,epithelioid hemangioendothelioma,MONDO:0015523,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4108,31053,male,Mus_musculus
+GSE169610,GSM5210635,uveal melanoma,MONDO:0006486,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9831,33543,male,
+GSE169610,GSM5210636,uveal melanoma,MONDO:0006486,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9831,33543,male,
+GSE178114,GSM5380412,astrocytoma (excluding glioblastoma),MONDO:0019781,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,33538,male,Homo_sapiens
+GSE178114,GSM5380413,astrocytoma (excluding glioblastoma),MONDO:0019781,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,33538,male,Homo_sapiens
+GSE178116,GSM5380412,astrocytoma (excluding glioblastoma),MONDO:0019781,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,33538,male,Homo_sapiens
+GSE178116,GSM5380413,astrocytoma (excluding glioblastoma),MONDO:0019781,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,33538,male,Homo_sapiens
+GSE180294,GSM5460319,Huntington disease,MONDO:0007739,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4327,,male,Mus_musculus
+GSE180294,GSM5460320,Huntington disease,MONDO:0007739,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3911,,male,Mus_musculus
+GSE180294,GSM5460326,Huntington disease,MONDO:0007739,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4425,,male,Mus_musculus
+GSE180294,GSM5460328,Huntington disease,MONDO:0007739,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5236,,unknown,Mus_musculus
+GSE180294,GSM5460336,Huntington disease,MONDO:0007739,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5114,,male,Mus_musculus
+GSE185857,GSM5624831,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,female,Homo_sapiens
+GSE185857,GSM5624832,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,female,Homo_sapiens
+GSE185857,GSM5624833,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,female,Homo_sapiens
+GSE185857,GSM5624834,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,male,Homo_sapiens
+GSE185857,GSM5624835,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,female,Homo_sapiens
+GSE185857,GSM5624836,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,female,Homo_sapiens
+GSE185857,GSM5624837,palmoplantar pustulosis,MONDO:0015597,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,58051,female,Homo_sapiens
+GSE186305,GSM5643580,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,20366,31053,,
+GSE186447,GSM5652032,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,705783,male,Homo_sapiens
+GSE186447,GSM5652033,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,2234939,male,Homo_sapiens
+GSE186447,GSM5652034,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,2158011,male,Homo_sapiens
+GSE186447,GSM5652035,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,817963,male,Homo_sapiens
+GSE186447,GSM5652036,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,1026452,male,Homo_sapiens
+GSE186447,GSM5652037,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,1766908,male,Homo_sapiens
+GSE186447,GSM5652038,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,40489,1031976,male,Homo_sapiens
+GSE186447,GSM5652039,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4517556,male,Homo_sapiens
+GSE186447,GSM5652040,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4844175,male,Homo_sapiens
+GSE186447,GSM5652041,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4625142,male,Homo_sapiens
+GSE186447,GSM5652042,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4362678,male,Homo_sapiens
+GSE186447,GSM5652043,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,3777385,male,Homo_sapiens
+GSE186447,GSM5652044,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4509405,male,Homo_sapiens
+GSE186447,GSM5652045,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,3590690,male,Homo_sapiens
+GSE186447,GSM5652046,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4253909,male,Homo_sapiens
+GSE186447,GSM5652047,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,3248204,male,Homo_sapiens
+GSE186447,GSM5652048,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,4222504,male,Homo_sapiens
+GSE186447,GSM5652049,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,3339669,male,Homo_sapiens
+GSE186447,GSM5652050,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,927975,male,Homo_sapiens
+GSE186447,GSM5652051,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,1253903,male,Homo_sapiens
+GSE186447,GSM5652052,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,1434157,male,Homo_sapiens
+GSE186447,GSM5652053,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,1718396,male,Homo_sapiens
+GSE186447,GSM5652054,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,2472346,male,Homo_sapiens
+GSE186447,GSM5652055,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,2407759,male,Homo_sapiens
+GSE186447,GSM5652056,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,2457744,male,Homo_sapiens
+GSE186447,GSM5652057,plasma cell myeloma,MONDO:0009693,,RNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,35604,2882571,male,Homo_sapiens
+GSE188632,GSM5687372,plasma cell myeloma,MONDO:0009693,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,33538,female,Homo_sapiens
+GSE190013,GSM5711872,polycystic lipomembranous osteodysplasia with sclerosing leukoencephaly,MONDO:0009092,,snRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,737280,36601,female,Homo_sapiens
+GSE190015,GSM5711872,polycystic lipomembranous osteodysplasia with sclerosing leukoencephaly,MONDO:0009092,,snATAC-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,737280,36601,female,Homo_sapiens
+GSE192640,GSM5753689,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8532,,unknown,Homo_sapiens
+GSE192640,GSM5753690,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4847,,unknown,Homo_sapiens
+GSE192640,GSM5753691,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6988,,unknown,Homo_sapiens
+GSE192640,GSM5753692,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4943,,unknown,Homo_sapiens
+GSE193710,GSM5819067,Aicardi-Goutieres syndrome,MONDO:0018866,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8865,36601,unknown,unknown
+GSE193710,GSM5819068,gastric adenocarcinoma,MONDO:0005036,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6883,36601,unknown,unknown
+GSE193710,GSM5819069,Aicardi-Goutieres syndrome 5,MONDO:0013059,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9564,36601,unknown,unknown
+GSE193791,GSM5821141,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6193,19937,female,Homo_sapiens
+GSE193791,GSM5821142,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6617,19937,female,Homo_sapiens
+GSE195882,GSM5855861,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scATAC-Seq,unstated,Drop-seq,Drop-seq,4104,,unknown,unknown
+GSE195964,GSM5857051,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,33352,,male,Homo_sapiens
+GSE199268,GSM5968479,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,8448,87247,unknown,Homo_sapiens
+GSE199268,GSM5968480,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2181,28437,unknown,Homo_sapiens
+GSE199268,GSM5968481,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,7324,79040,unknown,Homo_sapiens
+GSE199268,GSM5968482,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2111,69670,unknown,Rattus_norvegicus
+GSE199268,GSM5968483,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2732,80980,unknown,Homo_sapiens
+GSE199268,GSM5968485,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,1461,55775,unknown,Homo_sapiens
+GSE199268,GSM7040827,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,4840,81307,unknown,Homo_sapiens
+GSE199268,GSM7040828,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,3745,94676,unknown,Rattus_norvegicus
+GSE199268,GSM7040829,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,7732,110296,unknown,unknown
+GSE199268,GSM7040830,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2175,87815,unknown,Homo_sapiens
+GSE199268,GSM7040831,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2804,70905,unknown,Homo_sapiens
+GSE199268,GSM7040832,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,3400,94757,unknown,Rattus_norvegicus
+GSE199268,GSM7040833,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,6653,106627,unknown,Homo_sapiens
+GSE199268,GSM7040834,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2663,90606,unknown,Homo_sapiens
+GSE199268,GSM7040835,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,3365,76988,unknown,Rattus_norvegicus
+GSE199268,GSM7040836,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2964,93640,unknown,Homo_sapiens
+GSE199268,GSM7040841,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,5934,83013,unknown,Rattus_norvegicus
+GSE199373,GSM5968479,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,8448,87247,unknown,Homo_sapiens
+GSE199373,GSM5968480,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2181,28437,unknown,Homo_sapiens
+GSE199373,GSM5968481,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,7324,79040,unknown,Homo_sapiens
+GSE199373,GSM5968482,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2111,69670,unknown,Rattus_norvegicus
+GSE199373,GSM5968483,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2732,80980,unknown,Homo_sapiens
+GSE199373,GSM5968485,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,1461,55775,unknown,Homo_sapiens
+GSE199373,GSM7040827,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,4840,81307,unknown,Homo_sapiens
+GSE199373,GSM7040828,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,3745,94676,unknown,Rattus_norvegicus
+GSE199373,GSM7040829,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,7732,110296,unknown,unknown
+GSE199373,GSM7040830,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2175,87815,unknown,Homo_sapiens
+GSE199373,GSM7040831,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2804,70905,unknown,Homo_sapiens
+GSE199373,GSM7040832,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,3400,94757,unknown,Rattus_norvegicus
+GSE199373,GSM7040833,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,6653,106627,unknown,Homo_sapiens
+GSE199373,GSM7040834,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2663,90606,unknown,Homo_sapiens
+GSE199373,GSM7040835,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,3365,76988,unknown,Rattus_norvegicus
+GSE199373,GSM7040836,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,2964,93640,unknown,Homo_sapiens
+GSE199373,GSM7040841,plasma cell myeloma,MONDO:0009693,,scATAC-Seq,unstated,Drop-seq,Drop-seq,5934,83013,unknown,Rattus_norvegicus
+GSE199595,GSM5975796,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,18117,33694,,
+GSE199639,GSM5979706,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE199639,GSM5979707,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,unknown,unknown
+GSE199639,GSM5979708,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE199639,GSM5979709,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE199639,GSM5979710,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE199639,GSM5979711,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE199639,GSM5979712,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE199639,GSM5979713,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,Drop-seq,Drop-seq,5001,,,
+GSE200557,GSM6037717,B-cell acute lymphoblastic leukemia,MONDO:0004947,,Igh Sequencing,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6917,36601,female,
+GSE200557,GSM6037720,B-cell acute lymphoblastic leukemia,MONDO:0004947,,RNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7161,36601,female,
+GSE200557,GSM6037723,B-cell acute lymphoblastic leukemia,MONDO:0004947,,Igh Sequencing,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9819,36601,male,
+GSE200557,GSM6037733,B-cell acute lymphoblastic leukemia,MONDO:0004947,,Igh Sequencing,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5255,36601,female,
+GSE200557,GSM6037743,B-cell acute lymphoblastic leukemia,MONDO:0004947,,Igh Sequencing,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7189,36601,male,
+GSE200690,GSM6042322,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4899,36601,male,
+GSE200690,GSM6042323,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4881,5,unknown,
+GSE200690,GSM6042324,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4894,12,unknown,
+GSE200690,GSM6042325,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4894,4,unknown,
+GSE200690,GSM6042326,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3305,36601,male,
+GSE200690,GSM6042327,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3225,3,unknown,
+GSE200690,GSM6042328,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3302,12,unknown,
+GSE200690,GSM6042329,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3302,7,unknown,
+GSE200984,GSM6047832,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,741,,unknown,unknown
+GSE200984,GSM6047833,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2264,,unknown,unknown
+GSE200984,GSM6047835,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,944,,unknown,unknown
+GSE200984,GSM6047836,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2072,,male,Homo_sapiens
+GSE200984,GSM6047837,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,539,,female,Homo_sapiens
+GSE200984,GSM6047838,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1779,,unknown,unknown
+GSE200984,GSM6047839,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,557,,male,Homo_sapiens
+GSE200984,GSM6047840,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),211,,male,Homo_sapiens
+GSE200984,GSM6398353,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1443,,female,Homo_sapiens
+GSE200984,GSM6398354,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5923,,male,Homo_sapiens
+GSE200984,GSM6398357,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2055,,male,Homo_sapiens
+GSE200984,GSM6398359,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1942,,male,Homo_sapiens
+GSE200984,GSM6398362,glioblastoma,MONDO:0018177,,snRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,910,,female,Homo_sapiens
+GSE201171,GSM6037717,B-cell acute lymphoblastic leukemia,MONDO:0004947,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6917,36601,female,
+GSE201171,GSM6037720,B-cell acute lymphoblastic leukemia,MONDO:0004947,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7161,36601,female,
+GSE201171,GSM6037723,B-cell acute lymphoblastic leukemia,MONDO:0004947,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9819,36601,male,
+GSE201171,GSM6037733,B-cell acute lymphoblastic leukemia,MONDO:0004947,,,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5255,36601,female,
+GSE201171,GSM6037743,B-cell acute lymphoblastic leukemia,MONDO:0004947,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7189,36601,male,
+GSE205704,GSM6217975,Richter syndrome,MONDO:0002083,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5453,36601,female,Homo_sapiens
+GSE205704,GSM6217976,Richter syndrome,MONDO:0002083,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,12480,36601,female,Homo_sapiens
+GSE205704,GSM6217981,Richter syndrome,MONDO:0002083,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9926,36601,female,Homo_sapiens
+GSE205704,GSM6217983,B-cell chronic lymphocytic leukemia,MONDO:0004948,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5622,36601,male,Homo_sapiens
+GSE205704,GSM6217984,Richter syndrome,MONDO:0002083,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5,,unknown,Homo_sapiens
+GSE205704,GSM6217986,Richter syndrome,MONDO:0002083,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,5,,unknown,Homo_sapiens
+GSE205704,GSM6217989,Richter syndrome,MONDO:0002083,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5,,female,Pan_troglodytes
+GSE205704,GSM6217992,B-cell chronic lymphocytic leukemia,MONDO:0004948,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5,,male,Homo_sapiens
+GSE207360,GSM6284971,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,60736,,
+GSE207360,GSM6284972,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,60736,,
+GSE207921,GSM6322991,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13471,33694,female,
+GSE210038,GSM6415687,clear cell renal carcinoma,MONDO:0005005,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4108,,female,Homo_sapiens
+GSE210038,GSM6415691,clear cell renal carcinoma,MONDO:0005005,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7738,,male,Homo_sapiens
+GSE210038,GSM6415693,clear cell renal carcinoma,MONDO:0005005,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9791,,male,Homo_sapiens
+GSE210038,GSM6415694,clear cell renal carcinoma,MONDO:0005005,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7324,,male,Homo_sapiens
+GSE210066,GSM6416064,intrahepatic cholangiocarcinoma,MONDO:0003210,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9220,33538,male,Homo_sapiens
+GSE210066,GSM6416066,intrahepatic cholangiocarcinoma,MONDO:0003210,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4278,33538,male,Homo_sapiens
+GSE210066,GSM6416067,intrahepatic cholangiocarcinoma,MONDO:0003210,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,737280,33538,male,Homo_sapiens
+GSE210679,GSM6435354,hepatocellular carcinoma,MONDO:0007256,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9504,33694,female,Homo_sapiens
+GSE211033,GSM6447687,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4978,33694,male,Homo_sapiens
+GSE211033,GSM6447688,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4928,33694,female,Homo_sapiens
+GSE211033,GSM6447689,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4530,33694,male,Homo_sapiens
+GSE211033,GSM6447690,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5762,33694,male,Homo_sapiens
+GSE211033,GSM6447691,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2983,33694,female,Homo_sapiens
+GSE211033,GSM6447694,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3035,33694,male,Homo_sapiens
+GSE211033,GSM6447695,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5177,33694,female,Homo_sapiens
+GSE211033,GSM6447696,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4800,33694,female,Homo_sapiens
+GSE211033,GSM6447697,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5148,33694,female,Homo_sapiens
+GSE211033,GSM6447698,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4923,33694,male,Homo_sapiens
+GSE211033,GSM6447699,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3835,33694,male,Homo_sapiens
+GSE211033,GSM6447700,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5478,33694,female,Homo_sapiens
+GSE211033,GSM6447701,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2974,33694,female,Homo_sapiens
+GSE211033,GSM6447702,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5820,33694,female,Homo_sapiens
+GSE211033,GSM6447703,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2950,33694,male,Homo_sapiens
+GSE211033,GSM6447704,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4014,33694,male,Homo_sapiens
+GSE211033,GSM6447705,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5000,33694,female,Homo_sapiens
+GSE211033,GSM6447706,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5924,33694,female,Homo_sapiens
+GSE211033,GSM6447707,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5464,33694,male,Homo_sapiens
+GSE211033,GSM6447708,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4667,33694,male,Homo_sapiens
+GSE211033,GSM6447709,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4986,33694,male,Homo_sapiens
+GSE211033,GSM6447710,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2878,33694,male,Homo_sapiens
+GSE211033,GSM6447711,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6653,33694,male,Homo_sapiens
+GSE211033,GSM6447713,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3956,33694,male,Homo_sapiens
+GSE211033,GSM6447714,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3860,33694,male,Homo_sapiens
+GSE211033,GSM6447715,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3868,33694,female,Homo_sapiens
+GSE211033,GSM6447716,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6102,33694,male,Homo_sapiens
+GSE211033,GSM6447717,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4305,33694,female,Homo_sapiens
+GSE211033,GSM6447718,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3442,33694,male,Homo_sapiens
+GSE211033,GSM6447719,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3781,33694,male,Homo_sapiens
+GSE211033,GSM6447720,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5523,33694,male,Homo_sapiens
+GSE211033,GSM6447721,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4712,33694,male,Homo_sapiens
+GSE211033,GSM6447722,chronic myelomonocytic leukemia,MONDO:0020311,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2990,33694,female,Homo_sapiens
+GSE211033,GSM6447723,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1622,33694,female,Homo_sapiens
+GSE211033,GSM6447725,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8386,33694,male,Homo_sapiens
+GSE212996,GSM6568244,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6218,36603,male,
+GSE212996,GSM6568247,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,5019,36601,male,Homo_sapiens
+GSE212996,GSM6568248,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,5117,36601,male,Homo_sapiens
+GSE212996,GSM6568251,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7,,unknown,unknown
+GSE212996,GSM6568252,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,7,,male,Homo_sapiens
+GSE212996,GSM6568253,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5017,36608,unknown,
+GSE212996,GSM6568254,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5116,36608,unknown,Homo_sapiens
+GSE212996,GSM6568255,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8855,36608,unknown,Homo_sapiens
+GSE212996,GSM6568256,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5019,36604,unknown,Homo_sapiens
+GSE212996,GSM6568257,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5117,36604,unknown,Homo_sapiens
+GSE212996,GSM6568258,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8855,36604,unknown,Homo_sapiens
+GSE212996,GSM6568259,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6236,36601,male,Homo_sapiens
+GSE212996,GSM6568260,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6443,36601,male,Homo_sapiens
+GSE212996,GSM6568261,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7582,36601,male,
+GSE212996,GSM6568262,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7,,male,unknown
+GSE212996,GSM6568265,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6236,36608,unknown,Homo_sapiens
+GSE212996,GSM6568266,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6442,36608,unknown,Homo_sapiens
+GSE212996,GSM6568267,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7582,36608,unknown,
+GSE213452,GSM6586315,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12934,58825,female,Homo_sapiens
+GSE213452,GSM6586316,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14834,58825,female,Homo_sapiens
+GSE213452,GSM6586317,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11081,58825,male,Homo_sapiens
+GSE213452,GSM6586318,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9723,58825,male,Homo_sapiens
+GSE213452,GSM6586319,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6357,58825,male,Homo_sapiens
+GSE213452,GSM6586320,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12887,58825,male,Homo_sapiens
+GSE213452,GSM6586323,cholangiocarcinoma,MONDO:0019087,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9226,58825,male,Homo_sapiens
+GSE216390,GSM6671887,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,3143,,female,Mus_musculus
+GSE216390,GSM6671888,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,30,,female,Mus_musculus
+GSE216390,GSM6671889,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,1160,31053,female,Mus_musculus
+GSE216390,GSM6671890,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,30,,female,Mus_musculus
+GSE216486,GSM6674754,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,5000,33694,unknown,Homo_sapiens
+GSE216486,GSM6674755,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,5000,33694,unknown,Homo_sapiens
+GSE216488,GSM6674766,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8011,33694,male,
+GSE216783,GSM6692760,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,unknown,Homo_sapiens
+GSE216783,GSM6692761,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216783,GSM6692764,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,male,Homo_sapiens
+GSE216783,GSM6692765,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,male,Homo_sapiens
+GSE216783,GSM6692766,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216783,GSM6692767,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216783,GSM6692768,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,male,Homo_sapiens
+GSE216783,GSM6692769,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216783,GSM6692770,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216783,GSM6692771,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2722316,36601,male,Homo_sapiens
+GSE216783,GSM6692773,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2706335,36601,male,Homo_sapiens
+GSE216783,GSM6692774,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2548809,36601,male,Homo_sapiens
+GSE216784,GSM6692760,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,unknown,Homo_sapiens
+GSE216784,GSM6692761,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216784,GSM6692764,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,male,Homo_sapiens
+GSE216784,GSM6692765,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,male,Homo_sapiens
+GSE216784,GSM6692766,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216784,GSM6692767,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216784,GSM6692768,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,male,Homo_sapiens
+GSE216784,GSM6692769,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE216784,GSM6692770,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,36601,female,Homo_sapiens
+GSE217922,GSM6729997,acute myeloblastic leukemia with maturation,MONDO:0020320,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2343,,male,Homo_sapiens
+GSE217924,GSM6729997,acute myeloid leukemia,MONDO:0018874,Bulk Transcriptomics,RNA-Seq,contradicted,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2343,,male,Homo_sapiens
+GSE218106,GSM6734710,syringomyelia,MONDO:0017987,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14775,21024,female,Rattus_norvegicus
+GSE218358,GSM6742888,rhabdomyosarcoma,MONDO:0005212,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3365,,male,Mus_musculus
+GSE218358,GSM6742889,rhabdomyosarcoma,MONDO:0005212,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1176,,male,Mus_musculus
+GSE218359,GSM6742894,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11831,,male,Homo_sapiens
+GSE218359,GSM6742895,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11831,27,unknown,unknown
+GSE218359,GSM6742896,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14182,36601,male,Homo_sapiens
+GSE218359,GSM6742897,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14180,27,unknown,unknown
+GSE218359,GSM6742898,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12816,,male,Homo_sapiens
+GSE218359,GSM7051765,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11430,,male,Homo_sapiens
+GSE218359,GSM7051766,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11430,27,unknown,unknown
+GSE218359,GSM7051767,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13971,,male,Homo_sapiens
+GSE218359,GSM7051768,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,CITE-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13970,15,unknown,unknown
+GSE220476,GSM8098621,acute lymphoblastic leukemia,MONDO:0004967,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7147,36601,female,Homo_sapiens
+GSE220476,GSM8098622,acute lymphoblastic leukemia,MONDO:0004967,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7657,36601,female,Homo_sapiens
+GSE220476,GSM8098623,acute lymphoblastic leukemia,MONDO:0004967,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12286,36601,female,Homo_sapiens
+GSE221592,GSM6889983,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12830,33695,unknown,Homo_sapiens
+GSE221592,GSM6889984,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13124,33695,unknown,Homo_sapiens
+GSE221592,GSM6889985,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,15535,33695,unknown,Homo_sapiens
+GSE221592,GSM6889986,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10240,33695,unknown,Homo_sapiens
+GSE221592,GSM6889987,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9289,33695,unknown,Homo_sapiens
+GSE221592,GSM6889988,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6174,33695,unknown,Homo_sapiens
+GSE221592,GSM6889989,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10595,33695,unknown,Homo_sapiens
+GSE221592,GSM6889990,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,15316,33695,unknown,Homo_sapiens
+GSE221592,GSM6889991,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6536,33695,unknown,Homo_sapiens
+GSE221592,GSM6889992,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10517,33695,unknown,Homo_sapiens
+GSE221592,GSM6889993,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8670,33695,unknown,Homo_sapiens
+GSE221592,GSM6889994,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10256,33695,unknown,Homo_sapiens
+GSE222901,GSM9229522,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,9481,31053,female,Mus_musculus
+GSE222901,GSM9229523,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,10031,31053,female,Mus_musculus
+GSE222901,GSM9229524,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,11731,31053,male,Mus_musculus
+GSE222901,GSM9229525,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,14295,31053,male,Mus_musculus
+GSE222901,GSM9229526,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,18190,31053,female,Mus_musculus
+GSE222901,GSM9229527,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,13955,31053,female,Mus_musculus
+GSE222901,GSM9229528,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,14646,31053,male,Mus_musculus
+GSE222901,GSM9229529,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,14992,31053,male,Mus_musculus
+GSE223702,GSM6975257,ameloblastoma,MONDO:0017795,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),4786,25236,female,Homo_sapiens
+GSE223702,GSM6975258,ameloblastoma,MONDO:0017795,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),6582,27478,male,Homo_sapiens
+GSE224149,GSM7016417,glioblastoma,MONDO:0018177,,snATAC-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),4402,,unknown,Homo_sapiens
+GSE224149,GSM7817780,glioblastoma,MONDO:0018177,,snATAC-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),837,,unknown,unknown
+GSE224334,GSM7019825,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5915,33538,female,Homo_sapiens
+GSE224334,GSM7019826,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7229,33538,female,Homo_sapiens
+GSE224334,GSM7019827,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5044,33538,female,Homo_sapiens
+GSE224334,GSM7019828,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4780,33538,unknown,unknown
+GSE224334,GSM7019829,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7923,33538,female,Homo_sapiens
+GSE224334,GSM7019830,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7152,33538,female,Homo_sapiens
+GSE224334,GSM7019831,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9437,33538,female,Homo_sapiens
+GSE224334,GSM7019833,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5656,33538,female,Homo_sapiens
+GSE224334,GSM7019834,ovarian clear cell cancer,MONDO:0000548,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4835,33538,unknown,Homo_sapiens
+GSE227070,GSM7091067,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10792,36601,unknown,Homo_sapiens
+GSE227070,GSM7091068,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6333,36601,unknown,Homo_sapiens
+GSE227070,GSM7091069,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11840,36601,unknown,Homo_sapiens
+GSE228325,GSM7118817,childhood acute myeloid leukemia,MONDO:0004996,,scATAC-Seq,unstated,Drop-seq,Drop-seq,1731,116208,unknown,Homo_sapiens
+GSE228325,GSM7118818,childhood acute myeloid leukemia,MONDO:0004996,,scATAC-Seq,unstated,Drop-seq,Drop-seq,5232,128382,unknown,Homo_sapiens
+GSE228500,GSM6047832,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v3,10x Chromium 3' v3,741,,unknown,unknown
+GSE228500,GSM6047833,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2264,,unknown,unknown
+GSE228500,GSM6047835,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v3,10x Chromium 3' v3,944,,unknown,unknown
+GSE228500,GSM6047836,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2072,,male,Homo_sapiens
+GSE228500,GSM6047837,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v3,10x Chromium 3' v3,539,,female,Homo_sapiens
+GSE228500,GSM6047838,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1779,,unknown,unknown
+GSE228500,GSM6047839,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v3,10x Chromium 3' v3,557,,male,Homo_sapiens
+GSE228500,GSM6047840,glioblastoma,MONDO:0018177,,Visium,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),211,,male,Homo_sapiens
+GSE228562,GSM7124094,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,31053,unknown,
+GSE228562,GSM7124095,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,31053,unknown,
+GSE228562,GSM7124096,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6794880,31053,unknown,
+GSE228562,GSM7124097,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3509855,32285,female,Mus_musculus
+GSE228562,GSM7124098,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3666440,32285,unknown,
+GSE228562,GSM7124100,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,3736643,32285,female,Mus_musculus
+GSE230375,GSM7809247,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11892,36601,male,Homo_sapiens
+GSE230375,GSM7809248,acoustic neuroma,MONDO:0001569,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12738,36601,male,Homo_sapiens
+GSE231577,GSM7291138,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10342,36601,male,
+GSE231920,GSM7306054,immunoglobulin G4-related sclerosing disease,MONDO:0017287,,Smart-Seq2,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10218,33538,male,Homo_sapiens
+GSE231920,GSM7306055,immunoglobulin G4-related sclerosing disease,MONDO:0017287,,Smart-Seq2,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8931,33538,male,Homo_sapiens
+GSE231920,GSM7306056,immunoglobulin G4-related sclerosing disease,MONDO:0017287,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8607,33538,male,Homo_sapiens
+GSE232253,GSM7324710,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1832576,25209,male,Mus_musculus
+GSE232253,GSM7324711,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1572972,25209,male,Mus_musculus
+GSE232253,GSM7324712,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1513618,25209,unknown,Mus_musculus
+GSE232253,GSM7324713,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2146802,25209,male,Mus_musculus
+GSE232938,GSM7395264,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13070,36601,unknown,Homo_sapiens
+GSE232938,GSM7395265,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11659,36601,unknown,Homo_sapiens
+GSE233741,GSM7433714,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,24709,,unknown,Homo_sapiens
+GSE233741,GSM7433715,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,44006,,unknown,Homo_sapiens
+GSE234359,GSM7465933,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,2928,36601,male,Homo_sapiens
+GSE234359,GSM7465934,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,2719,36601,male,Homo_sapiens
+GSE235058,GSM7494135,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3977,33538,male,
+GSE239542,GSM7667099,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,58395,26962,female,
+GSE239651,GSM8118568,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4151,,,
+GSE239651,GSM8118569,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,Drop-seq,Drop-seq,1291,,,
+GSE239651,GSM8118570,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,12972,,,
+GSE239651,GSM8118571,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,11652,,,
+GSE241071,GSM7714790,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),13106,,unknown,Homo_sapiens
+GSE241071,GSM7714792,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),15167,,unknown,Homo_sapiens
+GSE241071,GSM7714793,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),6057,,unknown,Homo_sapiens
+GSE241071,GSM7714794,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),13597,,unknown,Homo_sapiens
+GSE241071,GSM7714795,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),16795,,unknown,Homo_sapiens
+GSE241071,GSM7714796,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),5232,,unknown,Homo_sapiens
+GSE241071,GSM7714797,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),10403,,unknown,Homo_sapiens
+GSE241737,GSM7734660,atypical teratoid rhabdoid tumor,MONDO:0020560,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6077,32738,male,Homo_sapiens
+GSE244946,GSM7832485,small cell lung carcinoma,MONDO:0008433,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,6179,36601,female,
+GSE244946,GSM7832486,small cell lung carcinoma,MONDO:0008433,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,4729,36601,female,
+GSE244946,GSM7832487,small cell lung carcinoma,MONDO:0008433,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7419,36601,female,
+GSE245111,GSM7836929,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,Drop-seq,Drop-seq,39721,24649,unknown,
+GSE245111,GSM7836930,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,Drop-seq,Drop-seq,30242,25343,unknown,
+GSE245439,GSM7842818,kidney Wilms tumor,MONDO:0019004,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9651,27998,male,Mus_musculus
+GSE245674,GSM7846769,"diffuse midline glioma, H3 K27M-mutant",MONDO:0957196,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7410,36601,female,
+GSE245674,GSM7846770,anaplastic ependymoma,MONDO:0016700,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4276,36601,female,Homo_sapiens
+GSE246662,GSM7874175,gastric cancer,MONDO:0001056,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6776,,male,Homo_sapiens
+GSE246662,GSM7874176,gastric cancer,MONDO:0001056,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,27615,,male,Homo_sapiens
+GSE246662,GSM7874177,gastric cancer,MONDO:0001056,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,30258,,male,Homo_sapiens
+GSE247521,GSM7891404,cystic echinococcosis,MONDO:0018408,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13246,54838,female,Mus_musculus
+GSE247521,GSM7891405,cystic echinococcosis,MONDO:0018408,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12840,54838,unknown,
+GSE247521,GSM7891408,cystic echinococcosis,MONDO:0018408,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5024,54838,unknown,
+GSE247521,GSM7891410,cystic echinococcosis,MONDO:0018408,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),4203,54838,unknown,
+GSE247521,GSM7891411,cystic echinococcosis,MONDO:0018408,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5593,54838,unknown,
+GSE247521,GSM7891412,cystic echinococcosis,MONDO:0018408,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),7745,54838,unknown,
+GSE248229,GSM7908790,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10459,33538,unknown,Homo_sapiens
+GSE248229,GSM7908791,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7529,33538,unknown,Homo_sapiens
+GSE248229,GSM8336056,Sezary syndrome,MONDO:0017844,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4700,33538,male,Homo_sapiens
+GSE248230,GSM7908792,Sezary syndrome,MONDO:0017844,,Visium,unstated,10x Chromium 3' v2,10x Chromium 3' v2,510,36601,female,
+GSE248231,GSM7908792,Sezary syndrome,MONDO:0017844,Spatial Transcriptomics,Visium,contradicted,10x Chromium 3' v2,10x Chromium 3' v2,510,36601,female,
+GSE250077,GSM7973578,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2236148,36613,female,Homo_sapiens
+GSE250077,GSM7973580,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1364843,36613,male,Homo_sapiens
+GSE250077,GSM7973582,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1192906,36613,female,Homo_sapiens
+GSE250505,GSM7979972,dengue disease,MONDO:0005502,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9741,27998,male,Mus_musculus
+GSE250505,GSM7979973,dengue disease,MONDO:0005502,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13177,27998,male,Mus_musculus
+GSE250505,GSM7979974,dengue disease,MONDO:0005502,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13187,27998,male,Mus_musculus
+GSE250505,GSM7979978,dengue disease,MONDO:0005502,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9918,27998,male,Mus_musculus
+GSE250505,GSM7979979,dengue disease,MONDO:0005502,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12160,27998,male,Mus_musculus
+GSE250505,GSM7979980,dengue disease,MONDO:0005502,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7246,27998,female,Mus_musculus
+GSE251679,GSM7985977,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10539,33538,male,Homo_sapiens
+GSE251679,GSM7985978,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9530,33538,uncertain,Homo_sapiens
+GSE252449,GSM8001559,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,9057,,unknown,unknown
+GSE252449,GSM8001560,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,9930,,unknown,unknown
+GSE252449,GSM8001561,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,4818,,unknown,unknown
+GSE252449,GSM8001562,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,5963,,unknown,unknown
+GSE252449,GSM8001563,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,7322,,unknown,unknown
+GSE252449,GSM8001564,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,5761,,unknown,unknown
+GSE252449,GSM8001565,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v1,10x Chromium 3' v1,9246,,unknown,unknown
+GSE252656,GSM8004879,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,2495,,unknown,unknown
+GSE252656,GSM8004880,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,3237,,unknown,unknown
+GSE252656,GSM8004881,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,2745,,unknown,unknown
+GSE252656,GSM8004882,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,3124,,unknown,unknown
+GSE252656,GSM8004883,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,3427,,unknown,unknown
+GSE252656,GSM8004884,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,4564,,unknown,unknown
+GSE252656,GSM8004885,medulloblastoma,MONDO:0007959,,Drop-Seq 3' Biased Cell-Indexed Cdna Libraries,unstated,Drop-seq,Drop-seq,2856,,unknown,unknown
+GSE252656,GSM8004886,medulloblastoma,MONDO:0007959,,Drop-Seq 3' Biased Cell-Indexed Cdna Libraries,unstated,Drop-seq,Drop-seq,2566,,unknown,unknown
+GSE252656,GSM8004887,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,2412,,unknown,unknown
+GSE252656,GSM8004888,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,3401,,unknown,unknown
+GSE252656,GSM8004889,medulloblastoma,MONDO:0007959,,Drop-Seq,unstated,Drop-seq,Drop-seq,2722,,unknown,unknown
+GSE253163,GSM8015426,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,RNA-Seq,unstated,Drop-seq,Drop-seq,14360,68886,male,Mus_musculus
+GSE253164,GSM8015427,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,Chromatin Accessibility,ATAC-Seq,contradicted,Drop-seq,Drop-seq,8103,109552,unknown,unknown
+GSE253165,GSM8015426,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scATAC-Seq,unstated,Drop-seq,Drop-seq,14360,68886,male,Mus_musculus
+GSE253165,GSM8015427,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scATAC-Seq,unstated,Drop-seq,Drop-seq,8103,109552,unknown,unknown
+GSE253648,GSM8024539,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14981,36601,female,Homo_sapiens
+GSE253648,GSM8024540,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13060,36601,female,Homo_sapiens
+GSE253648,GSM8024541,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14908,36601,female,Homo_sapiens
+GSE253648,GSM8024542,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,15623,36601,female,Homo_sapiens
+GSE253648,GSM8024543,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12389,36601,female,Homo_sapiens
+GSE253702,GSM8026725,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,737280,36604,male,Homo_sapiens
+GSE253702,GSM8026726,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,737280,36604,male,Homo_sapiens
+GSE253702,GSM8026727,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,737280,36604,male,Homo_sapiens
+GSE253702,GSM8026728,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,737280,36604,male,Homo_sapiens
+GSE253702,GSM8026729,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,737280,36604,male,Homo_sapiens
+GSE253702,GSM8026730,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,737280,36604,male,Homo_sapiens
+GSE253828,GSM8028452,tuberculosis,MONDO:0018076,,Sctcr-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7598,36601,male,Homo_sapiens
+GSE253828,GSM8028453,tuberculosis,MONDO:0018076,,Sctcr-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7602,36601,male,Homo_sapiens
+GSE253828,GSM8028454,tuberculosis,MONDO:0018076,,Sctcr-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,13023,36601,male,Homo_sapiens
+GSE253828,GSM8028455,tuberculosis,MONDO:0018076,,Sctcr-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,11827,33538,female,Homo_sapiens
+GSE253828,GSM8028456,tuberculosis,MONDO:0018076,,Sctcr-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5617,36601,male,Homo_sapiens
+GSE254498,GSM8043462,clear cell renal carcinoma,MONDO:0005005,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10450,33538,male,Homo_sapiens
+GSE254762,GSM8057361,gastrointestinal stromal tumor,MONDO:0011719,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),6845,,male,Homo_sapiens
+GSE256066,GSM8084968,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8527,33538,female,Homo_sapiens
+GSE261163,GSM8136769,MHC class II deficiency,MONDO:0008855,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7179,32523,unknown,Danio_rerio
+GSE261163,GSM8136770,MHC class II deficiency,MONDO:0008855,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9772,32523,unknown,Danio_rerio
+GSE261163,GSM8136771,MHC class II deficiency,MONDO:0008855,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4974,32523,unknown,Danio_rerio
+GSE261371,GSM8141550,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,17128,163059,male,Homo_sapiens
+GSE261371,GSM8141551,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,15440,97660,male,Homo_sapiens
+GSE261371,GSM8141552,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,17101,4,unknown,unknown
+GSE261371,GSM8141553,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,17117,13,unknown,unknown
+GSE263099,GSM8185766,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,14664,32285,female,Mus_musculus
+GSE263099,GSM8185767,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,13693,32285,male,Mus_musculus
+GSE263099,GSM8185769,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,14659,32285,male,Mus_musculus
+GSE263859,GSM8200275,sinus histiocytosis with massive lymphadenopathy,MONDO:0006412,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6385,58825,female,Homo_sapiens
+GSE263860,GSM8200276,sinus histiocytosis with massive lymphadenopathy,MONDO:0006412,Spatial Transcriptomics,Visium,contradicted,10x Chromium 3' v2,10x Chromium 3' v2,3472,58825,female,Homo_sapiens
+GSE264087,GSM8210161,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2392,32287,female,Mus_musculus
+GSE264087,GSM8210163,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7595,32287,female,Mus_musculus
+GSE264087,GSM8210165,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7428,32287,female,Mus_musculus
+GSE264194,GSM8213862,proliferative glomerulonephritis,MONDO:0003134,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11680,,male,Mus_musculus
+GSE264194,GSM8213863,proliferative glomerulonephritis,MONDO:0003134,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,17923,,male,Mus_musculus
+GSE264194,GSM8213864,proliferative glomerulonephritis,MONDO:0003134,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7338,,uncertain,Mus_musculus
+GSE264194,GSM8213865,proliferative glomerulonephritis,MONDO:0003134,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12663,,unknown,
+GSE264567,GSM8222789,rhabdomyosarcoma,MONDO:0005212,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3563,55574,female,Mus_musculus
+GSE264567,GSM8222793,rhabdomyosarcoma,MONDO:0005212,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3490,,female,Mus_musculus
+GSE266222,GSM8242558,Potocki-Shaffer syndrome,MONDO:0011022,,Single-Nuclei Rna-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2963,31053,unknown,unknown
+GSE266222,GSM8242559,Potocki-Shaffer syndrome,MONDO:0011022,,Single-Nuclei Rna-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,746,31053,male,Mus_musculus
+GSE266303,GSM8244646,isolated focal cortical dysplasia type II,MONDO:0011818,,snATAC-Seq,unstated,Drop-seq,Drop-seq,472817,194656,unknown,Homo_sapiens
+GSE266303,GSM8244649,isolated focal cortical dysplasia type II,MONDO:0011818,,snATAC-Seq,unstated,Drop-seq,Drop-seq,420754,188539,male,Homo_sapiens
+GSE266305,GSM8244661,isolated focal cortical dysplasia type II,MONDO:0011818,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3098997,33694,female,Homo_sapiens
+GSE266305,GSM8244662,isolated focal cortical dysplasia type II,MONDO:0011818,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3088885,33694,female,Homo_sapiens
+GSE266305,GSM8244663,isolated focal cortical dysplasia type II,MONDO:0011818,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2774811,33694,male,Homo_sapiens
+GSE266305,GSM8244665,isolated focal cortical dysplasia type II,MONDO:0011818,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2482258,33694,male,Homo_sapiens
+GSE266305,GSM8244666,isolated focal cortical dysplasia type II,MONDO:0011818,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2959441,33694,female,Homo_sapiens
+GSE266308,GSM8244646,isolated focal cortical dysplasia type II,MONDO:0011818,,scATAC-Seq,unstated,Drop-seq,Drop-seq,472817,194656,unknown,Homo_sapiens
+GSE266308,GSM8244649,isolated focal cortical dysplasia type II,MONDO:0011818,,scATAC-Seq,unstated,Drop-seq,Drop-seq,420754,188539,male,Homo_sapiens
+GSE268160,GSM8286676,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scATAC-Seq,unstated,Drop-seq,Drop-seq,15365,145011,female,Mus_musculus
+GSE268160,GSM8286677,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scATAC-Seq,unstated,Drop-seq,Drop-seq,20000,152043,female,Mus_musculus
+GSE268160,GSM8286678,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scATAC-Seq,unstated,Drop-seq,Drop-seq,10172,121396,uncertain,Mus_musculus
+GSE268314,GSM8289595,Duchenne muscular dystrophy,MONDO:0010679,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6429,32285,unknown,unknown
+GSE268690,GSM8296525,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1244564,32285,female,Mus_musculus
+GSE268690,GSM8296526,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1843132,32285,female,Mus_musculus
+GSE268835,GSM8300988,bone giant cell tumor,MONDO:0005674,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9351,,female,Homo_sapiens
+GSE269572,GSM8322368,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8604,36601,unknown,Homo_sapiens
+GSE269572,GSM8322369,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8594,36601,unknown,Homo_sapiens
+GSE269572,GSM8322370,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8580,36601,unknown,Homo_sapiens
+GSE269572,GSM8322371,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4969,36601,unknown,Homo_sapiens
+GSE269572,GSM8322372,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4945,36601,unknown,Homo_sapiens
+GSE269572,GSM8322373,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4926,36601,unknown,Homo_sapiens
+GSE269572,GSM8322374,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3773,36601,unknown,Homo_sapiens
+GSE269572,GSM8322375,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3793,36601,unknown,Homo_sapiens
+GSE269572,GSM8322376,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3592,36601,unknown,Homo_sapiens
+GSE269572,GSM8322377,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3798,36601,unknown,Homo_sapiens
+GSE269572,GSM8322378,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3799,36601,unknown,Homo_sapiens
+GSE270148,GSM9350671,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scATAC-Seq,unstated,Drop-seq,Drop-seq,20002,141174,unknown,
+GSE270292,GSM8339158,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2807,36601,unknown,Homo_sapiens
+GSE270292,GSM8339159,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3046,36601,unknown,Homo_sapiens
+GSE270292,GSM8339160,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,586,68886,unknown,Mus_musculus
+GSE270292,GSM8339161,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,392,36601,male,unknown
+GSE270292,GSM8339162,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1933,36601,unknown,unknown
+GSE270292,GSM9302159,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4223,36601,unknown,Homo_sapiens
+GSE270292,GSM9302160,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,49,36601,unknown,Homo_sapiens
+GSE270292,GSM9302161,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1511,36601,unknown,Homo_sapiens
+GSE270292,GSM9302162,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1842,36601,male,Homo_sapiens
+GSE270292,GSM9302163,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,Note-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2296,36601,male,Homo_sapiens
+GSE270981,GSM8366582,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4662,31053,unknown,unknown
+GSE270981,GSM8366583,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3291,31053,unknown,
+GSE271543,GSM8978587,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1067,36601,unknown,unknown
+GSE271543,GSM8978589,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4783,36601,unknown,unknown
+GSE272816,GSM8412996,VEXAS syndrome,MONDO:0026777,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4610,36601,male,Homo_sapiens
+GSE273274,GSM8425586,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14531,36601,male,Homo_sapiens
+GSE273274,GSM8425587,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9965,36601,male,Homo_sapiens
+GSE273274,GSM8425588,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12578,36601,male,Homo_sapiens
+GSE273274,GSM8425589,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9614,36601,male,Homo_sapiens
+GSE273274,GSM8425590,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8522,36601,male,Homo_sapiens
+GSE273274,GSM8425591,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,15089,36601,male,Homo_sapiens
+GSE273275,GSM8425592,glioblastoma,MONDO:0018177,,Strna-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),4233,36601,male,Homo_sapiens
+GSE273275,GSM8425593,glioblastoma,MONDO:0018177,,Spatial Transcriptomics,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3869,36601,male,Homo_sapiens
+GSE273941,GSM8440146,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10000,36601,female,
+GSE274381,GSM8448139,chronic thromboembolic pulmonary hypertension,MONDO:0013024,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,10892,36601,female,
+GSE274381,GSM8448140,chronic thromboembolic pulmonary hypertension,MONDO:0013024,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7835,36601,male,
+GSE275259,GSM8473709,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,12198,61487,unknown,unknown
+GSE275259,GSM8473710,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,9560,61487,unknown,unknown
+GSE275259,GSM8473711,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8028,61487,unknown,unknown
+GSE275259,GSM8473712,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,17731,61487,unknown,unknown
+GSE275259,GSM8473713,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,12715,61487,unknown,unknown
+GSE275259,GSM8473714,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,7624,61487,male,Homo_sapiens
+GSE275552,GSM8479454,Sezary syndrome,MONDO:0017844,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4444,36601,female,Homo_sapiens
+GSE277066,GSM8513441,hepatocellular carcinoma,MONDO:0007256,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),12631,32589,male,Mus_musculus
+GSE277066,GSM8513442,hepatocellular carcinoma,MONDO:0007256,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),13678,32589,male,Mus_musculus
+GSE277066,GSM8513443,hepatocellular carcinoma,MONDO:0007256,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),12152,,male,Mus_musculus
+GSE277066,GSM8513444,hepatocellular carcinoma,MONDO:0007256,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),15951,32589,male,Mus_musculus
+GSE277066,GSM8513446,hepatocellular carcinoma,MONDO:0007256,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),12420,32589,male,Mus_musculus
+GSE277602,GSM8525855,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10656,68886,male,Homo_sapiens
+GSE277602,GSM8525856,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10081,36601,male,Mus_musculus
+GSE277602,GSM8525857,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13650,68886,unknown,unknown
+GSE277604,GSM8525894,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10656,68886,male,Homo_sapiens
+GSE277604,GSM8525895,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,24330,68886,male,Homo_sapiens
+GSE277604,GSM8525896,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,14744,68886,male,Homo_sapiens
+GSE277604,GSM8525897,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13132,68886,male,Homo_sapiens
+GSE277604,GSM8525898,ADNP-related multiple congenital anomalies - intellectual disability - autism spectrum disorder,MONDO:0014379,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13941,68886,male,Homo_sapiens
+GSE278284,GSM8543376,T-cell childhood acute lymphocytic leukemia,MONDO:0000871,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10361,36601,unknown,Homo_sapiens
+GSE279118,GSM8561764,acute myeloblastic leukemia without maturation,MONDO:0005224,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2705,,,
+GSE279118,GSM8561765,acute myeloblastic leukemia without maturation,MONDO:0005224,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,3822,,,
+GSE280054,GSM8586579,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 5' v3,10x Chromium 5' v3,9864,38606,male,Homo_sapiens
+GSE280054,GSM8586580,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,10x Chromium 5' v3,10x Chromium 5' v3,11780,38606,male,Homo_sapiens
+GSE282611,GSM8647165,embryonal rhabdomyosarcoma,MONDO:0009993,,Snatacseq,unstated,Drop-seq,Drop-seq,512681,103409,unknown,Homo_sapiens
+GSE283496,GSM8663997,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9310,36604,male,unknown
+GSE283496,GSM8663999,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,12982,36601,male,Homo_sapiens
+GSE283496,GSM8664000,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13281,36601,female,Mus_musculus
+GSE285246,GSM8699165,idiopathic pulmonary fibrosis,MONDO:0800504,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,2899,33538,male,Homo_sapiens
+GSE285246,GSM8699170,idiopathic pulmonary fibrosis,MONDO:0800504,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2413,33538,male,Homo_sapiens
+GSE285246,GSM8699171,idiopathic pulmonary fibrosis,MONDO:0800504,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v3,10x Chromium 3' v3,2386,33538,male,Homo_sapiens
+GSE285246,GSM8699172,idiopathic pulmonary fibrosis,MONDO:0800504,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2459,33538,male,Homo_sapiens
+GSE285246,GSM8699173,idiopathic pulmonary fibrosis,MONDO:0800504,Spatial Transcriptomics,Spatial Transcriptomics,contradicted,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),2130,33538,male,Homo_sapiens
+GSE285461,GSM8702816,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,16766,36601,female,
+GSE285461,GSM8702817,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10311,36601,female,
+GSE285461,GSM8702818,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11286,36601,unknown,Homo_sapiens
+GSE285461,GSM8702819,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11746,36601,unknown,Homo_sapiens
+GSE285461,GSM8702820,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,21249,36601,unknown,Homo_sapiens
+GSE285461,GSM8702821,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5279,36601,unknown,Homo_sapiens
+GSE285461,GSM8702822,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,13931,36601,unknown,Homo_sapiens
+GSE285461,GSM8702823,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,9077,36601,unknown,Homo_sapiens
+GSE285461,GSM8702824,"chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0011996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7397,36601,unknown,Homo_sapiens
+GSE285543,GSM8704379,glioblastoma,MONDO:0018177,,RNA-Seq,unstated,Drop-seq,Drop-seq,62710,22122,female,Homo_sapiens
+GSE285544,GSM8704380,glioblastoma,MONDO:0018177,,RNA-Seq,unstated,Drop-seq,Drop-seq,62710,11894,female,Homo_sapiens
+GSE286072,GSM8717387,hepatoblastoma,MONDO:0018666,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10374,31053,male,Mus_musculus
+GSE286911,GSM8733685,IgA glomerulonephritis,MONDO:0005342,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2233516,36601,unknown,unknown
+GSE286911,GSM8733686,IgA glomerulonephritis,MONDO:0005342,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2236978,36601,unknown,unknown
+GSE286911,GSM8733687,IgA glomerulonephritis,MONDO:0005342,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1842283,36601,uncertain,
+GSE286911,GSM8733688,IgA glomerulonephritis,MONDO:0005342,,snRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1914545,36601,male,
+GSE288099,GSM8758977,neuroblastoma,MONDO:0005072,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1466644,37468,unknown,Homo_sapiens
+GSE288099,GSM8758978,neuroblastoma,MONDO:0005072,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1566011,37468,unknown,Homo_sapiens
+GSE288099,GSM8758984,neuroblastoma,MONDO:0005072,,Single-Cell Rna-Seq (Scrna-Seq),unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1484192,37468,unknown,Homo_sapiens
+GSE288751,GSM8774602,perinatal necrotizing enterocolitis,MONDO:0004639,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,11946,32285,uncertain,Mus_musculus
+GSE289201,GSM8787027,childhood acute myeloid leukemia,MONDO:0004996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5895,36601,male,Homo_sapiens
+GSE289201,GSM8787028,childhood acute myeloid leukemia,MONDO:0004996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6389,36601,male,Homo_sapiens
+GSE289201,GSM8787029,childhood acute myeloid leukemia,MONDO:0004996,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4455,36601,male,Homo_sapiens
+GSE289849,GSM8800200,childhood acute myeloid leukemia,MONDO:0004996,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,8333,36601,female,Homo_sapiens
+GSE289849,GSM8800214,childhood acute myeloid leukemia,MONDO:0004996,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,8736,36601,male,Homo_sapiens
+GSE289849,GSM8800215,childhood acute myeloid leukemia,MONDO:0004996,,scRNA-Seq,unstated,10x Chromium 5' v1,10x Chromium 5' v1,7286,36601,male,Homo_sapiens
+GSE291080,GSM8828843,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,20540,36601,unknown,unknown
+GSE291080,GSM8828846,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8151,36601,unknown,unknown
+GSE291080,GSM8828847,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6525,36601,unknown,unknown
+GSE291080,GSM8828849,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,10945,36601,unknown,unknown
+GSE291080,GSM8828850,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5107,36601,unknown,unknown
+GSE291080,GSM8828856,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7125,36601,unknown,unknown
+GSE291080,GSM8828859,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6328,36601,unknown,unknown
+GSE291080,GSM8828860,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5779,36601,unknown,unknown
+GSE291080,GSM8828863,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8335,36601,unknown,unknown
+GSE291080,GSM8828865,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8830,36601,unknown,unknown
+GSE291080,GSM8828867,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8473,36601,unknown,unknown
+GSE291080,GSM8828868,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2153,36601,unknown,unknown
+GSE291080,GSM8828869,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,2573,36601,unknown,unknown
+GSE291080,GSM8828871,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5692,36601,unknown,unknown
+GSE291080,GSM8828874,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6892,36601,unknown,unknown
+GSE291080,GSM8828875,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6745,36601,unknown,unknown
+GSE291080,GSM8828876,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8919,36601,unknown,unknown
+GSE291080,GSM8828877,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5739,36601,unknown,unknown
+GSE291080,GSM8828879,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6784,36601,unknown,unknown
+GSE292979,GSM8872098,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1062375,36601,male,Homo_sapiens
+GSE292979,GSM8872100,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1016824,36601,female,Homo_sapiens
+GSE292979,GSM8872101,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1274573,36601,unknown,unknown
+GSE292979,GSM8872102,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1910097,36601,female,Homo_sapiens
+GSE292979,GSM8872103,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1140507,36601,female,Homo_sapiens
+GSE292979,GSM8872104,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1264665,36601,female,Homo_sapiens
+GSE292979,GSM8872106,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,1189387,36601,unknown,unknown
+GSE294207,GSM8900388,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,snRNA-Seq,unstated,Drop-seq,Drop-seq,5184,17896,unknown,Drosophila_melanogaster
+GSE294207,GSM8900390,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,snRNA-Seq,unstated,10x Chromium 3' v2,10x Chromium 3' v2,4731,17896,unknown,Drosophila_melanogaster
+GSE294571,GSM8911546,oral cavity squamous cell carcinoma,MONDO:0004958,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,6495,32287,male,
+GSE294571,GSM8911547,oral cavity squamous cell carcinoma,MONDO:0004958,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5817,32287,male,
+GSE295066,GSM8941466,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),5582,37468,unknown,Homo_sapiens
+GSE295066,GSM8941467,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),3220,37468,unknown,Homo_sapiens
+GSE295066,GSM8941468,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1410,37468,unknown,Homo_sapiens
+GSE295066,GSM8941469,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),1183,37468,unknown,Homo_sapiens
+GSE298119,GSM9008678,preeclampsia,MONDO:0005081,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,24546,38606,,
+GSE298119,GSM9008679,preeclampsia,MONDO:0005081,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,7765,38606,,
+GSE299051,GSM9031941,palmoplantar pustulosis,MONDO:0015597,Spatial Transcriptomics,Visium HD,contradicted,Drop-seq,Drop-seq,2199527,,unknown,
+GSE299051,GSM9031942,palmoplantar pustulosis,MONDO:0015597,Spatial Transcriptomics,Visium HD,contradicted,Drop-seq,Drop-seq,2013682,37082,unknown,
+GSE300370,GSM9059200,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8480,32289,unknown,unknown
+GSE300370,GSM9059202,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),27769,33702,unknown,unknown
+GSE300370,GSM9059204,acute myeloid leukemia,MONDO:0018874,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),35401,33702,unknown,unknown
+GSE302587,GSM9107038,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,5939,32286,unknown,
+GSE304661,GSM9154925,plasma cell myeloma,MONDO:0009693,,scRNA-Seq,unstated,10x Chromium 3' v2 or 10x Chromium 5' v1,10x Chromium 3' v2 or 10x Chromium 5' v1,13646,36601,female,
+GSE307736,GSM9230079,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,8080,32285,female,Mus_musculus
+GSE307736,GSM9230080,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5258,32285,female,Mus_musculus
+GSE307736,GSM9230081,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5386,32285,female,Mus_musculus
+GSE307736,GSM9230084,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,4926,32285,female,Mus_musculus
+GSE307736,GSM9230085,glioblastoma,MONDO:0018177,,scRNA-Seq,unstated,10x Chromium 3' v3,10x Chromium 3' v3,5502,32285,female,Mus_musculus
+GSE310345,GSM9294298,MHC class II deficiency,,,snRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),16833,32520,unknown,Danio_rerio
+GSE310345,GSM9294299,MHC class II deficiency,,,snRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),18437,32520,unknown,Danio_rerio
+GSE312591,GSM9349800,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),4737,18082,unknown,unknown
+GSE312591,GSM9349802,systemic sclerosis,MONDO:0005100,,scRNA-Seq,unstated,10x Chromium 3' v4 (GEM-X),10x Chromium 3' v4 (GEM-X),5360,18082,unknown,Homo_sapiens
+GSE314191,GSM8679747,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,62755,,female,Homo_sapiens
+GSE48138,GSM1169513,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,Drop-seq,Drop-seq,4,,male,
+GSE48138,GSM1169514,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,Drop-seq,Drop-seq,4,,male,
+GSE48138,GSM1169516,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",,Bulk Transcriptomics,RNA-Seq,contradicted,Drop-seq,Drop-seq,4,,uncertain,
+GSE81750,GSM2175066,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,97,,unknown,unknown
+GSE81750,GSM2175070,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,142,,unknown,unknown
+GSE81750,GSM2175072,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,159,,unknown,unknown
+GSE81750,GSM2175074,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,101,,unknown,unknown
+GSE81750,GSM2175087,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,71,,unknown,unknown
+GSE81750,GSM2175088,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,101,,unknown,unknown
+GSE81750,GSM2175089,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,131,,unknown,unknown
+GSE81750,GSM2175092,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,98,,unknown,unknown
+GSE81750,GSM2175094,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,66,,unknown,unknown
+GSE81750,GSM2175096,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,139,,unknown,unknown
+GSE81750,GSM2175099,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,152,,unknown,unknown
+GSE81750,GSM2544720,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,177,,unknown,unknown
+GSE81750,GSM2544724,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,160,,unknown,unknown
+GSE81750,GSM2544726,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,124,,unknown,unknown
+GSE81750,GSM2544733,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,1168,,unknown,unknown
+GSE81884,GSM2175066,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,97,,unknown,unknown
+GSE81884,GSM2175070,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,142,,unknown,unknown
+GSE81884,GSM2175072,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,159,,unknown,unknown
+GSE81884,GSM2175074,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,101,,unknown,unknown
+GSE81884,GSM2175087,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,71,,unknown,unknown
+GSE81884,GSM2175088,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,101,,unknown,unknown
+GSE81884,GSM2175089,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,131,,unknown,unknown
+GSE81884,GSM2175092,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,98,,unknown,unknown
+GSE81884,GSM2175094,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,66,,unknown,unknown
+GSE81884,GSM2175096,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,139,,unknown,unknown
+GSE81884,GSM2175099,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,152,,unknown,unknown
+GSE81884,GSM2544720,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,177,,unknown,unknown
+GSE81884,GSM2544724,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,160,,unknown,unknown
+GSE81884,GSM2544726,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,124,,unknown,unknown
+GSE81884,GSM2544733,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,1168,,unknown,unknown
+GSE81884,GSM2544739,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,2215,,unknown,unknown
+GSE81884,GSM2544740,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,1408,,unknown,unknown
+GSE81884,GSM2544742,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,Drop-Seq,unstated,Drop-seq,Drop-seq,2595,,unknown,unknown
+GSE96827,GSM2544739,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2215,,unknown,unknown
+GSE96827,GSM2544740,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,1408,,unknown,unknown
+GSE96827,GSM2544742,"blast phase chronic myelogenous leukemia, BCR-ABL1 positive",MONDO:0006115,,scRNA-Seq,unstated,Drop-seq,Drop-seq,2595,,unknown,unknown

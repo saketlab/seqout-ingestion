@@ -1,0 +1,60 @@
+# token	kind	notes
+# kind: inducer (Cre/Tet drivers, not the perturbation), stimulus, exclude (generic chemical, not a perturbation)
+token	kind
+doxycycline	inducer
+tamoxifen	inducer
+4-hydroxytamoxifen	inducer
+tetracycline	inducer
+lipopolysaccharide	stimulus
+ionomycin	stimulus
+water	exclude
+ethanol	exclude
+methanol	exclude
+glucose	exclude
+sucrose	exclude
+oxygen	exclude
+glycerol	exclude
+4-oht	inducer
+cholesterol	exclude
+glutamine	exclude
+thyroid	exclude
+albumin	exclude
+# carbon/hydrogen stay compounds despite generic-sounding names: ChEBI has no
+# single-word entry for "carbon tetrachloride" or "hydrogen peroxide" (multi-
+# word names are dropped, see lexicon.py), so the standalone token is the only
+# way this lexicon catches CCl4 liver-injury and H2O2 oxidative-stress
+# treatments, two of the most common real perturbations in this corpus.
+# arginine matches a real "Arginine Inhibition" treatment.
+#
+# honey/ginkgo: found via title-tokenization audit, not sample treatment
+# values -- both were literally the study's organism, not a perturbation
+# ("Ginkgo biloba" plant scRNA-seq; a "honey bee" pupa atlas). ginkgo IS a
+# real (if rare) supplement in other corpora; re-check before reusing this
+# override elsewhere.
+honey	exclude
+ginkgo	exclude
+# platelet* in this corpus's real treatment values means depletion/removal
+# (sample prep: "Platelet Depleted", "Platelet Removal"), never a platelet
+# treatment applied to cells.
+platelets	exclude
+# paraffin only ever occurs as FFPE (formalin-fixed paraffin-embedded) tissue
+# processing, a preparation method, never a compound applied to cells.
+paraffin	exclude
+# lysine/l-lysine real occurrences are "Histone H3/H4 Lysine N Acetylation"
+# (an epigenetic mark spelled out in full), never a lysine treatment.
+lysine	exclude
+l-lysine	exclude
+doxorubicin	compound
+chir	compound
+chir99021	compound
+chir-99021	compound
+dapt	compound
+dtag-13	compound
+anti-pd-1	biologic
+anti-pd1	biologic
+anti-pd-l1	biologic
+anti-pdl1	biologic
+anti-ctla-4	biologic
+anti-ctla4	biologic
+nivolumab	biologic
+pembrolizumab	biologic

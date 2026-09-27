@@ -23,6 +23,14 @@ def geocode(
     timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
     is_dry_run: bool = typer.Option(default=False),
     mode: str = typer.Option("missing"),
+    pg_url: str | None = typer.Option(
+        None,
+        envvar="PG_URL",
+        help="copy already-geocoded centers back from postgres before"
+        " calling ArcGIS, and restrict what's left to accessions postgres"
+        " has never seen; omitted or unreachable falls back to geocoding"
+        " everything found missing",
+    ),
 ) -> None:
     geocode_missing(
         unified_metadata_db_file,
@@ -35,4 +43,5 @@ def geocode(
         is_dry_run,
         ror_data_file,
         mode,
+        pg_url,
     )

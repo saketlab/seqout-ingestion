@@ -134,12 +134,6 @@ def build_table_info(
                 modifier=_geo_platforms_batch_modifier,
                 conflict_cols=["accession"],
             ),
-            "geo_contributors": _TableInfo(
-                sqlite_db_file=geo_db_file,
-                modifier=_no_op_batch_modifier,
-                select_cols=_GEO_CONTRIBUTORS_COLS,
-                insert_cols=_GEO_CONTRIBUTORS_COLS,
-            ),
             "sra_submissions": _TableInfo(
                 sqlite_db_file=sra_db_file,
                 modifier=_sra_submissions_batch_modifier,
@@ -289,6 +283,14 @@ def postgres_transfer(
                 "geo_geocode",
                 _transfer_geo_geocode,
                 (pg_url, geo_db_file, unified_metadata_db_file, read_batch_size),
+            ),
+        )
+    if _present(geo_db_file):
+        all_tasks.append(
+            (
+                "geo_contributors",
+                _transfer_geo_contributors,
+                (pg_url, geo_db_file, read_batch_size),
             ),
         )
     if _present(sra_db_file, unified_metadata_db_file):
@@ -1297,6 +1299,72 @@ def _load_unified_centers(
     return lookup, name_lookup
 
 
+# GEO's own submission format adds this synthetic contributor to most series
+# (no address of its own); geocoding the bare string previously matched
+# NOAA's "Geostationary Earth Orbit Observations" for ~200k series.
+_GEO_CONTRIBUTOR_PLACEHOLDER_ORGS = frozenset({"geo"})
+
+# geo_contributors has no natural single-column key -- a contributor row is
+# uniquely identified by the whole tuple. COALESCE turns NULL into '' so the
+# unique index actually catches duplicates: two NULLs are never equal to
+# Postgres, so a plain index on the raw columns lets identical NULL-bearing
+# rows through.
+_GEO_CONTRIBUTORS_KEY_EXPR = ", ".join(
+    f"COALESCE({c}, '')" if c != "accession" else c for c in _GEO_CONTRIBUTORS_COLS
+)
+
+
+def _transfer_geo_contributors(
+    pg_url: str,
+    geo_db_file: Path | None,
+    batch_size: int,
+) -> None:
+    """
+    Deduplicated transfer for geo_contributors.
+
+    The generic transfer path always appends "ON CONFLICT DO NOTHING", but
+    that is a no-op without a matching unique constraint, and this table had
+    none -- every re-transfer of an already-seen accession appended its whole
+    contributor block again. GSE341692 alone carried 11 duplicate copies
+    before this existed.
+    """
+    with (
+        sqlite_connect(geo_db_file) as src_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                cast(
+                    "LiteralString",
+                    f"""CREATE UNIQUE INDEX IF NOT EXISTS
+                    idx_geo_contributors_natural_key
+                    ON geo_contributors ({_GEO_CONTRIBUTORS_KEY_EXPR})""",
+                ),
+            )
+        pg_conn.commit()
+
+        cols = _GEO_CONTRIBUTORS_COLS
+        rows = src_conn.execute(
+            f"SELECT DISTINCT {', '.join(cols)} FROM geo_contributors",  # noqa: S608
+        ).fetchall()
+
+        insert_q = cast(
+            "LiteralString",
+            f"""INSERT INTO geo_contributors ({", ".join(cols)})
+            VALUES ({", ".join(["%s"] * len(cols))})
+            ON CONFLICT ({_GEO_CONTRIBUTORS_KEY_EXPR}) DO NOTHING""",  # noqa: S608
+        )
+        with (
+            pg_conn.cursor() as cur,
+            tqdm(total=len(rows), desc="geo_contributors", unit="rows") as pbar,
+        ):
+            for start in range(0, len(rows), batch_size):
+                batch = [tuple(r) for r in rows[start : start + batch_size]]
+                cur.executemany(insert_q, batch)
+                pbar.update(len(batch))
+        pg_conn.commit()
+
+
 def _transfer_geo_geocode(
     pg_url: str,
     geo_db_file: Path | None,
@@ -1324,6 +1392,8 @@ def _transfer_geo_geocode(
             FROM geo_contributors
             WHERE organization IS NOT NULL AND organization != ''""",
         ):
+            if org.strip().lower() in _GEO_CONTRIBUTOR_PLACEHOLDER_ORGS:
+                continue
             org_s = org or ""
             dept_s = dept or ""
             addr_s = addr or ""
