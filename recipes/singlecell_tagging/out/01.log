@@ -1,0 +1,26 @@
+ev_libsource           <- 02_libsource.csv                              0.8 MB  PG sra/ena/gsa/dra_experiments + arrayexpress_samples, library_source 
+ev_exp_text            <- 02_exp_text.csv                              37.2 MB  PG sra/dra/ena experiment text, BROAD_PG prefilter, top-3 longest dist
+ev_gsm_text            <- 02_gsm_text.csv                             113.8 MB  PG geo_samples title/description/channels (Extract-Protocol), BROAD_PG
+ev_pent                <- 03_pent.csv                                   0.1 MB  PG pentimento_run per raw study, outside singlecell_study
+ev_matrix              <- 03_matrix.csv                                 0.1 MB  PG pentimento_study / pentimento_sample / sc_stats_study counted matri
+ev_onto                <- 03_onto.csv                                   1.3 MB  PG ontology_samples_v5 single-cell EFO assay, outside singlecell_study
+prod_um_status         <- 03_um_status.csv                              3.8 MB  PG unified_metadata rows with a non-not_screened status (production fl
+ext_scbasecount        <- 07_scbasecount_studies.csv                    1.6 MB  Arc scBaseCount 2026-01-12 study -> seqout canonical and coverage stat
+ext_census             <- 09_census_collection_coverage.csv             0.1 MB  CZI CELLxGENE Census collections -> seqout canonical and coverage verd
+ext_scbasecount_srx    <- scbasecount_studies.csv                       5.9 MB  Arc scBaseCount SRX -> study
+um                     <- /data/share/seqout/unified_metadata/unified_metadata.db (mode=ro)
+staged_pipeline        <- /data/saket/sqlites/recall_fix.db:study_single_cell (mode=ro)
+prod_singlecell_study  <- /NAS/saket/github/seqout-paper/scripts/singlecell_audit/out/01_catalogue.parquet
+pg_um_text             <- /NAS/saket/github/seqout-paper/scripts/singlecell_coverage_gaps/out/03_study_text.csv (fld = 'um')
+um + alias_map: 68s
+  ev_libsource: 40,700 rows
+  ev_exp_text: 99,350 rows
+  ev_gsm_text: 59,902 rows
+  ev_pent: 3,976 rows
+  ev_matrix: 2,053 rows
+  ev_onto: 21,926 rows
+  prod_um_status: 85,621 rows
+  ext_scbasecount: 6,931 rows
+  ext_census: 313 rows
+  ext_scbasecount_srx: 61,374 rows
+built /NAS/saket/github/seqout-ingestion-sctag-local/sctag_local.db (1.38 GB) in 94s

@@ -1,0 +1,5 @@
+scenario,members,new_vs_S0,lost_vs_S0,local_only_recent_excluded,new_in_external_sets,new_not_in_external
+S0,42033,0,0,0,0,0
+S1,52176,10217,74,0,2436,7781
+S2,59408,17449,74,27,3140,14309
+S3,60418,18459,74,27,4147,14312

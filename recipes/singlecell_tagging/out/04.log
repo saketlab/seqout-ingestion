@@ -1,0 +1,17 @@
+  read                     38,024
+  canon_moved                   1
+  text_added               17,957
+  libsource_declared       33,084
+  libsource_vetoed            826
+  libsource_added          11,083
+  whitelist_flipped         1,056
+  protocol_added            3,750
+  external_added            1,037
+single_cell_status
+measured_single_cell                       26389
+text_indicates_single_cell                 17957
+library_source_indicates_single_cell       12139
+not_screened                                4735
+protocol_indicates_single_cell              3750
+measured_not_single_cell_text_disagrees     3383
+measured_not_single_cell                     821

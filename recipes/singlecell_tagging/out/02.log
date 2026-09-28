@@ -1,0 +1,3 @@
+raw keys: 198153 resolved: 188652 {'canonical': 146323, 'alias_map': 21788, 'twin': 20541}
+evidence rows: 101527
+  protocol-hit canonicals: 7069  libsource canonicals: 31247  vetoed: {'microbial_organism': 656, 'genome_project_title': 143, 'non_rna_strategies_only': 27}

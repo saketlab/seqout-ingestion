@@ -1,0 +1,131 @@
+canonical,label,mixed,judged_modality,confidence,evidence,added_by,in_S1
+SRP408473,sc,False,snRNA-seq,medium,"archive library_source SINGLE CELL on 2 of 2 experiments; dominant assay ""snRNA-seq"" (weak); title/description do not state assay",read_measured,True
+E-MTAB-6058,sc,False,scRNA-seq,high,"protocol: ""using the Fluidigm C1 system""; title ""Single cell RNA-seq of isolated human foetal L/M-opsin cone""; library_source SINGLE CELL 2950/2950",whitelist_override,False
+E-MTAB-13023,bulk_other,False,,high,"title: ""RNAseq of 6 day old shoots""; desc: ""whole shoot was sampled, with four plants pooled in one sample""; library_source SINGLE CELL 480/480 is a mislabel",libsource,True
+SRP267686,sc,False,scRNA-seq,high,"title: ""DISCO_scRNAseq""; description: ""proof of concept single cell RNA-seq on the digital microfluidic based platform: DISCO""; library_source SINGLE CELL 3/3",whitelist_override,False
+GSE189287,sc,True,scRNA-seq,medium,"protocol: ""Approximately 10000-20000 ILC2s were loaded on 10x Chromium""; SuperSeries also has ""Genome binding/occupancy profiling"" (ChIP) subseries",protocol,False
+SRP542205,sc,False,scRNA-seq,medium,archive library_source SINGLE CELL on 6 of 6 experiments; DYT-SGCE MGE-patterned neurons; description truncated before design,whitelist_override,False
+SRP501889,sc,False,scRNA-seq,high,"description: ""we performed single-cell RNA-seq analysis on the grafts""; library_source SINGLE CELL 2/2",whitelist_override,False
+GSE223036,sc,True,scRNA-seq,high,"SuperSeries; protocol: ""10xscRNAseq_d8 DAZL+PGCLC | 10x Genomics""; also methylation and genome-binding SubSeries",protocol,False
+PRJNA1173180,sc,False,snRNA-seq,high,"description: ""hippocampus of 18-month-old PND mice by single-nucleus RNA sequencing""; protocol: ""Single Cell 3' Library and Gel Bead Kit V3.1""",text,False
+PRJNA1490269,sc,False,scRNA-seq,high,"title: ""Lychee single cell RNA sequencing""; ""Our single-cell atlas provides new insights"" (library strategy ncRNA-Seq is odd)",text,False
+SRP522459,sc,False,Multiome,high,"overall design: ""collected at Day 25 time point through 10x Genomics Multiome (scRNA/scATAC-seq) assays""",text,False
+SRP259903,sc,True,scRNA-seq,high,"description: ""using DNA-integrated barcodes and single-cell RNA sequencing""; protocol ""Single-cell RNA sequencing on 10X Chromium platform""; SINGLE CELL 4/16, 12 OTHER (likely bulk barcode amplicon)",text,True
+GSE263151,sc,False,scRNA-seq,high,"protocol: ""single-cell RNA-seq library according to the 10x Genomics protocol (Chromium Single Cell 3 ... v3)""",protocol,False
+SRP484310,unclear,False,,low,"desc: ""high-throughput transcriptome profiling"" of cHSPC subsets; library OTHER x30, no sc library_source, read scan 0 barcode-positive; could be sorted-population bulk",text,False
+E-MTAB-14405,sc,False,scRNA-seq,high,"description: ""two Single-Cell experiments""; protocol: ""loaded onto the scRNA-seq BD Rhapsody Cartridge""; library_source SINGLE CELL 50/50 (strategy AMPLICON = BD Rhapsody)",whitelist_override,False
+SRP529466,sc,False,scRNA-seq,high,"title: ""Comparative Single Cell Transcriptome Analysis...""; ""Single cell RNA sequencing and smFISH identified...""; library_source SINGLE CELL 12/12",read_measured,True
+SRP516312,sc,False,scRNA-seq,high,"title: ""[pAML Patients scRNA-seq]""; ""analyzed paired diagnosis-relapse samples ... at single-cell resolution""; SINGLE CELL 20/20",libsource,False
+GSE217619,spatial,False,Spatial Transcriptomics,medium,"SuperSeries; protocol: ""mounted onto 6.5 mm2 capture areas on Visium Spatial Gene Expression Slides (10X Genomics)""",protocol,False
+SRP377182,sc,False,scATAC-seq,high,"title: ""Single-cell ATAC-Seq (scATAC-Seq) of mouse basal cell carcinoma (BCC) immune cells""; library_source SINGLE CELL 2/2",libsource,True
+SRP357561,sc,False,scRNA-seq,high,"protocol: ""Single Cell 5' Gene Expression cDNA libraries were generated using the Chromium Controller""; abstract: ""We performed single-cell RNA-sequencing""",text,False
+E-MTAB-12611,unclear,False,,low,"description: ""RNA sequencing was then performed on cell sorted KCs"" (suggests bulk sorted) but library_source SINGLE CELL on 100 of 100 experiments; read scan barcode-positive 0",whitelist_override,False
+GSE301684,sc,False,scRNA-seq,high,"protocol: ""sorted on a BD FACS Aria Fusion ... before droplet encapsulation using the 10x Genomics Chromium platform""",protocol,False
+ERP159136,sc,False,scRNA-seq,high,"title: ""Single-cell Gene Expression Flex analysis on patient derived xenografts""; library_source SINGLE CELL 1/1",libsource,True
+GSE188525,sc,False,scRNA-seq,high,"protocol: ""IkBa WT, E14.5 LT-HSC Fetal liver, replicate 1, 10x scRNAseq | 10x Genomics""; counted matrix cells 8768",protocol,False
+SRP375358,sc,False,scRNA-seq,high,"description: ""Transcriptional profiling of mouse lung tissues was conducted by single-cell RNA sequencing technology""; library_source SINGLE CELL 3/3",read_measured,True
+GSE220509,sc,False,scRNA-seq,medium,"protocol: ""Library was performed according to the manufacter's instructions (Chromium NextGEM Single Cell 3' Kit v3.1, 10x Genomics)""; HUVEC SuperSeries; counted matrix cells",protocol,False
+GSE305439,sc,False,Multiome,high,"""scHiCAR (single-cell Hi-C with ATAC and RNA-seq)... profiles mRNA, open chromatin, and chromosome-conformation-capture from the same cells""; other: sc-3D genome",protocol,False
+SRP307586,sc,False,scRNA-seq,high,"""Single-cell cDNA libraries were prepared using the Smart-SCRB chemistry""; ""Cells ... were hand-sorted""; 27bp R1 barcode+UMI",read_measured,True
+GSE317101,sc,True,scRNA-seq,medium,"protocol: ""10x Chromium Single Cell Immune Profiling Gel Bead Kit""; library_source SINGLE CELL on 2 of 6 experiments (rest non-sc)",libsource,True
+SRP499421,sc,False,scRNA-seq,low,library_source SINGLE CELL on 3 of 3 experiments; abstract on HMX1 enhancer CNV does not itself mention single-cell,whitelist_override,False
+SRP362996,sc,False,scRNA-seq,medium,"title SubSeries tag: ""[scRNAseq DC]""; no protocol or library_source fields in packet",read_measured,True
+GSE266546,sc,False,scRNA-seq,high,"protocol: ""loading onto inDrops for microfluidic capture""; design: ""Analyzing 202,359 cells from 170 specimens""",protocol,False
+SRP532359,sc,False,scRNA-seq,high,"title: ""... gut elongation during development (scRNA-Seq)""; SINGLE CELL 3/3",read_measured,True
+GSE235090,sc,False,scRNA-seq,high,"title ""[scRNA_tissue]""; protocol ""encapsulation ... using the 10x 5’ v2 Chromium platform""; raw data in dbGaP",protocol,False
+SRP503410,sc,False,scATAC-seq,medium,"title: ""Human Early Postnatal Thymus [ATAC-seq]"" in CITE-seq/ATAC multiomic resource; library_source SINGLE CELL 6/6",libsource,True
+GSE272869,sc,False,Multiome,high,"title ""[multiome]""; protocol: ""processed with the 10X Multiome Gene Expression + ATAC kit. Approximately 10,000 nuclei per sample""",protocol,False
+GSE125536,sc,False,scRNA-seq,medium,"extract protocol: ""RNA was purified and proccessed for indrop according to the protocol from Klein et al (Cell, 2015)""; title: ""multi-parametric analysis of single-cells""",protocol,False
+GSE316468,sc,False,scRNA-seq,high,"protocol: ""Single-cell suspensions in PBS were loaded onto microwell chips (Singleron Matrix Single Cell Processing System) ... scRNA""",protocol,False
+GSE313338,spatial,False,Spatial Transcriptomics,high,"title: ""Xenium spatial transcriptomics of stage 28 embryos and regenerating ... axolotl tails""; custom 10x Xenium 100-gene panel",protocol,False
+PRJNA1456473,sc,False,scRNA-seq,high,"abstract: ""Using single-cell RNA sequencing combined with clonal lineage tracing""; library_source SINGLE CELL 5/5",libsource,False
+SRP523928,sc,True,scRNA-seq,medium,"protocol: ""scRNA-seq of sugar glider: Newborn liver ... Chromium Single Cell 3-prime""; SINGLE CELL on 1 of 18 experiments alongside Hi-C, ATAC, bulk RNA-Seq",libsource,True
+SRP404835,sc,False,scRNA-seq,medium,"library_source SINGLE CELL on 14 of 14 experiments; description ""Neovascular tufts with a distinct single-cell transcriptional signature""",read_measured,True
+SRP299697,sc,False,scRNA-seq,high,"title: ""single cell sequencing of rat epicardial cells from sham and myocardial infarcted rat""; library_source SINGLE CELL 2/2",libsource,True
+SRP430143,sc,False,scRNA-seq,high,"""We performed scRNA-seq on haematoietic stem and progenitor cells""; ""Chromium Single Cell 3' GEM ... v3""",read_measured,True
+SRP519437,bulk_companion,False,,high,"title: ""Translation inhibition with CHX in mouse embryonic stem cells in bulk""; ""This dataset corresponds to a control bulk RNAseq experiment""",read_measured,True
+E-MTAB-15128,bulk_other,False,,medium,"title: ""RNA-seq of brain tissue from the subventricular zone, dentate gyrus and nucleus accumbens""; ""RNA was extracted ... RNA sequencing was performed to identify DEGs""; SINGLE CELL on 360/630 looks mislabelled; 0 barcode-positive runs",whitelist_override,False
+GSE222859,sc,False,scRNA-seq,high,"protocol: ""scRNA-seq was performed using 10x Genomics Chromium Single Cell Controller""; ""single-cell atlas of T cells""",protocol,False
+SRP454973,sc,False,scRNA-seq,high,"""we performed scRNA-seq and paired T-cell receptor sequencing (scTCR-seq) on tumor-infiltrating CD4+ T cells""; other modality sc VDJ",whitelist_override,False
+SRP530446,sc,False,scRNA-seq,low,"library_source SINGLE CELL on 45 of 45 experiments; abstract on VTA DA neuron heterogeneity (""not homogeneous population"") but no explicit sc method in packet",whitelist_override,False
+GSE252883,sc,False,scRNA-seq,high,"protocol: ""single-cell RNA-seq was performed using the Chromium Single Cell 3' kit (V3.1) ... with cell hashing. The single-cell RNA-ATAC co-assay was..."" (also Multiome)",protocol,False
+DRP013466,unclear,False,,low,"title ""SCIT-seq""; description: ""Developing a method for low input rna-seq method"" (low-input vs single-cell not settled); SINGLE CELL 1/1; read scan barcode-positive 0",whitelist_override,False
+GSE347940,sc,False,scRNA-seq,high,"overall design: ""profiled using single-cell RNA sequencing (10x Genomics), combined with CITE-seq (TotalSeq C) and paired TCR""",libsource,False
+SRP413914,sc,False,scRNA-seq,high,"title: ""Single cell RNA sequencing profiles of human iPSC-derived AT1-like cells""; library_source SINGLE CELL 3/3",libsource,False
+GSE323341,sc,False,snATAC-seq,high,"title: ""snATAC-seq from liver (ENCSR552QVU)""; ENCODE deposit",protocol,False
+GSE162975,sc,False,scRNA-seq,high,"extract protocol: ""A modified STRT-seq protocol was applied for single-cell RNA-seq. Briefly, sorted singl[e cells]""; ""7,578 CAR-T cells""",protocol,False
+SRP237295,sc,True,scRNA-seq,high,"sample: ""10x scRNA-Seq of mus musculus:adult female colonic CD90+iMSC""; strategies include ATAC-seq:10 (bulk companion data in same study)",protocol,False
+SRP409774,sc,False,scRNA-seq,high,"title: ""Single cell seq of E13.5 and E15.5 pancreas ... [scRNA-seq]""; SINGLE CELL 4/4",whitelist_override,False
+GSE231340,sc,False,scRNA-seq,medium,"SuperSeries; protocol ""Chromium Next GEM Single Cell 5' Reagent Kits v2 ... with Feature Barcode technology""; subseries composition not shown",protocol,False
+SRP476146,sc,False,scRNA-seq,high,"title: ""... [10x scRNA-seq]""; library_source SINGLE CELL 4/4",libsource,False
+PRJDB41049,sc,True,scRNA-seq,low,"""Transcriptome profiling of mouse cochlea""; library_source SINGLE CELL on 10 of 22 experiments (rest presumably bulk); no method text",libsource,False
+SRP586831,sc,False,unclear,medium,"library_source SINGLE CELL 3/3; description (truncated) only mentions ""mitochondrial transcriptomic signatures""; sc/sn modality not stated in packet",read_measured,True
+SRP416594,sc,False,scRNA-seq,high,"title: ""10x single cell sequencing for old mouse transcriptomes""; ""performed scRNA-Sequencing (scRNA-Seq) analysis in the hippocampus""",read_measured,True
+SRP738732,sc,False,snRNA-seq,high,"""Single-nucleus RNA-seq libraries were prepared using the Singleron GEXSCOPE platform""",text,False
+SRP587124,sc,False,scATAC-seq,high,"title: ""BRD4 signaling maintains the differentiated state of ß cells [scATAC-seq]""; library_source SINGLE CELL 2/2",whitelist_override,False
+GSE312971,sc,False,scRNA-seq,high,"""scRNA-seq of enriched cells from mouse tail""; ""loaded into the channels of a chromium controller system (10X Genomics)""",text,False
+SRP607024,sc,False,scRNA-seq,medium,"description is GEO private placeholder only; library_source SINGLE CELL on 11 of 17 experiments (RNA-Seq 11, OTHER 6)",libsource,False
+GSE299911,spatial,False,Spatial Transcriptomics,high,"protocol: ""Libraries for Visium were prepared according to the Visium Spatial Gene Expression for FFPE User Guide""",protocol,False
+SRP527386,sc,False,scRNA-seq,medium,archive library_source SINGLE CELL on 8 of 8 experiments; Gata2R396Q mouse BM; description truncated before assay,read_measured,True
+PRJNA1514633,sc,False,scRNA-seq,high,"""Single-cell RNA sequencing was performed on right-lung tissue""; protocol ""loaded into Chromium microfluidic chips""; SINGLE CELL 6/6",text,False
+SRP579279,sc,False,scRNA-seq,high,"description: ""Using high-resolution single-cell RNA sequencing ... we isolated single hepatocytes""; library_source SINGLE CELL 31/31",whitelist_override,False
+SRP423915,sc,False,scRNA-seq,high,"overall design: ""CITE-seq and scATAC-seq on CD45+CD11b+Ly6g-SiglecF-Cd64- cells from the joint synovium""; other modality scATAC-seq",read_measured,True
+SRP493840,unclear,False,,low,"library_source SINGLE CELL 185/185, but description (""time-course analyses, bone marrow chimeras and fate tracing models"") never mentions single-cell; could be plate sc or sorted bulk",libsource,True
+GSE143196,sc,False,scRNA-seq,high,"design: ""We performed and analyzed 10 x Genomics single cell RNA sequencing (scRNA-Seq)""; protocol mentions BD Rhapsody",protocol,False
+E-MTAB-11392,sc,False,scATAC-seq,high,"""Libraries were prepared according to Chromium Next GEM Single Cell ATAC Reagent Kits v1.1 guide""; SINGLE CELL 240/240",libsource,True
+GSE261015,sc,False,Multiome,medium,"SuperSeries; protocol: ""Nuclei were processed with the Chromium Next GEM Single Cell Multiome ATAC + Gene Expression kit""",protocol,False
+GSE104988,sc,False,scRNA-seq,high,"SuperSeries; protocol: ""BT474, T47D, ZR75 (inDrop)""",protocol,False
+SRP664745,sc,False,scRNA-seq,high,"title: ""Single-Cell RNA Sequencing Reveals Distinct Cellular and Molecular Features...""; ""Using single-cell RNA sequencing, we analyzed femoral head specimens""; SINGLE CELL 5/5",libsource,False
+SRP523168,sc,False,snRNA-seq,high,"title: ""...mediator of tissue fibrosis [snRNA-seq]""; ""total and single nuclei RNA (snRNA) sequencing""; library_source SINGLE CELL 12/12",read_measured,True
+GSE184564,spatial,False,Spatial Transcriptomics,high,"title: ""Spatial transcriptomic studies of the small intestine""; ""tuft cell containing spots (Dclk1hi)""",protocol,False
+SRP510350,sc,False,scRNA-seq,high,"title ""[scRNA-seq]""; ""CD45+ cells were FACS sorted from single cell suspensions""; SINGLE CELL 2/4 (rest likely GEX/feature libs)",read_measured,True
+SRP160084,bulk_sorted,False,,high,"description: ""Single DFCs cluster were dissected out ... SMART-Seq v4 Ultra Low Input RNA Kit"" - pooled cluster profiled in bulk",read_measured,True
+SRP365156,sc,False,scRNA-seq,high,"""subjected them to 10x Genomics 5' single cell RNA-sequencing with T cell receptor (TCR) sequencing""",read_measured,True
+SRP434442,sc,False,scRNA-seq,high,"title: ""[scRNA-Seq]""; design: ""single cell RNA isolation was performed utilizing BD rhapsody""; SINGLE CELL 3/3",whitelist_override,False
+GSE333083,sc,False,snATAC-seq,high,"title: ""snATAC-seq from activated naive CD4-positive, alpha-beta T cell (ENCSR600UDB)""",protocol,False
+SRP218982,bulk_sorted,False,,medium,"""transcriptomic studies of tonsil slan+-cells, CD1c+DCs/DC2 and CD11b+CD14+macrophages, as well as subsets of peripheral blood monocytes""; no SINGLE CELL source; barcode-positive 0",text,False
+SRP576964,sc,False,scRNA-seq,medium,library_source SINGLE CELL on 2 of 2 experiments; description (pericyte SCI) does not itself mention sc method in packet,libsource,True
+SRP453464,sc,False,scRNA-seq,high,"title: ""Bovine Formative Embryonic Stem Cell Plasticity ... [scRNA-seq]""; library_source SINGLE CELL 2/2",whitelist_override,False
+SRP398069,sc,False,scRNA-seq,high,"protocol: ""scRNAseq of avian erythrocytes cousin cells | CC | MARS-seq""; library_source SINGLE CELL 2/2",text,True
+DRP015039,sc,False,scRNA-seq,medium,library_source SINGLE CELL 2/2; description (truncated) on Peyers patch immune function gives no assay; inferred from library field,whitelist_override,False
+SRP483206,sc,False,scRNA-seq,medium,"library_source SINGLE CELL 14/14; abstract: ""co-expression graph networks of single-cell RNA sequencing profiles""",libsource,True
+ERP170187,sc,False,scRNA-seq,high,"title: ""SmartSeq single-cell RNAseq of SARS-CoV-2 spike-specific CD4+ T cells""; SINGLE CELL 2213/2213; other: sc TCR",whitelist_override,False
+SRP226894,sc,False,scRNA-seq,high,"title: ""Pax3 Cre Wls Knockout Mouse Facial (MNP+LNP+MXP) Single Cell RNA Sequencing""",text,False
+HRA018383,sc,False,scRNA-seq,high,"title: ""Single-cell RNA sequencing (scRNA-seq) was employed to analyze colorectal cancer (COAD) samples.""; SINGLE CELL 12/12",text,False
+SRP561674,sc,False,scRNA-seq,medium,"library_source SINGLE CELL 1/1; abstract describes glioma ""cell state transitions along glial differentiation trajectories""; sc not explicit in truncated text",whitelist_override,False
+GSE172129,sc,False,scRNA-seq,medium,"SuperSeries ""Spatial transcriptome profiling by MERFISH""; protocol: ""RNA libraries were prepared with Chromium Single Cell 3' Reagent Kits (v2)""; other: MERFISH spatial",protocol,False
+E-MTAB-15928,sc,False,scRNA-seq,medium,"protocol ""...Single-Cells inside droplets. ChronoSeq library preparation protocol is very similar to Drop-seq""; SINGLE CELL 40/40; read scan barcode-positive 0",whitelist_override,False
+GSE333045,sc,False,snATAC-seq,high,"title: ""snATAC-seq from suprapubic skin (ENCSR397LYX)""",protocol,False
+DRP013124,sc,False,Multiome,medium,"""single-cell multiomic (transcriptome-epigenome) analysis"" of lung immune cells; library_source SINGLE CELL 12/12 (RNA-Seq 5, ChIA-PET 7 likely mis-set ATAC)",text,True
+SRP316691,bulk_companion,False,,high,"title: ""GRNsmile ... [Micro-C]""; ""MicroC performed on hESC-dreived cardiomyocyte on day 0 and 15""; strategy OTHER 6; scRNA/scATAC in sibling SubSeries",read_measured,True
+SRP174020,sc,False,scRNA-seq,high,"title: ""RAG1+ multipotent progenitors emerge ... haemopoietic organoids [single cell RNA-Seq]""",read_measured,True
+ERP131753,sc,False,scRNA-seq,high,"title: ""(embryo single cell RNA-sequencing)""; SINGLE CELL on 390 of 390 experiments",read_measured,True
+SRP025026,sc,False,sc-other,medium,"abstract: ""individual cells sorted by flow cytometry and amplified by MDA ... whole genomes sequenced"" - microbial single-amplified genome (sc-DNA), WGS 1 run",text,False
+PRJNA1399322,sc,False,scRNA-seq,high,"title: ""Single-cell RNAseq of from murine pancreas tumor (FPC)""; ""Cells were loaded into the 10x Genomics Chromium Controller""",text,False
+SRP370492,sc,False,scRNA-seq,medium,"library_source SINGLE CELL 20/20; abstract (truncated) on ""GM-CSF-producing T cells"" in kidney; sc not stated explicitly in packet",libsource,True
+SRP384840,sc,False,scRNA-seq,medium,"description: ""The Single-cell transcriptome data of cattle lungs.""; SINGLE CELL 1/1",text,True
+GSE90015,sc,True,scRNA-seq,medium,"SuperSeries with methylation array + ChIP-seq + RNA-seq; protocol ""C1 Single-Cell Auto-prep and IFC for 10-17 µm (Fluidigm)""",protocol,False
+SRP600287,bulk_other,False,,medium,"title: ""Transcriptome of Trichoderma asperellum Ta TS7-1 exposed to different concentrations of erythromycin""; SINGLE CELL source likely mislabel",libsource,True
+SRP675329,sc,False,Multiome,medium,"""multiomic profiling of >750k mouse spinal cord neurons""; sample ""Mouse cervical spinal cord snATAC-seq_biol_rep1""; ATAC 36 + RNA 36, SINGLE CELL 72/72",text,False
+DRP015107,sc,False,scRNA-seq,high,"title: ""ScRNA-seq of Pseudomonas aeruginosa biofilm treated with colistin""; ""Samples were collected for Single-cell transcriptome sequencing""; SINGLE CELL 12/12 (bacterial)",whitelist_override,False
+SRP492373,sc,False,scRNA-seq,high,"title: ""Gene expression profile at single cell level of CD45+ immune cells""; ""We used single cell RNA sequencing (scRNA-seq)""",read_measured,True
+GSE272845,spatial,False,Spatial Transcriptomics,high,"title: ""Spatial Transcriptomics of 9-month old mouse brain""; protocol: ""Visium Spatial Gene Expression Reagent Kit (10X Genomics""",protocol,False
+GSE139194,sc,False,scRNA-seq,medium,"SuperSeries; protocol ""Single-Cell RNA-Seq libraries were generated ... using the 10X Genomics Chromium Controller""",protocol,False
+GSE193684,sc,True,scRNA-seq,medium,"SuperSeries; protocol: ""Single cell capture, barcoding and library preparation were performed using the 10X Chromium platform""; also ncRNA profiling subseries",protocol,False
+SRP560151,sc,False,scRNA-seq,high,"title: ""Single-cell sequencing WT and PADI4 cKO skin, P1""; library_source SINGLE CELL 2/2",read_measured,True
+SRP360002,sc,False,scRNA-seq,medium,"library_source SINGLE CELL on 25 of 28 experiments; description (""placentas were collected ... validated in human placental macrophages"") does not name assay",libsource,True
+SRP387384,sc,True,scRNA-seq,medium,"abstract: ""investigated using bulk and single cell RNA sequencing""; read scan inconclusive (0/0/0 of 32 runs)",text,False
+SRP427252,sc,False,scATAC-seq,high,"title: ""... Tet2 oncogenic mutation [scATAC-seq]""; library ATAC-seq 16; SINGLE CELL on 8 of 16 experiments",libsource,True
+SRP375826,sc,False,scRNA-seq,high,"""Single cell RNA-seq data from 10X Chromium. Three samples: WT_D3, WT_D6, and WT_D10""; SINGLE CELL 3/3",read_measured,True
+SRP417062,sc,False,scRNA-seq,high,"description: ""we performed single-cell RNA sequencing (scRNA-seq) analysis of articular cartilage (AC) and NP""; library_source SINGLE CELL 2/2",whitelist_override,False
+GSE174321,spatial,False,Spatial Transcriptomics,high,"protocol: ""10X genomics; Visium spatial gene expression""; title: ""analyzed spatially resolved transcriptome""",protocol,False
+SRP465012,sc,False,scRNA-seq,high,"title: ""...decreasing SIV reservoirs in vivo [scRNA-seq]""; library_source SINGLE CELL 1/1",whitelist_override,False
+ERP131393,sc,False,scRNA-seq,high,"title: ""10x scRNA-seq analysis of a human milk cell sample""; SINGLE CELL 4/4",read_measured,True
+GSE235091,sc,False,scRNA-seq,high,"title ""[scRNA_blood]""; protocol ""loading onto the 10x 5’ v2 Chromium platform ... 5' cDNA, a/b VDJ, g/d VDJ, and ADT""",protocol,False
+SRP508406,sc,False,scRNA-seq,high,"description: ""We used single cell RNA sequencing (scRNA-seq) to reveal the cellular heterogeneity of hASCs""; SINGLE CELL 6/6",whitelist_override,False
+GSE171171,sc,False,scRNA-seq,high,"protocol: ""GEMs formed by oil micro-droplets by the Chromium instrument (10X Genomics) using Single Cell 3' v2 reagents. Each GEM contains a gel bead and a cell""",protocol,False
+SRP478509,sc,False,scRNA-seq,high,"title ""...Photoaged Skin by Single Cell RNA Sequencing""; SINGLE CELL 5/5",whitelist_override,False
+ERP146622,sc,False,scRNA-seq,high,"title: ""10X Chromium Single-cell RNA sequencing of the female reproductive tract during aging""",read_measured,True
+SRP422467,sc,False,scATAC-seq,high,"title: ""Dynamic single-cell regulomes characterize human peripheral blood ILC subpopulations [scATAC-seq]""; SINGLE CELL 3/3",text,False
+GSE319746,sc,False,Multiome,high,"protocol: ""libraries were prepared following the Chromium Next GEM Single Cell Multiome ATAC + Gene Expression User Guide""; library_source SINGLE CELL 6/6",text,False
+SRP313452,sc,False,scRNA-seq,high,"protocol: ""single cell RNA-seq of mus musculus : adult female intestine derived organoid ... Chromium Next GEM Single Cell 3p""; SINGLE CELL 4/4",libsource,True

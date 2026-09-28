@@ -1,0 +1,223 @@
+--- a/recipes/recall_fix/build.py	2026-09-29 02:21:17.997834189 +0530
++++ b/recipes/recall_fix/build.py	2026-09-29 02:58:27.550338530 +0530
+@@ -29,10 +29,14 @@
+ import pathlib
+ import sqlite3
+ import sys
++from collections import Counter
+ from typing import TYPE_CHECKING
+ 
+ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
++sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
+ from pg_connect import connect
++from sc_enrich import recall_feeds
++from sc_enrich import recall_rules as rr
+ 
+ if TYPE_CHECKING:
+     from psycopg import Connection
+@@ -406,6 +410,9 @@
+            COUNT(*) FILTER (
+                WHERE r.assay_is_single_cell IS FALSE OR r.bulk_vs_sc = 'bulk'
+            ) AS n_runs_bulk,
++           -- the R1-length half of n_runs_bulk: real read structure, unlike a
++           -- whitelist miss (see recall_rules.whitelist_miss_only)
++           COUNT(*) FILTER (WHERE r.bulk_vs_sc = 'bulk') AS n_runs_bulk_r1len,
+            -- scATAC trips assay_is_single_cell=FALSE because the call is a
+            -- barcode-whitelist hit against RNA chemistries. Those runs are
+            -- single-cell; they are just not scRNA-seq.
+@@ -428,6 +435,7 @@
+        COALESCE(r.n_runs_screened, 0) AS n_runs_screened,
+        COALESCE(r.n_runs_sc, 0) AS n_runs_sc,
+        COALESCE(r.n_runs_bulk, 0) AS n_runs_bulk,
++       COALESCE(r.n_runs_bulk_r1len, 0) AS n_runs_bulk_r1len,
+        COALESCE(r.n_runs_atac, 0) AS n_runs_atac
+ FROM counted c
+ FULL OUTER JOIN screened r ON r.study_accession = c.study_accession
+@@ -472,7 +480,7 @@
+ )
+ 
+ TEXT_SQL = """
+-SELECT canonical_accession, single_cell_modality
++SELECT canonical_accession, single_cell_modality, title, description
+ FROM unified_metadata
+ WHERE title ~* %(rx)s OR description ~* %(rx)s
+ """
+@@ -545,7 +553,13 @@
+     return None, "not_screened"
+ 
+ 
+-def build(db_path: pathlib.Path, only: str) -> None:
++def build(
++    db_path: pathlib.Path,
++    only: str,
++    *,
++    protocol: bool = True,
++    external: pathlib.Path | None = None,
++) -> None:
+     conn = sqlite3.connect(db_path)
+     conn.executescript(SCHEMA)
+     pg = connect()
+@@ -555,7 +569,7 @@
+     if only in ("both", "organism", "organism-overwrite"):
+         _build_organism_overwrite(conn, pg)
+     if only in ("both", "single-cell"):
+-        _build_single_cell(conn, pg)
++        _build_single_cell(conn, pg, protocol=protocol, external=external)
+ 
+     conn.commit()
+     conn.close()
+@@ -618,15 +632,23 @@
+         logger.info("  %-28s -> %-28s %d", str(prior)[:27], str(new_org)[:27], n)
+ 
+ 
+-def _build_single_cell(conn: sqlite3.Connection, pg: Connection) -> None:
++def _build_single_cell(  # noqa: C901, PLR0912, PLR0915
++    conn: sqlite3.Connection,
++    pg: Connection,
++    *,
++    protocol: bool = True,
++    external: pathlib.Path | None = None,
++) -> None:
+     conn.execute("DELETE FROM study_single_cell")
+     cur = pg.cursor()
+     cur.execute(SINGLE_CELL_SQL)
+     cols = [d[0] for d in cur.description]
+     staged: dict[str, tuple] = {}
++    reads: dict[str, tuple[int, int, int]] = {}
+     for raw in cur.fetchall():
+         row = dict(zip(cols, raw, strict=True))
+         acc = row["study_accession"]
++        reads[acc] = (row["n_runs_sc"], row["n_runs_bulk"], row["n_runs_bulk_r1len"])
+         is_sc, status = _classify(row)
+         modality = None
+         modality_evidence = None
+@@ -651,41 +673,41 @@
+         )
+     logger.info("read-derived evidence for %d studies", len(staged))
+ 
++    # Pentimento keys are archive accessions (SRP/ERP/PRJEB). transfer.py writes
++    # by unified_metadata canonical, so re-key them first or the verdict is lost.
++    resolve, amap = recall_feeds.alias_resolver(pg)
++    staged, moved = rr.canonicalise(staged, resolve)
++    canon_reads: dict[str, tuple[int, int, int]] = {}
++    for acc, counts in reads.items():
++        key = resolve(acc) or acc
++        prev = canon_reads.get(key, (0, 0, 0))
++        canon_reads[key] = tuple(p + c for p, c in zip(prev, counts, strict=True))
++    logger.info("read-derived rows re-keyed onto their canonical: %d", moved)
++
+     cur.execute(TEXT_SQL, {"rx": SC_TEXT_REGEX})
+-    text_only = 0
+-    for acc, text_modality in cur.fetchall():
+-        existing = staged.get(acc)
+-        if existing is None:
+-            staged[acc] = (
+-                acc,
+-                1,
+-                "text_indicates_single_cell",
+-                text_modality,
+-                "text_regex",
+-                None,
+-                None,
+-                0,
+-                0,
+-                0,
+-            )
+-            text_only += 1
+-            continue
+-        if existing[1] == 0:
+-            # Text says single-cell, the reads say otherwise. The reads
+-            # measured it, so they win the verdict, but the disagreement keeps
+-            # its own status rather than being discarded silently.
+-            staged[acc] = (
+-                *existing[:2],
+-                "measured_not_single_cell_text_disagrees",
+-                *existing[3:],
+-            )
+-        elif existing[3] is None and text_modality:
+-            staged[acc] = (*existing[:3], text_modality, "text_regex", *existing[5:])
+-    logger.info("text-only studies kept TRUE: %d", text_only)
++    text_rows = cur.fetchall()
++    # Studies whose every run abstained get their text verdict back, minus the
++    # audit's text false-positive classes (bulk-companion tags, linked-read genomes).
++    vetoed = {a for a, _, t, d in text_rows if rr.text_promotion_vetoed(t, d)}
++    staged, text_only = rr.apply_text(
++        staged, {a: m for a, m, _, _ in text_rows}, vetoed=vetoed
++    )
++    logger.info("text studies kept or promoted TRUE: %d", text_only)
+ 
+     cur.execute(LIBRARY_SOURCE_SQL)
++    declared = [acc for (acc,) in cur.fetchall()]
++    meta = recall_feeds.study_meta(pg, declared)
++    lib_vetoed: dict[str, str] = {}
++    for acc in declared:
++        title, org, strategies = meta.get(acc, (None, None, []))
++        reason = rr.libsource_vetoed(org, title, strategies)
++        if reason:
++            lib_vetoed[acc] = reason
++    logger.info("library_source vetoes: %s", Counter(lib_vetoed.values()))
+     library_source_only = 0
+-    for (acc,) in cur.fetchall():
++    for acc in declared:
++        if acc in lib_vetoed:
++            continue
+         existing = staged.get(acc)
+         # Strictly additive: a declared library_source only fills a study
+         # whose status is otherwise 'not_screened' -- either it never appeared
+@@ -708,6 +730,34 @@
+         library_source_only += 1
+     logger.info("library_source-only studies added/promoted: %d", library_source_only)
+ 
++    # A whitelist miss is not a bulk verdict: declared single-cell libraries
++    # outrank a negative made of whitelist misses alone.
++    negatives = {
++        a for a in declared if a not in lib_vetoed and staged.get(a, (0, None))[1] == 0
++    }
++    archive_accs = sorted({a for a, c in amap.items() if c in negatives} | negatives)
++    declared_counts: dict[str, tuple[int, int]] = {}
++    for acc, (n_sc, n_exp) in recall_feeds.libsource_counts(pg, archive_accs).items():
++        key = resolve(acc) or acc
++        prev = declared_counts.get(key, (0, 0))
++        declared_counts[key] = (prev[0] + n_sc, prev[1] + n_exp)
++    staged, flipped = rr.apply_whitelist_override(staged, declared_counts, canon_reads)
++    logger.info("whitelist-only negatives overruled by declared libraries: %d", flipped)
++
++    if protocol:
++        hits = recall_feeds.protocol_hits_by_study(pg)
++        keys = {resolve(a) or a for a in hits}
++        staged, n_prot = rr.apply_additive(staged, keys, rr.PROTOCOL_STATUS)
++        logger.info("protocol-text studies added: %d (of %d with a hit)", n_prot, len(keys))
++
++    if external is not None:
++        # Labelled, optional evidence: membership in an external single-cell
++        # resource (scBaseCount, CELLxGENE Census). One accession per line.
++        accs = {ln.strip() for ln in external.read_text().splitlines() if ln.strip()}
++        keys = {resolve(a) or a for a in accs}
++        staged, n_ext = rr.apply_additive(staged, keys, rr.EXTERNAL_STATUS)
++        logger.info("external-resource studies added: %d (of %d listed)", n_ext, len(keys))
++
+     conn.executemany(
+         "INSERT OR REPLACE INTO study_single_cell VALUES (?,?,?,?,?,?,?,?,?,?)",
+         list(staged.values()),
+@@ -728,9 +778,20 @@
+         choices=("both", "organism", "organism-overwrite", "single-cell"),
+         default="both",
+     )
++    ap.add_argument(
++        "--skip-protocol",
++        action="store_true",
++        help="skip the paged protocol-text scan (sra/ena experiments, GEO samples)",
++    )
++    ap.add_argument(
++        "--external-accessions",
++        type=pathlib.Path,
++        help="optional: accessions in an external single-cell resource; labelled"
++        " external_resource_indicates_single_cell and only fills unscreened studies",
++    )
+     args = ap.parse_args()
+     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+-    build(args.db, args.only)
++    build(args.db, args.only, protocol=not args.skip_protocol, external=args.external_accessions)
+     return 0
+ 
+ 
