@@ -1,0 +1,12 @@
+scope,N,n_judged,tp,fp,unclear,precision,ci_low,ci_high,n_eff
+ALL new tags (not in scBaseCount/Census),14308,96,88,8,4,0.934,0.844,0.973,62.7
+"ALL new tags (not in scBaseCount/Census), unclear as FP",14308,100,88,12,4,0.866,0.762,0.928,65.2
+code_fix (not in current staging),7121,61,54,7,2,0.892,0.773,0.953,47.5
+"code_fix (not in current staging), unclear as FP",7121,63,54,9,2,0.859,0.735,0.93,48.8
+"lag (current staging, untransferred)",7187,35,34,1,2,0.992,0.83,1.0,20.8
+"lag (current staging, untransferred), unclear as FP",7187,37,34,3,2,0.89,0.702,0.965,22.7
+stratum libsource,6605,17,17,0,3,1.0,0.816,1.0,17.0
+stratum protocol,3548,20,18,2,0,0.9,0.699,0.972,20.0
+stratum read_measured,1054,20,19,1,0,0.95,0.764,0.991,20.0
+stratum text,2124,20,16,4,0,0.8,0.584,0.919,20.0
+stratum whitelist_override,977,19,18,1,1,0.947,0.754,0.991,19.0

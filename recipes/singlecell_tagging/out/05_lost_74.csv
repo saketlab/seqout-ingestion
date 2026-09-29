@@ -1,0 +1,75 @@
+study_accession,source,title,staged_status
+ERP109332,sra,Single cell RNA-sequencing of PBMC derived B cells from human healthy donor,measured_not_single_cell_text_disagrees
+GSE201400,geo,"CUT&RUN (H3K27Ac3) in MGE, CGE, LGE and cortical regions from mouse embryonic forebrain",measured_not_single_cell_text_disagrees
+GSE75851,geo,ILC progenitor CEL-seq,measured_not_single_cell_text_disagrees
+SRP064472,sra,mRNA transcriptome of melatonin treated oocytes,measured_not_single_cell_text_disagrees
+SRP071245,sra,Effective Detection of Variation in Single Cell Transcriptome using MATQ-seq,measured_not_single_cell_text_disagrees
+SRP075535,sra,Single cell gene expression profiling in normal HSCs and CML stem cells,measured_not_single_cell_text_disagrees
+SRP080883,sra,inDrop single cell RNA-seq of hematopoietic cells derived from human pluripotent stem cells,measured_not_single_cell_text_disagrees
+SRP100477,sra,BEARscc: robustness of single-cell clusters determined using simulated technical replicates,measured_not_single_cell_text_disagrees
+SRP100521,sra,Single-Cell RNA-seq study of E13.5 and P7 brain and Spinal Cord Pdgfra-GFP positive samples during development in Mice.,measured_not_single_cell_text_disagrees
+SRP101947,sra,Next Generation Sequencing Analysis of gene expression profile in E9.5 Mesp1Cre/+/Dgcr8-/- embryonic heart cells transfected with NC miRNA and miR-541 mimics,measured_not_single_cell_text_disagrees
+SRP107036,sra,High-throughput Full-length Single-cell mRNA-seq of Rare Cells,measured_not_single_cell_text_disagrees
+SRP110290,sra,Heterogeneous responses of hematopoietic stem cells to inflammatory stimuli are altered with age - single cell,measured_not_single_cell_text_disagrees
+SRP111720,sra,Single cell RNA-seq of smooth muscle actin cell in the lung.,measured_not_single_cell_text_disagrees
+SRP124503,sra,A revised airway epithelial hierarchy includes CFTR-expressing ionocytes,measured_not_single_cell_text_disagrees
+SRP126068,sra,Paired TCR and transcriptome analysis of single T cells characterizes clonally expanded human conventional and unconventional CD8+ T cells,measured_not_single_cell_text_disagrees
+SRP127395,sra,"A Reproducibility-Based Computational Framework Identifies An Inducible, Enhanced Antiviral Dendritic Cell State In HIV-1 Elite Controllers (TLR perturbation Bulk RNA-Seq)",measured_not_single_cell_text_disagrees
+SRP132508,sra,Single cell RNA-seq reveals heterogeneity and hierarchy of mouse mammary epithelia,measured_not_single_cell_text_disagrees
+SRP136208,sra,A guide to single-cell transcriptomics in adult rodent brain: the medium spiny neuron transcriptome revisited,measured_not_single_cell_text_disagrees
+SRP148697,sra,Next Generation Sequencing Analysis of human pluripotent stem cells derived endothelial and smooth muscle cells,measured_not_single_cell_text_disagrees
+SRP149632,sra,Single-cell RNA sequencing enables transcriptomic analysis of iPSC-derived beta-cells in a model of neonatal diabetes caused by insulin mutations.,measured_not_single_cell_text_disagrees
+SRP154186,sra,Single cell RNA sequencing of primary-isolated erythroid progenitors [Days 1-3],measured_not_single_cell_text_disagrees
+SRP161936,sra,Loss of Runx1 triggers inactivation of a Pu.1 gene enhancer and terminal erythroid differentiation,measured_not_single_cell_text_disagrees
+SRP173223,sra,A critical role of fibroblast in cardiac maturation as revealed by single-cell RNA-Sequencing,measured_not_single_cell_text_disagrees
+SRP219925,sra,Activity-dependent regulome and transcriptome of human GABAergic neurons reveal new patterns of gene regulation and neurological disease heritability,measured_not_single_cell_text_disagrees
+SRP225665,sra,Single cell analysis reveals human cytomegalovirus drives latently infected cells towards an anergic-like monocyte state,measured_not_single_cell_text_disagrees
+SRP234988,sra,Identification of genomic enhancers through spatial integration of single-cell transcriptomics and epigenomics [10X_scRNAseq],measured_not_single_cell_text_disagrees
+SRP239468,sra,Identification and specification of the mouse skeletal stem cell.,measured_not_single_cell_text_disagrees
+SRP241650,sra,Single-nucleus RNA-seq identifies divergent populations of FSHD2 myotube nuclei [Fluidigm],measured_not_single_cell_text_disagrees
+SRP253277,sra,Single Cell Transcriptomics Reveals Dysregulated Cellular and Molecular Networks in a Fragile X Syndrome Model,measured_not_single_cell_text_disagrees
+SRP256281,sra,Single cell RNA-seq to study heterogeneity and tumorigenesis of Brca1-deficient mouse mammary tumors.,measured_not_single_cell_text_disagrees
+SRP260142,sra,Human Memory Cell Sequencing,measured_not_single_cell_text_disagrees
+SRP261057,sra,Natural display of nuclear-encoded RNA on the cell surface and its impact on cell interaction [Surface-FISHSeq],measured_not_single_cell_text_disagrees
+SRP267090,sra,Regenerative reprogramming of the intestinal stem cell state via Hippo signaling suppresses metastatic colorectal cancer [DSS_scRNAseq],measured_not_single_cell_text_disagrees
+SRP267091,sra,Regenerative reprogramming of the intestinal stem cell state via Hippo signaling suppresses metastatic colorectal cancer [LATS_scRNAseq],measured_not_single_cell_text_disagrees
+SRP300390,sra,A Novel Non-Classical Monocyte-derived Macrophage Subset That Provides A Splenic Replication Niche For Intracellular Salmonella [scRNA-Seq],measured_not_single_cell_text_disagrees
+SRP305653,sra,Transcriptomes of human oocytes during in vitro maturation,measured_not_single_cell_text_disagrees
+SRP318614,sra,The regulatory landscape of Arabidopsis thaliana roots at single-cell resolution,measured_not_single_cell_text_disagrees
+SRP318937,sra,Single-Cell Transcriptomics of hypothalamic CRH-expressing neurons informs mechanisms by which Early-Life Adversity sculpts stress-responses enduringly,measured_not_single_cell_text_disagrees
+SRP319209,sra,Estrogen Receptor Regulated Gene Signatures in Invasive Breast Cancer Cells and Aggressive Breast Tumors,measured_not_single_cell_text_disagrees
+SRP321280,sra,Single cell transcriptomic analysis of diffuse large B cells in cerebrospinal fluid of central nervous system lymphoma,measured_not_single_cell_text_disagrees
+SRP328401,sra,single-cell RNA-seq of murine spleen by TAS-Seq,measured_not_single_cell_text_disagrees
+SRP328660,sra,Bacterial droplet-based single-cell RNA-seq reveals antibiotic-associated heterogeneous cellular states,measured_not_single_cell_text_disagrees
+SRP328922,sra,Transcriptional profiles of knockouts of m6A writer and readers in Germinal Center B cells,measured_not_single_cell_text_disagrees
+SRP330502,sra,Distinct transcriptional programs characterize neoantigen-specific T cells in   lung cancers treated with neoadjuvant PD-1 blockade [bulk TCR-seq],measured_not_single_cell_text_disagrees
+SRP333339,sra,Re-establishment of spermatogenesis after more than 20 years of cryopreservation of rat spermatogonial stem cells reveals an important impact in differentiation capacity,measured_not_single_cell_text_disagrees
+SRP341943,sra,Systematic reconstruction of the cellular trajectories of mammalian embryogenesis (deeper sequencing of E9.5-E13.5),measured_not_single_cell_text_disagrees
+SRP347197,sra,"Breast cancer cells survive chemotherapy by activating robust, parallel programs of immune checkpoint expression",measured_not_single_cell_text_disagrees
+SRP356507,sra,Transcriptome analysis of human blastocysts with different levels of chromosomal mosaicism after preimplantation genetic testing.,measured_not_single_cell_text_disagrees
+SRP373425,sra,Overlapping transcriptional programs promote survival and axonal regeneration of injured retinal ganglion cells [2],measured_not_single_cell_text_disagrees
+SRP402563,sra,Smart-seq of macrophages in the brain of Angiostrongylus cantonesis-infected mice,measured_not_single_cell_text_disagrees
+SRP413946,sra,Early PD-1 expression on CD8+ T-cells and the development of a stem-like phenotype are associated with HIV slow-progression in children,measured_not_single_cell_text_disagrees
+SRP416463,sra,Developmental Deficits of MGE-derived Interneurons in the Cntnap2 Knockout Mouse Model of Autism Spectrum Disorder,measured_not_single_cell_text_disagrees
+SRP417173,sra,"Inducible disruption of Tet genes results in myeloid malignancy, readthrough transcription, and a heterochromatin-to-euchromatin switch [ATAC-seq]",measured_not_single_cell_text_disagrees
+SRP460597,sra,Response to Treg therapy is linked to rate of ex vivo Treg expansion,measured_not_single_cell_text_disagrees
+SRP474838,sra,Gene expression profile at single cell level of fixed CD55+ myeloid progenitors,measured_not_single_cell_text_disagrees
+SRP482819,sra,Smart-seq analysis comparing melanocytes from Spry1flox/flox mice tail epidermis to the melanocytes derived from Spry1 epidermis specific knockout mice tail and back epidermis,measured_not_single_cell_text_disagrees
+SRP489013,sra,Germline-like TCR alpha chains shared between autoreactive T cells in blood and pancreas [dataset1],measured_not_single_cell_text_disagrees
+SRP491408,sra,Germline-like TCR alpha chains shared between autoreactive T cells in blood and pancreas [dataset2],measured_not_single_cell_text_disagrees
+SRP493195,sra,Spatially defined multicellular functional units in colorectal cancer revealed from single cell and spatial transcriptomics - Slide-Seq,measured_not_single_cell_text_disagrees
+SRP505008,sra,Pericytes and perivascular fibroblasts contribute to central nervous system fibrosis in a region dependent manner(DH SmartSeq),measured_not_single_cell_text_disagrees
+SRP517345,sra,"Streptococcus sanguinis SK36 - Obelisk-S.s sequencing for ""Viroid-like colonists of human microbiomes""",measured_not_single_cell_text_disagrees
+SRP517826,sra,Nucleophosmin 1 Promotes Mucosal Immunity by Supporting Mitochondrial Oxidative Phosphorylation and ILC3 Activity,measured_not_single_cell_text_disagrees
+SRP517851,sra,Ripk1 is critical for preserving effector regulatory T cells and the suppressive transcriptional program in regulatory T cells (RNA-Seq),measured_not_single_cell_text_disagrees
+SRP518993,sra,A soil-grown wheat root atlas with validated cross-species cluster annotations allows to delineate conserved tissue specific marker genes [Spatial Transcriptomics],measured_not_single_cell_text_disagrees
+SRP543654,sra,Identification of a novel PDC-E2 epitope in Primary Biliary Cholangitis and application for engineered Treg therapy,measured_not_single_cell_text_disagrees
+SRP547798,sra,Microglial mechanisms drive amyloid-ß clearance in immunized patients with Alzheimer's disease,measured_not_single_cell_text_disagrees
+SRP552842,sra,Th1-poised naïve CD4 T cell subpopulation reflects anti-tumor immunity and autoimmune disease,measured_not_single_cell_text_disagrees
+SRP560482,sra,Hypoxia-inducible factor 2a promotes protective Th2 cell responses during intestinal helminth infection [RNA-seq],measured_not_single_cell_text_disagrees
+SRP560612,sra,"Disease-associated astrocyte epigenetic memory promotes CNS pathology [sgEp300, sgACLY astrocytes bulk RNA-Seq dataset]",measured_not_single_cell_text_disagrees
+SRP563867,sra,A sympathetic-basophil axis promotes skin inflammation [Basophil RNA-seq],measured_not_single_cell_text_disagrees
+SRP570918,sra,High-Resolution Spatial Map of the Human Facial Sebaceous Gland Reveals Marker Genes and Decodes Sebocyte Differentiation,measured_not_single_cell_text_disagrees
+SRP573538,sra,The Histone Methyltransferase KMT2D is a Critical Mediator of Lineage Plasticity and Therapeutic Response in Castration Resistant Prostate Cancer [LNCAP Bulk ATAC-seq],measured_not_single_cell_text_disagrees
+SRP637511,sra,An Optimized Cas12a Toolkit for Scalable Combinatorial Genetic Screening and Single-Cell Transcriptomics,measured_not_single_cell_text_disagrees
+SRP659797,sra,Heterogeneity and plasticity of the naive CD4+ T cell compartment [Bulk RNAseq],measured_not_single_cell_text_disagrees

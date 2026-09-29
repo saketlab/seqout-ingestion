@@ -1,0 +1,5 @@
+scenario,public_deposit_collections,covered,pct_covered,recovered_of_25,recovered_accession_of_21,covered_lost
+S0,209,182,87.1,0,0,0
+S1,209,189,90.4,7,7,0
+S2,209,200,95.7,18,18,0
+S3,209,203,97.1,21,21,0
