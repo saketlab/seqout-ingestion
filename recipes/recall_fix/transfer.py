@@ -402,7 +402,9 @@ def _load_stage(sq: sqlite3.Connection, cur: Cursor, select: str) -> None:
             logger.info("  staged %d into postgres temp", n)
 
 
-def transfer_single_cell(sq: sqlite3.Connection, pg: Connection, apply: bool) -> None:
+def transfer_single_cell(
+    sq: sqlite3.Connection, pg: Connection, apply: bool, keep_unstatused: bool = False
+) -> None:
     cur = pg.cursor()
     cur.execute(
         "SELECT is_single_cell, COUNT(*) FROM unified_metadata"
@@ -441,6 +443,22 @@ def transfer_single_cell(sq: sqlite3.Connection, pg: Connection, apply: bool) ->
         for acc, sc, status, mod, mod_ev in rows:
             cp.write_row((acc, None if sc is None else bool(sc), status, mod, mod_ev))
     cur.execute("ANALYZE _sc")
+
+    if keep_unstatused:
+        # Flags set by the pre-status text rule (is_single_cell TRUE, status NULL)
+        # are not demoted by a rebuild; they go to a separate reviewed pass.
+        cur.execute(
+            "CREATE TEMP TABLE _keep AS SELECT u.canonical_accession"
+            "  FROM unified_metadata u"
+            " WHERE u.is_single_cell AND u.single_cell_status IS NULL"
+            "   AND NOT EXISTS (SELECT 1 FROM _sc sc"
+            "                    WHERE sc.study_accession = u.canonical_accession"
+            "                      AND sc.is_single_cell)"
+        )
+        logger.info("--keep-unstatused: %d flagged studies left untouched", cur.rowcount)
+        cur.execute("DELETE FROM _sc WHERE study_accession IN (SELECT canonical_accession FROM _keep)")
+    else:
+        cur.execute("CREATE TEMP TABLE _keep (canonical_accession TEXT)")
 
     cur.execute(
         "SELECT sc.single_cell_status, u.is_single_cell, COUNT(*)"
@@ -491,6 +509,8 @@ def transfer_single_cell(sq: sqlite3.Connection, pg: Connection, apply: bool) ->
         "       single_cell_modality = NULL, single_cell_modality_evidence = NULL"
         " WHERE NOT EXISTS (SELECT 1 FROM _sc sc"
         "                    WHERE sc.study_accession = u.canonical_accession)"
+        "   AND NOT EXISTS (SELECT 1 FROM _keep k"
+        "                    WHERE k.canonical_accession = u.canonical_accession)"
         "   AND (u.is_single_cell IS NOT NULL"
         "     OR u.single_cell_status IS DISTINCT FROM 'not_screened')"
     )
@@ -525,6 +545,11 @@ def main() -> int:
     ap.add_argument(
         "--apply", action="store_true", help="without this, nothing is written"
     )
+    ap.add_argument(
+        "--keep-unstatused",
+        action="store_true",
+        help="do not demote single-cell flags that carry no single_cell_status",
+    )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
@@ -547,7 +572,7 @@ def main() -> int:
     if args.only in ("both", "organism", "organism-overwrite"):
         transfer_organism_overwrite(sq, pg, args.apply)
     if args.only in ("both", "single-cell"):
-        transfer_single_cell(sq, pg, args.apply)
+        transfer_single_cell(sq, pg, args.apply, args.keep_unstatused)
     if args.apply:
         snapshot(sq, pg, "after")
         report_diff(sq)
