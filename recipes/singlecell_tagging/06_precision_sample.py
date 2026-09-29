@@ -14,10 +14,12 @@ snippet from protocol text, declared library_source counts, library strategies,
 organism and pentimento read/matrix counts. Packets are shuffled into batches for
 independent judging under ../../../seqout-paper/scripts/singlecell_audit/05_rubric.md.
 
-Two rounds. Round 1 (development, N_PER=25, seed SEED) was drawn before the rule
+Three rounds. Round 1 (development, N_PER=25, seed SEED) was drawn before the rule
 refinements and used to find false-positive classes, so its precision is
 optimistic for the final rules. Round 2 (validation, N_PER=20, seed SEED+1) is
-drawn from the final population excluding round-1 studies and gives the headline.
+drawn from the final population excluding round-1 studies. Round 3 (N_PER=20,
+seed 20261001) is drawn after restored text verdicts were made to require
+archive corroboration, excluding rounds 1-2, and gives the headline.
 
 Writes out/06{,b}_sample.csv (stratum, weights, in_S1) and out/06{,b}_batches/batch_NN.md.
 Usage: 06_precision_sample.py --round 1|2
@@ -31,12 +33,14 @@ import pandas as pd
 
 from _db import GAPS, OUT, SEED, local
 
-ROUNDS = {1: ("06", 25, 6, 0), 2: ("06b", 20, 4, 1)}  # prefix, n per stratum, batches, seed offset
+# prefix, n per stratum, batches, seed. Round 3 re-validates after the user's
+# 2026-09-29 decision (restored text needs archive corroboration).
+ROUNDS = {1: ("06", 25, 6, SEED), 2: ("06b", 20, 4, SEED + 1), 3: ("06c", 20, 5, 20261001)}
 FIELDS = ["geo_overall_design", "sra_abstract", "ena_description", "ae_protocols", "gsa_summary"]
 
 
 def main(rnd: int) -> None:
-    prefix, n_per, n_batches, off = ROUNDS[rnd]
+    prefix, n_per, n_batches, seed = ROUNDS[rnd]
     con = local(readonly=True)
     nt = pd.read_csv(OUT / "05_new_tags.csv")
     s1_new = _s1_new(con)
@@ -44,10 +48,11 @@ def main(rnd: int) -> None:
     pop["in_S1"] = pop.canonical.isin(s1_new)
     sizes = pop.groupby("added_by").size().rename("N_stratum")
     draw = pop
-    if rnd == 2:
-        draw = pop[~pop.canonical.isin(pd.read_csv(OUT / "06_sample.csv").canonical)]
+    if rnd >= 2:
+        seen = pd.concat([pd.read_csv(OUT / f"{ROUNDS[r][0]}_sample.csv").canonical for r in range(1, rnd)])
+        draw = pop[~pop.canonical.isin(seen)]
         draw = draw[draw.added_by != "unknown"]
-    samp = pd.concat([g.sample(min(n_per, len(g)), random_state=SEED + off)
+    samp = pd.concat([g.sample(min(n_per, len(g)), random_state=seed)
                       for _, g in draw.groupby("added_by")])
     samp = samp.join(sizes, on="added_by")
     samp["n_stratum"] = samp.added_by.map(samp.added_by.value_counts())
@@ -68,7 +73,7 @@ def main(rnd: int) -> None:
     raw_for = k2c.groupby("canonical").raw.apply(list).to_dict()
     extra = _unread_fields({r for c in keys for r in raw_for.get(c, [c])} | set(keys))
 
-    samp = samp.sample(frac=1, random_state=SEED + off).reset_index(drop=True)
+    samp = samp.sample(frac=1, random_state=seed).reset_index(drop=True)
     samp["batch"] = samp.index % n_batches + 1
     bdir = OUT / f"{prefix}_batches"
     bdir.mkdir(exist_ok=True)
@@ -127,5 +132,5 @@ def _packet(c: str, um, pgt, ev, extra, raws: list[str]) -> str:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--round", type=int, choices=(1, 2), required=True)
+    ap.add_argument("--round", type=int, choices=(1, 2, 3), required=True)
     main(ap.parse_args().round)

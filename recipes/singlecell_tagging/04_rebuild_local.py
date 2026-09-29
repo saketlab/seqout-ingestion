@@ -10,7 +10,10 @@ src/sc_enrich/recall_rules.py; this script runs the same functions on local inpu
   canon      canonicalise(): re-key SRP/ERP/PRJ-keyed rows onto the canonical
   text       apply_text(): SC_TEXT_REGEX on the Postgres title/description extract
              (pg_um_text) plus the staging's own text verdicts, with the
-             abstention bug fixed and text_promotion_vetoed() on restored rows
+             abstention bug fixed; a restored row needs archive corroboration
+             (protocol hit or unvetoed declared library_source) and must pass
+             text_promotion_vetoed(). Added-by labels: text_restored vs text
+             (a study with no staged row, old rule)
   libsource  declared library_source (vetoes: microbial, genome project,
              chromatin-only), additive as in the existing build
   whitelist  apply_whitelist_override(): declared majority beats whitelist-only
@@ -88,6 +91,15 @@ def main(apply: bool) -> None:
     first.update({k: "read_measured" for k, r in staged.items() if r[1] == 1})
     staged, moved = rr.canonicalise(staged, resolve)
     log.append(("canon_moved", moved))
+    ev = pd.read_sql("SELECT canonical, lib_n_sc, lib_n_exp, lib_veto, prot_hits, ps_cells,"
+                     " pent_n_bulk FROM evidence", con).set_index("canonical")
+    old_lib = set(st.loc[st.single_cell_status == rr.LIBSOURCE_STATUS, "study_accession"].map(
+        lambda a: resolve(a) or a))
+    declared = set(ev.index[ev.lib_n_sc.fillna(0) > 0]) | old_lib
+    veto = ev.lib_veto.dropna().to_dict()
+    protocol_keys = set(ev.index[ev.prot_hits.fillna(0) > 0])
+    # archive evidence independent of the text: restored text verdicts need it
+    corroborated = {a for a in declared if a not in veto} | protocol_keys
     before = dict(staged)
     # Text hits from Postgres text (pg_um_text: studies outside singlecell_study),
     # plus the pipeline's own text verdicts for everything else, so tagged studies
@@ -110,16 +122,12 @@ def main(apply: bool) -> None:
         title, _, desc = t.partition(" | ")
         tt[a] = (title, desc)
     vetoed = {a for a in hits if a in tt and rr.text_promotion_vetoed(*tt[a])}
-    staged, n = rr.apply_text(staged, hits, vetoed=vetoed)
+    restorable = {k for k, r in staged.items() if r[2] == "not_screened"}
+    staged, n = rr.apply_text(staged, hits, vetoed=vetoed, corroborated=corroborated)
+    mark({k: r for k, r in before.items() if k not in restorable}, {k: staged[k] for k in restorable}, "text_restored")
     mark(before, staged, "text")
     log.append(("text_added", n))
 
-    ev = pd.read_sql("SELECT canonical, lib_n_sc, lib_n_exp, lib_veto, prot_hits, ps_cells,"
-                     " pent_n_bulk FROM evidence", con).set_index("canonical")
-    old_lib = set(st.loc[st.single_cell_status == rr.LIBSOURCE_STATUS, "study_accession"].map(
-        lambda a: resolve(a) or a))
-    declared = set(ev.index[ev.lib_n_sc.fillna(0) > 0]) | old_lib
-    veto = ev.lib_veto.dropna().to_dict()
     before = dict(staged)
     lib_ok = sorted(a for a in declared if a not in veto)
     staged, n = rr.apply_additive(staged, lib_ok, rr.LIBSOURCE_STATUS)
@@ -138,7 +146,7 @@ def main(apply: bool) -> None:
     log.append(("whitelist_flipped", n))
 
     before = dict(staged)
-    staged, n = rr.apply_additive(staged, ev.index[ev.prot_hits.fillna(0) > 0], rr.PROTOCOL_STATUS)
+    staged, n = rr.apply_additive(staged, sorted(protocol_keys), rr.PROTOCOL_STATUS)
     mark(before, staged, "protocol")
     log.append(("protocol_added", n))
 

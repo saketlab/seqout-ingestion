@@ -1,5 +1,5 @@
 --- a/recipes/recall_fix/build.py	2026-09-29 02:21:17.997834189 +0530
-+++ b/recipes/recall_fix/build.py	2026-09-29 02:58:27.550338530 +0530
++++ b/recipes/recall_fix/build.py	2026-09-29 07:50:30.320890941 +0530
 @@ -29,10 +29,14 @@
  import pathlib
  import sqlite3
@@ -91,22 +91,11 @@
          is_sc, status = _classify(row)
          modality = None
          modality_evidence = None
-@@ -651,41 +673,41 @@
+@@ -651,41 +673,51 @@
          )
      logger.info("read-derived evidence for %d studies", len(staged))
  
-+    # Pentimento keys are archive accessions (SRP/ERP/PRJEB). transfer.py writes
-+    # by unified_metadata canonical, so re-key them first or the verdict is lost.
-+    resolve, amap = recall_feeds.alias_resolver(pg)
-+    staged, moved = rr.canonicalise(staged, resolve)
-+    canon_reads: dict[str, tuple[int, int, int]] = {}
-+    for acc, counts in reads.items():
-+        key = resolve(acc) or acc
-+        prev = canon_reads.get(key, (0, 0, 0))
-+        canon_reads[key] = tuple(p + c for p, c in zip(prev, counts, strict=True))
-+    logger.info("read-derived rows re-keyed onto their canonical: %d", moved)
-+
-     cur.execute(TEXT_SQL, {"rx": SC_TEXT_REGEX})
+-    cur.execute(TEXT_SQL, {"rx": SC_TEXT_REGEX})
 -    text_only = 0
 -    for acc, text_modality in cur.fetchall():
 -        existing = staged.get(acc)
@@ -137,14 +126,16 @@
 -        elif existing[3] is None and text_modality:
 -            staged[acc] = (*existing[:3], text_modality, "text_regex", *existing[5:])
 -    logger.info("text-only studies kept TRUE: %d", text_only)
-+    text_rows = cur.fetchall()
-+    # Studies whose every run abstained get their text verdict back, minus the
-+    # audit's text false-positive classes (bulk-companion tags, linked-read genomes).
-+    vetoed = {a for a, _, t, d in text_rows if rr.text_promotion_vetoed(t, d)}
-+    staged, text_only = rr.apply_text(
-+        staged, {a: m for a, m, _, _ in text_rows}, vetoed=vetoed
-+    )
-+    logger.info("text studies kept or promoted TRUE: %d", text_only)
++    # Pentimento keys are archive accessions (SRP/ERP/PRJEB). transfer.py writes
++    # by unified_metadata canonical, so re-key them first or the verdict is lost.
++    resolve, amap = recall_feeds.alias_resolver(pg)
++    staged, moved = rr.canonicalise(staged, resolve)
++    canon_reads: dict[str, tuple[int, int, int]] = {}
++    for acc, counts in reads.items():
++        key = resolve(acc) or acc
++        prev = canon_reads.get(key, (0, 0, 0))
++        canon_reads[key] = tuple(p + c for p, c in zip(prev, counts, strict=True))
++    logger.info("read-derived rows re-keyed onto their canonical: %d", moved)
  
      cur.execute(LIBRARY_SOURCE_SQL)
 +    declared = [acc for (acc,) in cur.fetchall()]
@@ -156,6 +147,26 @@
 +        if reason:
 +            lib_vetoed[acc] = reason
 +    logger.info("library_source vetoes: %s", Counter(lib_vetoed.values()))
++    protocol_keys: set[str] = set()
++    if protocol:
++        protocol_keys = {resolve(a) or a for a in recall_feeds.protocol_hits_by_study(pg)}
++    # archive evidence independent of the title/description text
++    corroborated = {a for a in declared if a not in lib_vetoed} | protocol_keys
++
++    cur.execute(TEXT_SQL, {"rx": SC_TEXT_REGEX})
++    text_rows = cur.fetchall()
++    # Studies whose every run abstained get their text verdict back only with
++    # archive corroboration, minus the audit's text false-positive classes
++    # (bulk-companion tags, linked-read genomes).
++    vetoed = {a for a, _, t, d in text_rows if rr.text_promotion_vetoed(t, d)}
++    staged, text_only = rr.apply_text(
++        staged,
++        {a: m for a, m, _, _ in text_rows},
++        vetoed=vetoed,
++        corroborated=corroborated,
++    )
++    logger.info("text studies kept or promoted TRUE: %d", text_only)
++
      library_source_only = 0
 -    for (acc,) in cur.fetchall():
 +    for acc in declared:
@@ -164,7 +175,7 @@
          existing = staged.get(acc)
          # Strictly additive: a declared library_source only fills a study
          # whose status is otherwise 'not_screened' -- either it never appeared
-@@ -708,6 +730,34 @@
+@@ -708,6 +740,34 @@
          library_source_only += 1
      logger.info("library_source-only studies added/promoted: %d", library_source_only)
  
@@ -183,10 +194,10 @@
 +    logger.info("whitelist-only negatives overruled by declared libraries: %d", flipped)
 +
 +    if protocol:
-+        hits = recall_feeds.protocol_hits_by_study(pg)
-+        keys = {resolve(a) or a for a in hits}
-+        staged, n_prot = rr.apply_additive(staged, keys, rr.PROTOCOL_STATUS)
-+        logger.info("protocol-text studies added: %d (of %d with a hit)", n_prot, len(keys))
++        staged, n_prot = rr.apply_additive(staged, protocol_keys, rr.PROTOCOL_STATUS)
++        logger.info(
++            "protocol-text studies added: %d (of %d with a hit)", n_prot, len(protocol_keys)
++        )
 +
 +    if external is not None:
 +        # Labelled, optional evidence: membership in an external single-cell
@@ -199,7 +210,7 @@
      conn.executemany(
          "INSERT OR REPLACE INTO study_single_cell VALUES (?,?,?,?,?,?,?,?,?,?)",
          list(staged.values()),
-@@ -728,9 +778,20 @@
+@@ -728,9 +788,20 @@
          choices=("both", "organism", "organism-overwrite", "single-cell"),
          default="both",
      )

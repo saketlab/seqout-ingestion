@@ -1,0 +1,25 @@
+accession,label,mixed,judged_modality,confidence,evidence
+SRP515399,sc,False,unclear,medium,Private GEO placeholder title; only evidence is archive library_source SINGLE CELL on 5 of 5 experiments (library fields only).
+SRP572205,sc,False,scRNA-seq,high,"description: ""Single-cell RNA-sequencing (scRNAseq) was performed during the inflammatory stage""; SINGLE CELL 8/8."
+SRP426651,sc,False,scRNA-seq,high,"overall design: ""2,000-3,000 cells were then encapsulated using the inDrops method""; SINGLE CELL 3/3."
+SRP560853,sc,False,scRNA-seq,high,"protocol: ""single cells were obtained using a Chromium Controller (10Genomics) and scRNA-seq library were constructed""."
+ERP183383,unclear,False,,low,"ChronoSeq ""Time-Tagged beads"" sampling THP-1/K562 mix every 15 min; SINGLE CELL 4/4 but packet does not show per-cell resolution vs pooled/supernatant time-barcoded readout."
+GSE207085,sc,False,scRNA-seq,high,"protocol: ""Smart-Seq3 single-cell RNA libraries""; overall design: ""FACS sorted and single-cell libraries were made""; SINGLE CELL 1440/1440."
+SRP612785,sc,False,unclear,medium,"NHP bnAb germline-targeting; description silent on assay; archive library_source SINGLE CELL on 16 of 48 experiments (RNA-Seq 16, OTHER 32), likely 10x GEX+BCR."
+GSE144483,sc,False,scRNA-seq,medium,"SuperSeries; protocol: ""Using the Chromium controller (10x Genomics) and reagents from the Chromium Single Cell 3′ Reagent Kit v3""."
+SRP557538,unclear,False,,low,"Salmon skin wound study; description truncated, no assay stated; SINGLE CELL 2/2 but LLM guess Spatial Transcriptomics; cannot tell sc vs spatial vs ROI."
+SRP356170,sc,False,scRNA-seq,high,"title: ""Single-cell RNA sequencing of medial vascular smooth muscle cells of normal aorta""."
+SRP590482,sc,False,unclear,medium,Private GEO placeholder title; only evidence is archive library_source SINGLE CELL on 2 of 2 experiments (library fields only).
+SRP412173,sc,False,scRNA-seq,high,"overall design: ""FACS sorted and analysed by BD Rhapsody scRNAseq for gene expression""; SINGLE CELL 2/2."
+GSE333029,sc,False,snATAC-seq,high,"title: ""snATAC-seq from body of pancreas (ENCSR261TQO)""."
+GSE154632,sc,False,scATAC-seq,medium,"AR enhancer SubSeries; sample text: ""GSM4676150: scATACseq EtOH Homo sapiens ATAC-seq""; study otherwise enhancer/ChIP-focused."
+SRP222584,sc,False,scRNA-seq,high,"title ""[scRNA-seq]""; ""scRNA-seq was performed to evaluate the OTX2-PAX3-mTOR signalling axis at the single cell level""."
+SRP366330,sc,False,scRNA-seq,high,"title: ""scRNAseq from WT and PRMT1-KO microglia""."
+SRP373587,sc,False,scRNA-seq,high,"protocol: ""Libraries were generated using the 10X Chromium Next GEM single cell 3 reagent kits v3.1""."
+SRP331691,sc,False,scRNA-seq,high,"title ""[single-cell RNA-seq]""; ""we performed single-cell transcriptome analysis of >50,000 airway CD4+ T cells""."
+GSE180190,sc,False,scRNA-seq,medium,"SuperSeries; protocol: ""prepared using the 10x Genomics Chromium Controller and the Chromium Single Cell 3′ GEM, Library and Gel Bead kit v3""."
+SRP325098,sc,True,unclear,medium,Base editing LCA mouse; AMPLICON 30 + RNA-Seq 3; archive library_source SINGLE CELL on 3 of 33 experiments; description does not name assay.
+SRP422901,sc,False,scRNA-seq,high,"description: ""we used single cell RNA-seq (scRNA-seq) and immunohistological analysis""; SINGLE CELL 2/2."
+SRP445585,sc,False,unclear,medium,Treg LN residency; truncated description does not name assay; archive library_source SINGLE CELL on 2 of 2 experiments.
+SRP268926,sc,False,scRNA-seq,high,"title: ""Single cell transcriptome of fresh and UM171-expanded CD34+ cord blood cells""; ""10X Chromium 3' v2""."
+SRP498172,sc,False,scRNA-seq,high,"protocol: ""10x Chromium single cell 3' gene expression library prep""; SINGLE CELL 9/9."

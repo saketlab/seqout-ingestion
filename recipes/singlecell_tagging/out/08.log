@@ -9,8 +9,7 @@
      Census                 title_wording_miss           external   1
      Census                 title_wording_miss      not_recovered   3
 scBaseCount                      catalogue_gap           external   1
-scBaseCount              no_evidence_in_seqout           external   6
-scBaseCount              no_evidence_in_seqout               text   2
+scBaseCount              no_evidence_in_seqout           external   8
 scBaseCount                 protocol_text_only           protocol 175
 scBaseCount          scanner_called_bulk_r1len      not_recovered   8
 scBaseCount scanner_called_bulk_whitelist_only           external   1
@@ -20,10 +19,11 @@ scBaseCount             staged_not_transferred           external   1
 scBaseCount             staged_not_transferred          libsource 363
 scBaseCount             staged_not_transferred           protocol   1
 scBaseCount             staged_not_transferred               text  94
-scBaseCount                  study_matrix_only           external   4
+scBaseCount                  study_matrix_only           external   6
 scBaseCount                  study_matrix_only      not_recovered   1
-scBaseCount                  study_matrix_only               text   3
-scBaseCount         text_dropped_after_abstain               text  12
+scBaseCount                  study_matrix_only               text   1
+scBaseCount         text_dropped_after_abstain           external   4
+scBaseCount         text_dropped_after_abstain      text_restored   8
 scBaseCount                 title_wording_miss           external   2
 Census {'external': 3, 'libsource': 6, 'not_recovered': 6, 'protocol': 10, 'text': 1, 'whitelist_override': 1}
-scBaseCount {'external': 15, 'libsource': 363, 'not_recovered': 16, 'protocol': 176, 'text': 111, 'whitelist_override': 10}
+scBaseCount {'external': 23, 'libsource': 363, 'not_recovered': 16, 'protocol': 176, 'text': 95, 'text_restored': 8, 'whitelist_override': 10}

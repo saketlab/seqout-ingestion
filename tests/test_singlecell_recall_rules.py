@@ -178,3 +178,14 @@ def test_a_canonical_resolves_to_itself():
     assert rr.resolve_canonical("SRP8", amap, {}, canon) == "GSE8"
     assert rr.resolve_canonical("PRJEB1", amap, {"PRJEB1": "SRP8"}, canon) == "GSE8"
     assert rr.resolve_canonical("PRJEB2", amap, {}, canon) is None
+
+
+def test_restored_text_needs_archive_corroboration():
+    staged = {"A": _r("A", "not_screened"), "B": _r("B", "not_screened")}
+    out, added = rr.apply_text(
+        staged, {"A": None, "B": None, "C": None}, corroborated={"A"}
+    )
+    assert out["A"][2] == "text_indicates_single_cell"
+    assert out["B"][2] == "not_screened"  # text alone is not enough to restore
+    assert out["C"][2] == "text_indicates_single_cell"  # no row: old rule
+    assert added == 2

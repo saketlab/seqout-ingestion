@@ -1,15 +1,15 @@
 S1: staged positives not a known canonical (cannot land): 1,837
-S2: staged positives not a known canonical (cannot land): 1,798
-S3: staged positives not a known canonical (cannot land): 1,820
+S2: staged positives not a known canonical (cannot land): 1,797
+S3: staged positives not a known canonical (cannot land): 1,819
 scenario  members  new_vs_S0  lost_vs_S0  local_only_recent_excluded  new_in_external_sets  new_not_in_external
       S0    42033          0           0                           0                     0                    0
       S1    52176      10217          74                           0                  2436                 7781
-      S2    59408      17449          74                          27                  3140                14309
-      S3    60418      18459          74                          27                  4147                14312
+      S2    58693      16734          74                          27                  3091                13643
+      S3    59750      17791          74                          27                  4145                13646
 scenario  studies  covered  recovered_of_690  covered_lost  pct_covered
       S0     6931     6240                 0             0        90.03
       S1     6931     6699               459             0        96.65
-      S2     6931     6900               660             0        99.55
+      S2     6931     6892               652             0        99.44
       S3     6931     6914               674             0        99.75
 scenario  public_deposit_collections  covered  pct_covered  recovered_of_25  recovered_accession_of_21  covered_lost
       S0                         209      182         87.1                0                          0             0
@@ -21,13 +21,15 @@ scenario added_by
 S2       libsource            6605   2100
          protocol             3548    202
          read_measured        1054    532
-         text                 2124    241
+         text                 1269    169
+         text_restored         189     23
          unknown                 1      0
          whitelist_override    977     65
-S3       external                3   1007
+S3       external                3   1054
          libsource            6605   2100
          protocol             3548    202
          read_measured        1054    532
-         text                 2124    241
+         text                 1269    169
+         text_restored         189     23
          unknown                 1      0
          whitelist_override    977     65

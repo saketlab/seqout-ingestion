@@ -6,7 +6,9 @@ Branch `fix/singlecell-tagging-gaps`, worktree `/NAS/saket/github/seqout-ingesti
 
 Postgres was not queried after 2026-09-29 early morning, because it went into crash recovery. Nothing was written to Postgres, the pipeline staging (`/data/saket/sqlites/recall_fix.db`, opened `mode=ro`) or `unified_metadata.db` (opened `mode=ro`).
 
-Python: the lamindb_test venv. Seed `_db.SEED = 20260929`; the validation sample uses `SEED + 1`. Tests use the ingestion repo venv.
+Python: the lamindb_test venv. Seeds: development round 20260929, validation round 2 20260930, **headline validation round 3 20261001**. Tests use the ingestion repo venv.
+
+**User decisions (2026-09-29):** restored text verdicts must also have a protocol-text or library_source hit (done; rules re-frozen and re-validated in round 3); the 74 studies that drop out are accepted (listed below); nothing is rolled out.
 
 ## Run order
 
@@ -18,14 +20,14 @@ Python: the lamindb_test venv. Seed `_db.SEED = 20260929`; the validation sample
 | 03 | `03_root_cause.py` | `out/03_*` | cause per missed study (table below), with seeded examples |
 | 04 | `04_rebuild_local.py [--apply]` | `study_single_cell_new`, `..._ext`, `new_added_by` | replays the patched build (the same `recall_rules` functions) |
 | 05 | `05_membership.py [--apply]` | `out/05_*`, `new_tags` | emulates `transfer.py` and the matview; scenarios S0 to S3 |
-| 06 | `06_precision_sample.py --round 1\|2` | `out/06{,b}_*` | stratified, blinded packets; round 1 is development, round 2 is validation |
-| 06j | hand judging under `seqout-paper/scripts/singlecell_audit/05_rubric.md` | `out/06{,b}_labels/` | LLM judges blinded to the pass; reviewer overrides in `out/06b_overrides.csv` |
-| 07 | `07_precision.py --round 1\|2` | `out/07_precision_round{1,2}.csv` | weighted precision, Wilson CI on the Kish effective n |
+| 06 | `06_precision_sample.py --round 1\|2\|3` | `out/06{,b,c}_*` | stratified, blinded packets; round 1 development, round 2 validation of the earlier rules, round 3 validation of the final rules |
+| 06j | hand judging under `seqout-paper/scripts/singlecell_audit/05_rubric.md` | `out/06{,b,c}_labels/` | LLM judges blinded to the pass; reviewer resolves `unclear` calls with `06r_review_text.py` (full stored text), overrides in `out/06{b,c}_overrides.csv` |
+| 07 | `07_precision.py --round 1\|2\|3` | `out/07_precision_round{1,2,3}.csv` | weighted precision, Wilson CI on the Kish effective n |
 | 08 | `08_attribution.py` | `out/08_*` | which pass recovered each target, and what is left |
 
-Code: `src/sc_enrich/recall_rules.py` (pure rules), `src/sc_enrich/recall_feeds.py` (read-only, keyset-paged PG feeds), `tests/test_singlecell_recall_rules.py` (27 tests).
+Code: `src/sc_enrich/recall_rules.py` (pure rules), `src/sc_enrich/recall_feeds.py` (read-only, keyset-paged PG feeds), `tests/test_singlecell_recall_rules.py` (28 tests).
 
-`recipes/recall_fix/build.py` is untracked in the main checkout (the user's uncommitted work), so the change to it ships as `recall_fix_build.patch` (223 lines). The patch is made against sha256 `044b73c8…` of that file, and `patch -p1 --dry-run` applies cleanly. `tests/test_recall_fix.py` plus the new tests pass (34) with the patch applied.
+`recipes/recall_fix/build.py` is untracked in the main checkout (the user's uncommitted work), so the change to it ships as `recall_fix_build.patch` (223 lines). The patch is made against sha256 `044b73c8…` of that file, and `patch -p1 --dry-run` applies cleanly. `tests/test_recall_fix.py` plus the new tests pass (35) with the patch applied.
 
 ## Causes (`out/03_cause_counts.csv`)
 
@@ -53,7 +55,7 @@ Two causes I tested for were not real. Alias-keyed staging rows lost at transfer
 
 ## Code changes (`recall_rules.py`, `recall_feeds.py`, `recall_fix_build.patch`)
 
-1. **Text-pass abstention bug** (`recall_rules.apply_text`, used by `build._build_single_cell`). A `not_screened` row now gets the text verdict. On these restored rows only, `text_promotion_vetoed()` drops the audit's text false-positive classes:
+1. **Text-pass abstention bug** (`recall_rules.apply_text`, used by `build._build_single_cell`). A `not_screened` row now gets the text verdict **only when the study also has archive corroboration**: a protocol-text hit or an unvetoed declared SINGLE CELL library_source (user decision; text alone restored at 0.80). The build therefore reads the library_source and protocol feeds before the text pass. On restored rows, `text_promotion_vetoed()` also drops the audit's text false-positive classes:
    - bracketed non-single-cell SubSeries tags (`[ChIP-seq]`, `[PRO-seq]`, `[bulk RNA-seq]`)
    - 10x linked-read / Supernova genomes
    - "bulk RNA-seq … integrated with single-cell" citations
@@ -71,110 +73,100 @@ Evaluated and **dropped**: a study-level `pentimento_study` cell-count pass. Dev
 
 `sql/matviews/singlecell_pg.sql` is **not** changed: membership follows `unified_metadata.is_single_cell`.
 
-## Before / after (local emulation, `out/05_*`, `out/08_*`)
+## Before / after (local emulation, `out/05_*`, `out/08_*`), final rules
 
 Scenarios:
 - **S0**: production today.
 - **S1**: transfer the current staging as-is, with no code change.
 - **S2**: this branch.
-- **S3**: S2 plus the external pass.
+- **S3**: S2 plus the labelled external pass.
 
 | metric | S0 | S1 | **S2** | S3 |
 |---|---|---|---|---|
-| scBaseCount studies covered (of 6,931) | 6,240 (90.03%) | 6,699 (96.65%) | **6,900 (99.55%)** | 6,914 (99.75%) |
-| recovered of the 690 tagging gaps | – | 459 | **660** | 674 |
+| scBaseCount studies covered (of 6,931) | 6,240 (90.03%) | 6,699 (96.65%) | **6,892 (99.44%)** | 6,914 (99.75%) |
+| recovered of the 690 tagging gaps | – | 459 | **652** | 674 |
 | Census public-deposit collections covered (of 209) | 182 (87.1%) | 189 (90.4%) | **200 (95.7%)** | 203 (97.1%) |
 | recovered of the 25 Census gaps | – | 7 | **18** | 21 |
-| singlecell_study members | 42,033 | 52,176 | **59,408** | 60,418 |
-| new tags vs S0 (catalogue-wide) | – | 10,217 | **17,449** | 18,459 |
+| singlecell_study members | 42,033 | 52,176 | **58,693** | 59,750 |
+| new tags vs S0 (catalogue-wide) | – | 10,217 | **16,734** | 17,791 |
 | lost vs S0 | – | 74 | 74 | 74 |
 
-**Attribution of the 660 scBaseCount recoveries (S2)**
-- 458 need only the untransferred staging (lag). The 459th is lost to the new genome-project veto and comes back only through the external pass.
-- 202 need this branch's code: protocol 175, text 17 (12 from the abstention-bug fix, 5 where the fix now lets the text verdict land), whitelist override 10.
-- The external pass adds 14 more (S3). External membership is therefore **2%** of the scBaseCount recovery (14/674) and **3 of 21** Census recoveries.
+**Attribution of the 652 scBaseCount recoveries (S2)**
+- 458 need only the untransferred staging (lag): library_source 363, text 94, protocol 1.
+- 194 need this branch's code: protocol 175, whitelist override 10, restored (corroborated) text 8, text 1.
+- The external pass adds 22 more (S3), so external membership is **3%** of the scBaseCount recovery (22/674) and **3 of 21** Census recoveries. Of the 12 text_dropped_after_abstain studies, the corroboration rule keeps 8; the other 4 are recovered only by the external pass.
 
-**Census (18 in S2)**
-- 10 from protocol text, 6 from the transferred library_source pass, 1 from text, 1 from the whitelist override.
+**Census (18 in S2):** protocol text 10, transferred library_source 6, text 1, whitelist override 1.
 
-**Catalogue-wide S2 new tags: 17,449**
-- 9,623 are lag (untransferred staging) and 7,826 are code fixes.
-- 3,140 of the new tags are in the scBaseCount/Census sets; 14,309 are not.
+**Catalogue-wide S2 new tags: 16,734**
+- 9,623 are lag (untransferred staging) and 7,111 are code fixes.
+- 3,091 are in the scBaseCount/Census sets; 13,643 are not.
 
-**The 74 studies lost exist in S1 too.** Production says `measured_single_cell`, but the 2026-09-26 staging now calls them bulk (mostly plate-based / full-length protocols: SRP107036, SRP149632). Transferring the current staging would drop them regardless of this branch. That is the G1 "single bulk-run veto" class from `singlecell_coverage_gaps`, not fixed here.
+### The 74 studies that drop out (accepted by the user)
+
+Production has them as `measured_single_cell`, but the 2026-09-26 staging calls their reads bulk (`measured_not_single_cell_text_disagrees`); they are mostly plate-based / full-length protocols. They drop out in S1 too, independent of this branch. This is the G1 "single bulk-run veto" class from `singlecell_coverage_gaps`, left unfixed here. Full list with titles: `out/05_lost_74.csv`.
+
+ERP109332, GSE201400, GSE75851, SRP064472, SRP071245, SRP075535, SRP080883, SRP100477, SRP100521, SRP101947, SRP107036, SRP110290, SRP111720, SRP124503, SRP126068, SRP127395, SRP132508, SRP136208, SRP148697, SRP149632, SRP154186, SRP161936, SRP173223, SRP219925, SRP225665, SRP234988, SRP239468, SRP241650, SRP253277, SRP256281, SRP260142, SRP261057, SRP267090, SRP267091, SRP300390, SRP305653, SRP318614, SRP318937, SRP319209, SRP321280, SRP328401, SRP328660, SRP328922, SRP330502, SRP333339, SRP341943, SRP347197, SRP356507, SRP373425, SRP402563, SRP413946, SRP416463, SRP417173, SRP460597, SRP474838, SRP482819, SRP489013, SRP491408, SRP493195, SRP505008, SRP517345, SRP517826, SRP517851, SRP518993, SRP543654, SRP547798, SRP552842, SRP560482, SRP560612, SRP563867, SRP570918, SRP573538, SRP637511, SRP659797
 
 ### Residual misses (`out/08_attribution.csv`)
 
-- **scBaseCount (16 left in S2 + S3):**
-  - 8 are R1-length bulk calls (VDJ/BCR, R2C2, mixed); these need a rescan with BAM or all reads.
-  - 7 are whitelist-only negatives without a declared majority.
-  - 1 is matrix-only.
-- **Census (7):**
-  - 2 are catalogue gaps (E-HCAD-10, HRA000328).
-  - 3 are PMID-only collections whose linked studies are methylation or bulk companions.
-  - 1 is GSE286254 ("Single-Cell Atlas" in the title only).
-  - 1 is the motor-cortex collection's snmC/companion series.
+- **scBaseCount (16 left even with S3):** 8 are R1-length bulk calls (VDJ/BCR, R2C2, mixed) that need a rescan with BAM or all reads; 7 are whitelist-only negatives without a declared majority; 1 is matrix-only.
+- **Census (6 left in S3):** 2 catalogue gaps (E-HCAD-10, HRA000328); PMID-only collections whose linked studies are methylation or bulk companions; GSE286254 ("Single-Cell Atlas" in the title only).
 
-## Precision of new tags not in scBaseCount/Census (`out/07_precision_round{1,2}.csv`)
+## Precision of new tags not in scBaseCount/Census (`out/07_precision_round3.csv`)
 
-Population: S2 new tags outside the external sets, N = 14,308. Stratified by the pass that added each tag.
+Population: final-rule S2 new tags outside the external sets, N = 13,642. Stratified by the pass that added each tag; `text` = a study with no staged row (old rule, mostly ingested after the staging build), `text_restored` = the corroborated abstention-bug fix.
 
-**Round 2 (validation, the headline).** 20 per stratum, 100 studies, seed 20260930, drawn after the rules were frozen. Four blinded judges, then a reviewer pass over every unclear against the full stored text (7 of 11 resolved; see `out/06b_overrides.csv`).
+**Round 3 (headline).** Seed **20261001**, 20 per stratum, 120 studies, drawn after the rules were re-frozen, excluding every study in rounds 1–2. Five blinded judges; the reviewer resolved 4 of 7 `unclear` calls against the full stored text (`out/06c_overrides.csv`).
 
 | scope | N | judged | precision | 95% CI |
 |---|---|---|---|---|
-| **all new tags** | 14,308 | 96 (+4 unclear) | **0.934** | 0.844–0.973 |
-| all, unclear counted as FP | | 100 | 0.866 | 0.762–0.928 |
-| code fixes only | 7,121 | 61 | 0.892 | 0.773–0.953 |
-| lag only (untransferred staging) | 7,187 | 35 | 0.992 | 0.830–1.000 |
+| **all new tags** | 13,642 | 117 (+3 unclear) | **0.952** | 0.865–0.984 |
+| all, unclear counted as FP | | 120 | 0.904 | 0.806–0.955 |
+| **code-fix tags only** | 6,455 | 70 (+2 unclear) | **0.957** | 0.843–0.990 |
+| code-fix, unclear as FP | | 72 | 0.905 | 0.777–0.963 |
+| lag only (untransferred staging) | 7,187 | 47 (+1 unclear) | 0.942 | 0.779–0.987 |
 
-| stratum | precision | 95% CI |
-|---|---|---|
-| libsource | 1.000 | 0.816–1.000 (3 unclear) |
-| protocol | 0.900 | 0.699–0.972 |
-| read_measured (lag) | 0.950 | 0.764–0.991 |
-| whitelist_override | 0.947 | 0.754–0.991 |
-| **text (restored)** | **0.800** | 0.584–0.919 |
+| stratum | N | precision | 95% CI |
+|---|---|---|---|
+| libsource | 6,605 | 0.947 | 0.754–0.991 |
+| protocol | 3,548 | 0.944 | 0.742–0.990 |
+| read_measured (lag) | 1,054 | 0.950 | 0.764–0.991 |
+| text (no staged row, old rule) | 1,269 | 0.950 | 0.764–0.991 |
+| **text_restored (corroborated)** | 189 | **1.000** | 0.839–1.000 |
+| whitelist_override | 977 | 1.000 | 0.839–1.000 |
 
-The point estimate clears the 0.854 catalogue baseline (0.842 with unclear counted as FP). The lower CI bound does not.
+Both point estimates clear the 0.854 catalogue baseline. The overall 95% lower bound (0.865) is above it; the code-fix lower bound (0.843) is just below, with n_eff 39.
 
-False positives in round 2:
-- a bulk companion (GSE301092)
-- 10x linked-read genomes (SRP223911)
-- a *Bacillus* WGS mislabelled SINGLE CELL (SRP476505; the organism regex misses genus names)
-- bulk sorted Smart-seq2 pools (SRP299168, SRP500320)
-- a Drop-seq sample-barcode bulk run (SRP229312)
-- a Smart-seq3 citation (GSE306281)
+False positives in round 3:
+- ERP141417 ("bulk RNA-seq" with SINGLE CELL declared on every experiment)
+- GSE144691 (WGBS SubSeries with a shared scATAC protocol)
+- SRP588755 ("[bulk RNA-seq]", new-row text; the old rule has no veto)
+- SRP230444 (20-oocyte Smart-seq2 pools)
 
-Round 1 (development, 151 studies, seed 20260929) was used to find the false-positive classes. Scored against the final rules it gives 0.941 (0.867–0.975), which is optimistic.
+Unclear: ERP183383 (ChronoSeq), GSE84149 (CEL-seq, SuperSeries), GSE135283 (MARS-seq).
 
-## Production rollout: **NOT RUN**
+Earlier rounds: round 2 (seed 20260930, previous rules, uncorroborated text) gave 0.934 (0.844–0.973) with the restored/new text stratum at 0.80. Round 1 (development, seed 20260929) is optimistic because the rules were tuned on it.
 
-Run these only after Postgres is out of recovery and the user says go; ideally run the build off-peak.
+## Production rollout: **NOT RUN, and not to be run** (user decision 2026-09-29)
+
+The user decided not to roll out: no merge to main, no transfer, no matview refresh, no production writes. The commands below are recorded only for a later decision.
 
 ```bash
-# 1. merge (branch adds new files only; no conflict with the user's uncommitted edits)  -- NOT RUN
-cd /NAS/saket/github/seqout-ingestion
-git merge --no-ff fix/singlecell-tagging-gaps
-# apply the build.py change to the (untracked) recall_fix recipe                       -- NOT RUN
-patch -p1 --dry-run < recipes/singlecell_tagging/recall_fix_build.patch && \
-patch -p1           < recipes/singlecell_tagging/recall_fix_build.patch
+# NOT RUN -- merge (branch adds new files only)
+cd /NAS/saket/github/seqout-ingestion && git merge --no-ff fix/singlecell-tagging-gaps
+# NOT RUN -- apply the build.py change to the untracked recall_fix recipe
+patch -p1 --dry-run < recipes/singlecell_tagging/recall_fix_build.patch && patch -p1 < recipes/singlecell_tagging/recall_fix_build.patch
 .venv/bin/python -m pytest -q tests/test_recall_fix.py tests/test_singlecell_recall_rules.py
-
-# 2. back up the staging, rebuild the single-cell verdicts (PG reads only, keyset-paged) -- NOT RUN
+# NOT RUN -- back up staging, rebuild (PG reads only, keyset-paged; avoid :28-:50 past the hour)
 cp -p /data/saket/sqlites/recall_fix.db /data/saket/sqlites/recall_fix.db.before_sctag_$(date +%Y%m%d-%H%M%S)
 python3 recipes/recall_fix/build.py --db /data/saket/sqlites/recall_fix.db --only single-cell
-#   (optional, labelled) add: --external-accessions /path/to/scbasecount_census_accessions.txt
-
-# 3. transfer: dry run, read the transition matrix, then apply (writes before/after snapshots) -- NOT RUN
+# NOT RUN -- transfer: dry run, then apply
 python3 recipes/recall_fix/transfer.py --db /data/saket/sqlites/recall_fix.db --only single-cell
 python3 recipes/recall_fix/transfer.py --db /data/saket/sqlites/recall_fix.db --only single-cell --apply
-
-# 4. matview refresh (singlecell_study CASCADEs into country/perturbation/spatial)     -- NOT RUN
+# NOT RUN -- matview refresh
 just refresh_technology_matviews
 ```
-
-After step 3, check that production `single_cell_status` includes `protocol_indicates_single_cell` and `library_source_indicates_single_cell`. Review the 74 measured-positive studies that the rebuilt staging flips to bulk before applying.
 
 ## Caveats and unverified items
 
@@ -186,6 +178,6 @@ After step 3, check that production `single_cell_status` includes `protocol_indi
   - The paged feeds in `recall_feeds.py` have not been run against Postgres.
   - The assumed indexes (`ena_experiments.run_accession`, `sra_experiments.study`, `ena_experiments.study_accession`) are unverified.
   - `aliases` values are assumed to be strings.
-- **Judging.** LLM judges worked from packets with descriptions truncated at 900 characters; the reviewer checked every unclear call and the round-1 false positives. The text stratum is the weakest (0.80). If a stricter bar is wanted, restoring text verdicts can be limited to studies with a protocol or library_source hit as well.
-- **The 74 lost studies** need a decision before the transfer (see above).
+- **Judging.** LLM judges worked from packets with descriptions truncated at 900 characters; the reviewer checked every unclear call and the round-1 false positives. Round 3 has 20 per stratum, so per-stratum CIs are wide.
+- **The 74 lost studies** are accepted by the user (listed above).
 - A 110-second search found no code in pysradb-server / pysraweb that enumerates `single_cell_status` values, so the new statuses should pass through. This is not exhaustive.

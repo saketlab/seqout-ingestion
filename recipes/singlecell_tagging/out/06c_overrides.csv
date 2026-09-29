@@ -1,0 +1,5 @@
+accession,label,note
+SRP557538,sc,"overall design: ""Skin ... of Atlantic salmon (Salmo salar) was analyzed using snRNA-seq"""
+PRJNA1516584,sc,"description: ""integrating spatial transcriptomics with single-cell RNA sequencing (scRNA-Seq)""; ""scRNA-seq identified several genes upregulated"""
+SRP230444,bulk_sorted,"""cDNAs were amplificated according to Smart-seq2 ... with 20 oocyte per samples"""
+GSE144691,bulk_companion,"title ""(WGBS)"", methylation-only strategy; scATAC is in the sibling analysis"

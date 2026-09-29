@@ -6,7 +6,8 @@ Population: the FINAL rules' S2 new tags not in scBaseCount/Census
 studies the refined rules no longer tag drop out (they are the removed FPs and
 TPs), and the stratum (pass) is the one in the final build.
 
-  --round 2   validation sample (drawn after refinement): the headline
+  --round 3   validation after the corroboration rule (seed 20261001): headline
+  --round 2   validation of the previous rule set
   --round 1   development sample (the rules were tuned on it): optimistic
 
 TP = sc, spatial. FP = bulk_*, microarray, crispr_bulk, spatial_roi. `unclear`
@@ -31,7 +32,7 @@ from _db import OUT
 TP = {"sc", "spatial"}
 FP = {"bulk_companion", "bulk_sorted", "bulk_other", "microarray", "crispr_bulk", "spatial_roi"}
 Z = 1.959964
-PREFIX = {1: "06", 2: "06b"}
+PREFIX = {1: "06", 2: "06b", 3: "06c"}
 
 
 def wilson(p: float, n: float) -> tuple[float, float]:
@@ -110,5 +111,5 @@ def _s1_new() -> set[str]:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--round", type=int, choices=(1, 2), required=True)
+    ap.add_argument("--round", type=int, choices=(1, 2, 3), required=True)
     main(ap.parse_args().round)

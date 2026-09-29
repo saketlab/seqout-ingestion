@@ -320,6 +320,7 @@ def apply_text(
     staged: Staged,
     text_hits: Mapping[str, str | None],
     vetoed: Container[str] = frozenset(),
+    corroborated: Container[str] | None = None,
 ) -> tuple[Staged, int]:
     """
     Title/description regex pass, with the abstention bug fixed.
@@ -327,14 +328,19 @@ def apply_text(
     A study whose every pentimento run abstained is staged 'not_screened' by the
     read pass. The old loop then only filled modality, so the text verdict was
     lost. Here 'not_screened' gets the text verdict unless the study is in
-    `vetoed` (text_promotion_vetoed); a study with no row keeps the old rule.
+    `vetoed` (text_promotion_vetoed) or, when `corroborated` is given, lacks
+    independent archive evidence (a protocol-text hit or an unvetoed declared
+    library_source). Text alone restored at 0.80 precision, below the 0.85 bar.
+    A study with no row keeps the old rule.
     """
     out = dict(staged)
     added = 0
     for acc, modality in text_hits.items():
         prev = out.get(acc)
         restoring = prev is not None and prev[2] == "not_screened"
-        if restoring and acc in vetoed:
+        if restoring and (
+            acc in vetoed or (corroborated is not None and acc not in corroborated)
+        ):
             continue
         if prev is None or restoring:
             keep_mod = prev[3] if prev else None
