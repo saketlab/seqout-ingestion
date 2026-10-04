@@ -264,25 +264,39 @@ def prefetch(
         "payload` to a yuj fleet host as one file)",
     ),
     batch_size: int = typer.Option(25, help="accessions per bulk API call"),
+    pg_url: str | None = typer.Option(
+        None,
+        envvar="PG_URL",
+        help="Postgres to read AE/GEA (E-MTAB-*, E-GEAD-*, ...) sample sheets "
+        "from, read-only; the bulk API does not serve them",
+    ),
 ) -> None:
     """
     Cache project metadata where the seqout API is reachable.
 
-    Unknown accessions are reported and skipped by offline workers.
+    AE/GEA accessions are read from Postgres instead. Unknown accessions are
+    reported and skipped by offline workers.
     """
     import pickle
 
+    from enrich.ae_gea import fetch_ae_gea_projects, is_ae_gea
     from enrich.batch import _SQLITE_CACHE_SUFFIXES, read_accessions
     from enrich.projects import fetch_projects_batched, write_projects_sqlite
 
+    def progress(_projects: list, done: int, total: int) -> None:
+        logger.info("prefetched %d/%d", done, total)
+
     accessions = read_accessions(accession_file)
+    # one E-accession in a bulk API batch fails the whole batch with a 400
+    ae_gea = [a for a in accessions if is_ae_gea(a)]
     projects = fetch_projects_batched(
-        accessions,
-        batch_size,
-        on_batch=lambda _projects, done, total: logger.info(
-            "prefetched %d/%d", done, total
-        ),
+        [a for a in accessions if not is_ae_gea(a)], batch_size, on_batch=progress
     )
+    if ae_gea:
+        if not pg_url:
+            logger.error("%d AE/GEA accessions need --pg-url", len(ae_gea))
+            raise typer.Exit(1)
+        projects |= fetch_ae_gea_projects(ae_gea, pg_url, on_batch=progress)
     missing = [a for a in accessions if a not in projects]
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     if cache_file.suffix in _SQLITE_CACHE_SUFFIXES:

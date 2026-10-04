@@ -34,6 +34,16 @@ def _fatal(message: str, code: int) -> int:
     return code
 
 
+def _missing_reference_files() -> list[str]:
+    """Ontology and Cellosaurus files the engine needs but cannot read."""
+    from enrich.cellosaurus import lookup_path
+    from enrich.ontology_map import FIELD_ONTOLOGY_MAP, ONTOLOGY_DIR
+
+    paths = {ONTOLOGY_DIR / name for name, _, _ in FIELD_ONTOLOGY_MAP.values()}
+    paths.add(Path(lookup_path()))
+    return sorted(str(p) for p in paths if not p.is_file())
+
+
 def main() -> int:  # noqa: PLR0911 (early-return fatal guards)
     if len(sys.argv) < _ARGV_MIN:
         sys.stderr.write("usage: yuj_worker.py <ACCESSION|accessions.txt>\n")
@@ -75,6 +85,15 @@ def main() -> int:  # noqa: PLR0911 (early-return fatal guards)
         return _fatal(
             f"metadata cache not found at {cache}. Compute nodes are offline, so "
             f"without it every study resolves to no samples and is skipped",
+            _EXIT_MISSING_DEPENDENCY,
+        )
+
+    missing_refs = _missing_reference_files()
+    if missing_refs:
+        return _fatal(
+            f"ontology/cellosaurus files missing: {', '.join(missing_refs)}. The "
+            f"engine only warns and carries on, writing output with no ontology "
+            f"ids that the resume check then counts as done",
             _EXIT_MISSING_DEPENDENCY,
         )
 

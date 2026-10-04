@@ -6,8 +6,10 @@ import csv
 import json
 import logging
 import os
+import random
 import subprocess
 import threading
+import time
 from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
@@ -62,7 +64,16 @@ STALE_CALL_COLUMNS = frozenset({"preflightx_library"})
 SEX_COLUMN = "preflightx_sex"
 SEX_CONFIDENCE_COLUMN = "preflightx_sex_confidence"
 TIMEOUT_S = 900
+# ENA drops connections intermittently over both HTTPS and FTP (and a campus
+# middlebox breaks some HTTPS handshakes), so a failed scan is retried with the
+# other scheme before the run is given up: https, ftp, https, ...
+RETRIES = int(os.environ.get("PREFLIGHT_RETRIES", "3"))
+RETRY_BACKOFF_S = float(os.environ.get("PREFLIGHT_RETRY_BACKOFF_S", "20"))
 PROGRESS_EVERY = 2000
+# Plate-based studies deposit one experiment per cell (up to ~55k), but a study's
+# assay is settled long before that: scan a seeded random sample of at most this
+# many experiments per manifest; the rest are written blank. 0 scans everything.
+MAX_EXPERIMENTS = int(os.environ.get("PREFLIGHT_MAX_EXPERIMENTS", "0"))
 
 
 def _strip_prefix(text: str, prefix: str) -> str:
@@ -94,14 +105,18 @@ def pick_r1_r2(fastq_ftp: str) -> tuple[str | None, str | None]:
     return parts[0], None
 
 
-def call_preflightx(
-    r1: str,
-    r2: str | None,
-    n_reads: int,
-    exe: str,
-    sex_reads: int | None = None,
-) -> dict[str, Any] | None:
-    """Return the parsed preflightx JSON for one run, or None if it failed."""
+def _as_scheme(url: str | None, scheme: str) -> str | None:
+    """Rewrite an ENA path to the given scheme (https or ftp)."""
+    if not url:
+        return url
+    path = url.split("://", 1)[-1]
+    return f"{scheme}://{path}"
+
+
+def _run_preflightx(
+    r1: str, r2: str | None, n_reads: int, exe: str, sex_reads: int | None
+) -> tuple[dict[str, Any] | None, str]:
+    """One preflightx call: (parsed JSON or None, short reason on failure)."""
     cmd = [exe, "--n-reads", str(n_reads)]
     if sex_reads is not None:
         cmd += ["--sex-reads", str(sex_reads)]
@@ -112,15 +127,37 @@ def call_preflightx(
         out = subprocess.run(  # noqa: S603
             cmd, capture_output=True, text=True, timeout=TIMEOUT_S, check=False
         )
-    except (subprocess.TimeoutExpired, OSError):
-        logger.debug("preflightx failed on %s", r1)
-        return None
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    except OSError as e:
+        return None, f"exec: {e}"
     if out.returncode != 0 or not out.stdout.strip():
-        return None
+        return None, " | ".join(out.stderr.strip().splitlines()[-3:])[:300]
     try:
-        return json.loads(out.stdout)
+        return json.loads(out.stdout), ""
     except json.JSONDecodeError:
-        return None
+        return None, "unparseable JSON"
+
+
+def call_preflightx(
+    r1: str,
+    r2: str | None,
+    n_reads: int,
+    exe: str,
+    sex_reads: int | None = None,
+) -> dict[str, Any] | None:
+    """Return parsed preflightx JSON for one run, or None once every attempt failed."""
+    reason = ""
+    for attempt in range(max(RETRIES, 1)):
+        scheme = "https" if attempt % 2 == 0 else "ftp"
+        a1, a2 = _as_scheme(r1, scheme) or r1, _as_scheme(r2, scheme)
+        report, reason = _run_preflightx(a1, a2, n_reads, exe, sex_reads)
+        if report is not None:
+            return report
+        if attempt + 1 < RETRIES:
+            time.sleep(RETRY_BACKOFF_S * (attempt + 1))
+    logger.warning("preflightx failed on %s after %d attempts: %s", r1, RETRIES, reason)
+    return None
 
 
 def extract(report: dict[str, Any]) -> dict[str, str]:
@@ -421,12 +458,14 @@ def annotate(
     deep_n_reads: int = 400_000,
     deep_max_runs: int = 2,
     provenance_path: Path | None = None,
+    threads: int = 1,
 ) -> int:
     """
     Annotate one manifest CSV. Returns experiments scanned.
 
     Calls are experiment-level; sample rows stay blank because samples were not
-    scanned.
+    scanned. Experiments are independent preflightx subprocesses, so `threads`
+    scans them concurrently; output order follows the manifest either way.
     """
     with in_csv.open(newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -435,9 +474,10 @@ def annotate(
         return 0
     header = _call_header(rows[0])
 
-    provenance: OrderedDict[str, dict[str, Any]] = OrderedDict()
-    calls: dict[str, dict[str, str]] = {}
-    for experiment, runs in _experiment_runs(rows).items():
+    def scan(
+        item: tuple[str, list[tuple[str, str | None]]],
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        _, runs = item
         reports: list[dict[str, Any]] = []
         scanned: list[dict[str, str]] = []
         for r1, r2 in runs[:max_runs]:
@@ -456,14 +496,30 @@ def annotate(
             if deeper:
                 voted[SEX_COLUMN] = deeper
                 voted[SEX_CONFIDENCE_COLUMN] = deeper_confidence
-        calls[experiment] = voted
-        provenance[experiment] = {
+        return voted, {
             # short keys, matching the shape
             # provenance_json._call_row already reads out of the stored files
             "vote": {_strip_prefix(k, "preflightx_"): v for k, v in voted.items()},
             "runs": reports,
             "deep_runs": deep_reports,
         }
+
+    items = list(_experiment_runs(rows).items())
+    n_total = len(items)
+    if 0 < MAX_EXPERIMENTS < n_total:
+        # seeded by the manifest name, so a rerun scans the same experiments
+        keep = set(random.Random(in_csv.stem).sample(range(n_total), MAX_EXPERIMENTS))  # noqa: S311 (sampling, not crypto)
+        items = [item for i, item in enumerate(items) if i in keep]  # manifest order
+    if threads > 1 and len(items) > 1:
+        with ThreadPoolExecutor(max_workers=min(threads, len(items))) as pool:
+            results = list(pool.map(scan, items))  # map keeps manifest order
+    else:
+        results = [scan(item) for item in items]
+    provenance: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    calls: dict[str, dict[str, str]] = {}
+    for (experiment, _), (voted, prov) in zip(items, results, strict=True):
+        calls[experiment] = voted
+        provenance[experiment] = prov
 
     _write_calls(out_csv, header, rows, calls)
 
@@ -478,6 +534,8 @@ def annotate(
                         "max_runs": max_runs,
                         "deep_n_reads": deep_n_reads,
                         "deep_max_runs": deep_max_runs,
+                        "max_experiments": MAX_EXPERIMENTS,
+                        "n_experiments_total": n_total,
                     },
                     "experiments": provenance,
                 }
@@ -494,6 +552,7 @@ def annotate_one(
     max_runs: int = 1,
     deep_n_reads: int = 400_000,
     deep_max_runs: int = 2,
+    threads: int = 1,
 ) -> bool:
     """
     Annotate one manifest unless finished output exists.
@@ -514,6 +573,7 @@ def annotate_one(
         deep_n_reads,
         deep_max_runs,
         out_dir / f"{manifest.stem}.provenance.json",
+        threads,
     )
     if not scanned:
         # Unscannable manifests stay pending until links are available.
@@ -533,6 +593,7 @@ def annotate_dir(
     deep_n_reads: int = 400_000,
     deep_max_runs: int = 2,
     accession: str | None = None,
+    threads: int = 1,
 ) -> dict[str, int]:
     """
     Annotate every manifest in in_dir, or one accession when given.
@@ -550,7 +611,7 @@ def annotate_dir(
             logger.warning("no manifest for %s", path.stem)
             continue
         if annotate_one(
-            path, out_dir, exe, n_reads, max_runs, deep_n_reads, deep_max_runs
+            path, out_dir, exe, n_reads, max_runs, deep_n_reads, deep_max_runs, threads
         ):
             done += 1
             logger.info("preflight %s (%d done, %d skipped)", path.stem, done, skipped)

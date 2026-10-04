@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -25,12 +26,39 @@ from sentence_transformers import SentenceTransformer, util
 from tqdm import tqdm
 from typing_extensions import TypedDict
 
+from age import rules as age_rules
 from enrich import cellosaurus as _cello
 from enrich.prompts import PROMPTS
 
 console = Console()
 _FUZZ_THRESHOLD = 75  # rapidfuzz score threshold for column matching (0-100)
 _EMBEDDING_MODELS = {}
+# Rows are enriched on a thread pool; without this every thread that misses
+# the cache loads its own copy of the model (1.3GB each) at the same time.
+_EMBEDDING_LOCK = threading.Lock()
+# Every study re-asks the same query terms ("sex", "age", "tissue", ...) against
+# column names that recur across studies. Encoding each distinct string once per
+# process removes most encoder calls, which dominate a study on CPU.
+_TEXT_EMBEDDINGS: dict = {}
+_TEXT_EMBEDDINGS_MAX = 50_000  # ponytail: clear-all when full; LRU if it thrashes
+
+
+def _embed_texts(model, model_name: str, texts: list[str]):
+    """Embeddings for `texts` as one (n, dim) tensor, encoding only unseen strings."""
+    import torch
+
+    with _EMBEDDING_LOCK:
+        have = {t: _TEXT_EMBEDDINGS.get((model_name, t)) for t in dict.fromkeys(texts)}
+    missing = [t for t, emb in have.items() if emb is None]
+    if missing:
+        encoded = model.encode(missing, convert_to_tensor=True)
+        have.update(zip(missing, encoded, strict=True))
+        with _EMBEDDING_LOCK:
+            if len(_TEXT_EMBEDDINGS) + len(missing) > _TEXT_EMBEDDINGS_MAX:
+                _TEXT_EMBEDDINGS.clear()
+            _TEXT_EMBEDDINGS.update({(model_name, t): have[t] for t in missing})
+    return torch.stack([have[t] for t in texts])
+
 
 load_dotenv()
 
@@ -1048,7 +1076,13 @@ _ASSAY_REGEX_MAP = [
 
 
 def _get_embedding_model(model_name: str, *, verbose: bool = True):
-    global _EMBEDDING_MODELS
+    if model_name in _EMBEDDING_MODELS:
+        return _EMBEDDING_MODELS[model_name]
+    with _EMBEDDING_LOCK:
+        return _load_embedding_model(model_name, verbose=verbose)
+
+
+def _load_embedding_model(model_name: str, *, verbose: bool) -> SentenceTransformer:
     if model_name not in _EMBEDDING_MODELS:
         if verbose:
             console.print("Setting up embedding model...")
@@ -1082,6 +1116,24 @@ def _fuzz_match_keys(
         if score >= threshold:
             results.append((key, score / 100.0))
     return results
+
+
+# "organ" scores just over _FUZZ_THRESHOLD against "Organism", so without this a
+# sheet with no tissue column reports the species as its tissue. "organism part"
+# is AE's name for tissue and must stay.
+_NOT_TISSUE_KEY = re.compile(
+    r"^(organism|species|taxon|taxonomy|taxon id|taxid|scientific name|"
+    r"organism name|source organism)( ch\d+)?$"
+)
+
+
+def _drop_organism_keys(keys: list[str]) -> list[str]:
+    """Remove species-naming columns from tissue candidates."""
+    return [
+        k
+        for k in keys
+        if not _NOT_TISSUE_KEY.match(re.sub(r"[_\-\s]+", " ", k).strip().lower())
+    ]
 
 
 def _title_case(value: str) -> str:
@@ -1370,14 +1422,18 @@ def enrich_df(
     _embedding_model_instance = None
     _key_embeddings_cache = None  # tensor, lazily computed
 
+    _embeddings_lock = threading.Lock()
+
     def _ensure_embeddings(keys: list[str]):
         nonlocal _embedding_model_instance, _key_embeddings_cache
-        if _key_embeddings_cache is None:
+        with _embeddings_lock:
+            if _key_embeddings_cache is not None:
+                return _embedding_model_instance, _key_embeddings_cache
             _embedding_model_instance = _get_embedding_model(
                 embedding_model, verbose=verbose
             )
-            _key_embeddings_cache = _embedding_model_instance.encode(
-                keys, convert_to_tensor=True
+            _key_embeddings_cache = _embed_texts(
+                _embedding_model_instance, embedding_model, keys
             )
         return _embedding_model_instance, _key_embeddings_cache
 
@@ -1387,7 +1443,7 @@ def enrich_df(
         if not keys:
             return []
         model, embs = _ensure_embeddings(keys)
-        query = model.encode(term, convert_to_tensor=True)
+        query = _embed_texts(model, embedding_model, [term])[0]
         similarities = util.cos_sim(query, embs).squeeze(0)
         if similarities.dim() == 0:
             s = similarities.item()
@@ -1440,11 +1496,13 @@ def enrich_df(
         )
 
     def get_tissue_keys(embeddings, keys: list[str]):
-        return _dedup_keys(
-            get_relevant_keys("tissue", embeddings, keys)
-            + get_relevant_keys("organ", embeddings, keys)
-            + get_relevant_keys("body site", embeddings, keys)
-            + get_relevant_keys("tumor site", embeddings, keys)
+        return _drop_organism_keys(
+            _dedup_keys(
+                get_relevant_keys("tissue", embeddings, keys)
+                + get_relevant_keys("organ", embeddings, keys)
+                + get_relevant_keys("body site", embeddings, keys)
+                + get_relevant_keys("tumor site", embeddings, keys)
+            )
         )
 
     def get_tissue_scores(
@@ -1649,20 +1707,49 @@ def enrich_df(
         # Provenance flags used by Cellosaurus step
         _tissue_from_embedding: bool
 
+    def _is_human(attributes: dict) -> bool:
+        if expected_taxid:
+            return str(expected_taxid) == "9606"
+        return any(
+            _NOT_TISSUE_KEY.match(re.sub(r"[_\-\s]+", " ", str(k)).strip().lower())
+            and _normalized(v) in {"homo sapiens", "human"}
+            for k, v in attributes.items()
+        )
+
     def estimate_age(state: State):
         row_idx = state["row_index"]
-        keys = get_age_keys(state["embeddings"], state["raw_keys"])
+        attributes = state["attributes"]
+        # A column that names age as a word, parsed by rule. The fuzzy ratio
+        # passes Stage/agent and misses "age (years)", and _is_garbage drops
+        # every bare-number age, so numeric ages never reach the fallback below.
+        word_keys = [k for k in state["raw_keys"] if age_rules.is_age_tag(k)]
+        pairs = [(k, v) for k in word_keys if (v := _coerce_str(attributes.get(k)))]
+        hit = age_rules.pick_age(pairs, human=_is_human(attributes))
+        if hit["status"] == "recovered":
+            _record_provenance(row_idx, "age", "rule", hit["tag"], 1.0)
+            if embedding_only:
+                return {"age": hit["text"]}
+            return {"age": str(round(hit["years"] * 8760, 1))}
+
+        # Free text ("6 weeks old (P42)", "adult") goes on to the old path.
+        keys = word_keys or [
+            k
+            for k in get_age_keys(state["embeddings"], state["raw_keys"])
+            if not age_rules.is_excluded_tag(k)
+        ]
         if not keys:
             return {"age": None}
         age_values = _collect_values(state, keys)
         if not age_values:
             return {"age": None}
-        _debug_attrs("estimate_age", list(age_values.keys()), state["attributes"])
-        age_text = next((v for v in age_values.values() if not _is_garbage(v)), None)
-        if not age_text:
+        _debug_attrs("estimate_age", list(age_values.keys()), attributes)
+        matched_col = next(
+            (k for k, v in age_values.items() if not _is_garbage(v)), None
+        )
+        if not matched_col:
             return {"age": None}
+        age_text = age_values[matched_col]
 
-        matched_col = next(iter(age_values))
         scores = get_best_score(
             ["age"], state["embeddings"], state["raw_keys"], [matched_col]
         )

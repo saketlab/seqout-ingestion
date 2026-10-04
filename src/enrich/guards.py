@@ -584,20 +584,37 @@ def guard_cell_line_species(
         donate = _entry_donations(entry)
 
         _clear_species_field(
-            frames, i, "cell_line", ("output", "cello", "ontology"), log,
-            sample, pinned_cvcl,
+            frames,
+            i,
+            "cell_line",
+            ("output", "cello", "ontology"),
+            log,
+            sample,
+            pinned_cvcl,
         )
         for field in _SPECIES_BACKPROP_FIELDS:
             if _prov(prov, i, field) == "cellosaurus":
                 _clear_species_field(
-                    frames, i, field, ("output", "cello", "ontology"), log,
-                    sample, pinned_cvcl, donate.get(field),
+                    frames,
+                    i,
+                    field,
+                    ("output", "cello", "ontology"),
+                    log,
+                    sample,
+                    pinned_cvcl,
+                    donate.get(field),
                 )
         if _prov(prov, i, "tissue") == "cellosaurus":
             for field in _SPECIES_SITE_FIELDS:
                 _clear_species_field(
-                    frames, i, field, ("cello", "ontology"), log,
-                    sample, pinned_cvcl, donate.get(field),
+                    frames,
+                    i,
+                    field,
+                    ("cello", "ontology"),
+                    log,
+                    sample,
+                    pinned_cvcl,
+                    donate.get(field),
                 )
         n += 1
     return n
@@ -649,6 +666,98 @@ def guard_placeholder(project, frames: dict, log: _Log) -> int:
             )
         n += 1
     return n
+
+
+# G3b. Species as tissue
+#
+# Submitters sometimes put the species in a column named "tissue", and an
+# Organism column used to be fuzzy-matched as tissue. Either way a species
+# name is never a tissue, and mapping it gives a tissue ontology term such as
+# "Homo sapiens".
+
+SPECIES_TISSUE_DETECTOR = "species_as_tissue"
+SPECIES_TISSUE_REASON = "tissue_value_is_a_species_name"
+TAXON_TERM_REASON = "tissue_mapped_to_a_taxon_term"
+
+
+_PLURAL_SPECIES = {"mice": "mouse", "humans": "human", "rats": "rat"}
+
+
+def _species_like(value) -> bool:
+    """A species name, allowing plurals and a trailing sample number ("Mice", "Human1")."""
+    if _blank(value):
+        return False
+    key = re.sub(r"[^a-z ]+", " ", str(value).lower()).strip()
+    key = re.sub(r"\s+", " ", key)
+    return _species_taxid(_PLURAL_SPECIES.get(key, key)) is not None
+
+
+def _taxon_named(tissue, taxon_name) -> bool:
+    """The tissue text is the taxon itself (species "Xenopus Laevis", genus "Mus")."""
+    if _blank(tissue) or _blank(taxon_name):
+        return False
+    t = str(tissue).strip().lower()
+    name = str(taxon_name).strip().lower()
+    return t == name or t == name.split(" <")[0] or t == name.split()[0]
+
+
+def guard_species_tissue(project, frames: dict, log: _Log) -> int:
+    ids = _sample_ids(frames)
+    onto = frames.get("ontology")
+    has_ids = onto is not None and "tissue_ontology_id" in onto.columns
+    clear_text, clear_term = set(), set()
+    for key in ("output", "cello", "ontology"):
+        df = frames.get(key)
+        if df is not None and "tissue" in df.columns:
+            clear_text |= {i for i in df.index if _species_like(df.at[i, "tissue"])}
+    if has_ids:
+        for i in onto.index:
+            if not str(onto.at[i, "tissue_ontology_id"]).startswith("NCBITaxon:"):
+                continue
+            name = (
+                onto.at[i, "tissue_ontology_name"]
+                if "tissue_ontology_name" in onto.columns
+                else None
+            )
+            # NCBITaxon:1 is the taxonomy root: "Root" is a plant tissue, keep it
+            if str(onto.at[i, "tissue_ontology_id"]) != "NCBITaxon:1" and _taxon_named(
+                onto.at[i, "tissue"], name
+            ):
+                clear_text.add(i)
+            else:
+                clear_term.add(i)
+    for i in clear_text:
+        for key in ("output", "cello", "ontology"):
+            _set(
+                frames,
+                key,
+                i,
+                "tissue",
+                None,
+                log,
+                ids.get(i),
+                "null",
+                SPECIES_TISSUE_REASON,
+                SPECIES_TISSUE_DETECTOR,
+            )
+    for i in clear_term - clear_text:
+        for col in [c for c in onto.columns if c.startswith("tissue_ontology_")] + [
+            c for c in ("tissue_match_method", "tissue_ancestors") if c in onto.columns
+        ]:
+            _set(
+                frames,
+                "ontology",
+                i,
+                col,
+                None,
+                log,
+                ids.get(i),
+                "null",
+                TAXON_TERM_REASON,
+                SPECIES_TISSUE_DETECTOR,
+                clear_ontology=False,
+            )
+    return len(clear_text | clear_term)
 
 
 # G4. Bad labels
@@ -1301,6 +1410,7 @@ def apply_inline_guards(
     stats["h9"] = guard_h9(project, frames, log)
     stats["placeholder"] = guard_placeholder(project, frames, log)
     stats["organism"] = guard_organism(project, frames, log)
+    stats["species_tissue"] = guard_species_tissue(project, frames, log)
     # declared values last among the fill guards: they must see the settled
     # cell-line state, because the one disease override is gated on a
     # provenance the H9 guard can rewrite.
