@@ -101,7 +101,9 @@ def main() -> None:
             "CREATE TABLE study_canonical "
             "(accession TEXT PRIMARY KEY, canonical_accession TEXT NOT NULL)"
         )
-        with cur.copy("COPY study_canonical (accession, canonical_accession) FROM STDIN") as copy:
+        with cur.copy(
+            "COPY study_canonical (accession, canonical_accession) FROM STDIN"
+        ) as copy:
             for acc, canonical in mapping.items():
                 copy.write_row((acc, canonical))
         cur.execute(
@@ -110,7 +112,9 @@ def main() -> None:
         conn.commit()
 
     merged = sum(1 for a, c in mapping.items() if a != c)
-    print(f"study_canonical: {len(mapping)} accessions, {merged} remapped to an alias's winner")
+    print(
+        f"study_canonical: {len(mapping)} accessions, {merged} remapped to an alias's winner"
+    )
 
 
 if __name__ == "__main__":

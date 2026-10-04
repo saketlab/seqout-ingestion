@@ -68,7 +68,9 @@ def measure(cur, field: str, raw_col: str, id_col: str, top: int) -> dict:
 
     real_gap = unmapped
     if field == "disease":
-        real_gap = unmapped - sum(n for v, n in rows if v.strip().lower() in NOT_DISEASE)
+        real_gap = unmapped - sum(
+            n for v, n in rows if v.strip().lower() in NOT_DISEASE
+        )
         # rows beyond `top` that are Healthy/Control would also need excluding,
         # so pull their exact counts directly instead of trusting the top-N dump.
         cur.execute(

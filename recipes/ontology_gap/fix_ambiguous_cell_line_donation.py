@@ -321,14 +321,20 @@ def main() -> None:
             manifest_path = manifest_dir / f"ambiguous_cell_line_fix_{ts}.csv"
             with manifest_path.open("w", newline="") as fh:
                 w = csv.writer(fh)
-                w.writerow(["table", "field", "study_accession", "sample", "expected_current_value"])
+                w.writerow(
+                    [
+                        "table",
+                        "field",
+                        "study_accession",
+                        "sample",
+                        "expected_current_value",
+                    ]
+                )
                 for t in TABLES:
                     for f in GATED_FIELDS:
                         for (sa, sm), expected in plan[t][f]:
                             w.writerow([t, f, sa, sm, expected])
-            n_planned = sum(
-                len(plan[t][f]) for t in TABLES for f in GATED_FIELDS
-            )
+            n_planned = sum(len(plan[t][f]) for t in TABLES for f in GATED_FIELDS)
             print(f"manifest ({n_planned:,} field-level clears) -> {manifest_path}")
 
             for t in TABLES:

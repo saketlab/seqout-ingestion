@@ -455,8 +455,12 @@ def transfer_single_cell(
             "                    WHERE sc.study_accession = u.canonical_accession"
             "                      AND sc.is_single_cell)"
         )
-        logger.info("--keep-unstatused: %d flagged studies left untouched", cur.rowcount)
-        cur.execute("DELETE FROM _sc WHERE study_accession IN (SELECT canonical_accession FROM _keep)")
+        logger.info(
+            "--keep-unstatused: %d flagged studies left untouched", cur.rowcount
+        )
+        cur.execute(
+            "DELETE FROM _sc WHERE study_accession IN (SELECT canonical_accession FROM _keep)"
+        )
     else:
         cur.execute("CREATE TEMP TABLE _keep (canonical_accession TEXT)")
 

@@ -57,7 +57,13 @@ def _texts(con, table: str) -> pd.DataFrame:
 def build(apply: bool) -> None:
     con = local(readonly=not apply)
     k2c = pd.read_sql(KEY_SQL, con)
-    print("raw keys:", len(k2c), "resolved:", k2c.canonical.notna().sum(), k2c.route.value_counts().to_dict())
+    print(
+        "raw keys:",
+        len(k2c),
+        "resolved:",
+        k2c.canonical.notna().sum(),
+        k2c.route.value_counts().to_dict(),
+    )
     c = dict(zip(k2c.raw, k2c.canonical))
 
     def canon(s: pd.Series) -> pd.Series:
@@ -65,59 +71,120 @@ def build(apply: bool) -> None:
 
     # staged pipeline verdicts: at the canonical itself, and the best one under
     # any other key that resolves to it
-    st = pd.read_sql("SELECT study_accession raw, single_cell_status, n_runs_screened, n_runs_single_cell"
-                     " FROM staged_pipeline", con)
+    st = pd.read_sql(
+        "SELECT study_accession raw, single_cell_status, n_runs_screened, n_runs_single_cell"
+        " FROM staged_pipeline",
+        con,
+    )
     st["canonical"] = canon(st.raw)
-    at = st[st.raw == st.canonical].set_index("canonical").single_cell_status.rename("staged_canon")
+    at = (
+        st[st.raw == st.canonical]
+        .set_index("canonical")
+        .single_cell_status.rename("staged_canon")
+    )
     al = st[st.canonical.notna() & (st.raw != st.canonical)]
-    al = al.groupby("canonical").single_cell_status.agg(
-        lambda s: pd.Series(s).pipe(lambda x: x.iloc[0] if len(x) == 1 else _merge_all(x))).rename("staged_alias")
+    al = (
+        al.groupby("canonical")
+        .single_cell_status.agg(
+            lambda s: pd.Series(s).pipe(
+                lambda x: x.iloc[0] if len(x) == 1 else _merge_all(x)
+            )
+        )
+        .rename("staged_alias")
+    )
 
     lib = pd.read_sql("SELECT raw_study, n_exp, n_sc_libsource FROM ev_libsource", con)
     lib["canonical"] = canon(lib.raw_study)
-    lib = lib.groupby("canonical").agg(lib_n_sc=("n_sc_libsource", "max"), lib_n_exp=("n_exp", "max"))
+    lib = lib.groupby("canonical").agg(
+        lib_n_sc=("n_sc_libsource", "max"), lib_n_exp=("n_exp", "max")
+    )
 
     prot = pd.concat([_texts(con, "ev_exp_text"), _texts(con, "ev_gsm_text")])
     prot["canonical"] = canon(prot.raw_study)
     hits = prot[prot.hit]
     prot_n = hits.groupby("canonical").size().rename("prot_hits")
-    prot_snip = hits.groupby("canonical").txt.first().map(rr.platform_snippet).rename("prot_snip")
+    prot_snip = (
+        hits.groupby("canonical")
+        .txt.first()
+        .map(rr.platform_snippet)
+        .rename("prot_snip")
+    )
 
     pent = pd.read_sql("SELECT * FROM ev_pent", con)
     pent["canonical"] = canon(pent.raw_study)
-    pent = pent.groupby("canonical")[["n_runs", "n_barcode_sc", "n_r1len_sc", "n_r1len_sc_uncertain",
-                                      "n_bulk", "n_atac"]].sum().add_prefix("pent_")
+    pent = (
+        pent.groupby("canonical")[
+            [
+                "n_runs",
+                "n_barcode_sc",
+                "n_r1len_sc",
+                "n_r1len_sc_uncertain",
+                "n_bulk",
+                "n_atac",
+            ]
+        ]
+        .sum()
+        .add_prefix("pent_")
+    )
 
     mat = pd.read_sql("SELECT src, raw_study, cells FROM ev_matrix", con)
     mat["canonical"] = canon(mat.raw_study)
-    ps = mat[mat.src == "pentimento_study"].groupby("canonical").cells.max().rename("ps_cells")
-    sss = mat[mat.src == "sc_stats_study"].groupby("canonical").cells.max().rename("sss_n_matrices")
+    ps = (
+        mat[mat.src == "pentimento_study"]
+        .groupby("canonical")
+        .cells.max()
+        .rename("ps_cells")
+    )
+    sss = (
+        mat[mat.src == "sc_stats_study"]
+        .groupby("canonical")
+        .cells.max()
+        .rename("sss_n_matrices")
+    )
 
-    prod = pd.read_sql("SELECT raw_study, is_single_cell, single_cell_status FROM prod_um_status", con)
+    prod = pd.read_sql(
+        "SELECT raw_study, is_single_cell, single_cell_status FROM prod_um_status", con
+    )
     prod["canonical"] = canon(prod.raw_study)
-    prod = prod[prod.raw_study == prod.canonical].set_index("canonical")[["is_single_cell", "single_cell_status"]]
+    prod = prod[prod.raw_study == prod.canonical].set_index("canonical")[
+        ["is_single_cell", "single_cell_status"]
+    ]
     prod.columns = ["prod_is_sc", "prod_status"]
 
-    um = pd.read_sql("SELECT canonical_accession canonical, source, title, dominant_scientific_name organism,"
-                     " dominant_assay_l2, library_strategy_counts, first_published FROM um", con).set_index("canonical")
+    um = pd.read_sql(
+        "SELECT canonical_accession canonical, source, title, dominant_scientific_name organism,"
+        " dominant_assay_l2, library_strategy_counts, first_published FROM um",
+        con,
+    ).set_index("canonical")
     ev = pd.concat([at, al, lib, prot_n, prot_snip, pent, ps, sss, prod], axis=1)
     ev = ev.join(um, how="left")
     ev.index.name = "canonical"
     ev["in_local_um"] = ev.source.notna()
     ev["strategies"] = ev.library_strategy_counts.map(_strategies)
-    ev["lib_veto"] = [rr.libsource_vetoed(o, t, s) if n > 0 else None
-                      for o, t, s, n in zip(ev.organism, ev.title, ev.strategies, ev.lib_n_sc.fillna(0))]
+    ev["lib_veto"] = [
+        rr.libsource_vetoed(o, t, s) if n > 0 else None
+        for o, t, s, n in zip(
+            ev.organism, ev.title, ev.strategies, ev.lib_n_sc.fillna(0)
+        )
+    ]
     ev = ev.drop(columns=["library_strategy_counts"])
     ev["strategies"] = ev.strategies.map(lambda s: ";".join(sorted(s)))
     print("evidence rows:", len(ev))
-    print("  protocol-hit canonicals:", int(ev.prot_hits.notna().sum()),
-          " libsource canonicals:", int(ev.lib_n_sc.notna().sum()),
-          " vetoed:", ev.lib_veto.value_counts().to_dict())
+    print(
+        "  protocol-hit canonicals:",
+        int(ev.prot_hits.notna().sum()),
+        " libsource canonicals:",
+        int(ev.lib_n_sc.notna().sum()),
+        " vetoed:",
+        ev.lib_veto.value_counts().to_dict(),
+    )
     if not apply:
         print("DRY RUN: would write key2canon, evidence")
         return
     k2c.to_sql("key2canon", con, if_exists="replace", index=False)
-    ev.reset_index().to_sql("evidence", con, if_exists="replace", index=False, chunksize=50_000)
+    ev.reset_index().to_sql(
+        "evidence", con, if_exists="replace", index=False, chunksize=50_000
+    )
     con.execute("CREATE UNIQUE INDEX IF NOT EXISTS evidence_pk ON evidence(canonical)")
     con.commit()
 
@@ -140,6 +207,12 @@ def _strategies(js: str | None) -> set[str]:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--apply", action="store_true", help="write key2canon/evidence into the LOCAL copy")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="write key2canon/evidence into the LOCAL copy",
+    )
     build(ap.parse_args().apply)

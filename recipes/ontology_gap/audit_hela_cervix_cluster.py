@@ -106,7 +106,9 @@ def fetch_cluster(cur) -> list[dict]:
     return [dict(zip(cols, r, strict=True)) for r in cur.fetchall()]
 
 
-def batch_join(cur, table: str, key_col: str, extra_cols: tuple[str, ...], samples: list[str]) -> dict[str, tuple]:
+def batch_join(
+    cur, table: str, key_col: str, extra_cols: tuple[str, ...], samples: list[str]
+) -> dict[str, tuple]:
     if not samples:
         return {}
     cols = ", ".join(extra_cols)
@@ -138,7 +140,12 @@ def main() -> None:
         srs = by_prefix.get("SRS", [])
         drs = by_prefix.get("DRS", [])
         gsm = by_prefix.get("GSM", [])
-        other = [r for p, rs in by_prefix.items() if p not in ("ERS", "SRS", "DRS", "GSM") for r in rs]
+        other = [
+            r
+            for p, rs in by_prefix.items()
+            if p not in ("ERS", "SRS", "DRS", "GSM")
+            for r in rs
+        ]
 
         ena_map = batch_join(
             cur,
@@ -147,9 +154,27 @@ def main() -> None:
             ("cell_line", "cell_type", "sample_title", "tissue_type"),
             [r["sample"] for r in ers],
         )
-        sra_map = batch_join(cur, "sra_samples", "accession", ("attributes_json",), [r["sample"] for r in srs])
-        dra_map = batch_join(cur, "dra_samples", "accession", ("attributes_json",), [r["sample"] for r in drs])
-        geo_map = batch_join(cur, "geo_samples", "accession", ("title", "description"), [r["sample"] for r in gsm])
+        sra_map = batch_join(
+            cur,
+            "sra_samples",
+            "accession",
+            ("attributes_json",),
+            [r["sample"] for r in srs],
+        )
+        dra_map = batch_join(
+            cur,
+            "dra_samples",
+            "accession",
+            ("attributes_json",),
+            [r["sample"] for r in drs],
+        )
+        geo_map = batch_join(
+            cur,
+            "geo_samples",
+            "accession",
+            ("title", "description"),
+            [r["sample"] for r in gsm],
+        )
 
         results = []
         for r in ers:
@@ -163,7 +188,14 @@ def main() -> None:
             else:
                 outcome = "unresolved"
                 evidence = None
-            results.append({**r, "source_table": "ena_samples", "outcome": outcome, "evidence": evidence})
+            results.append(
+                {
+                    **r,
+                    "source_table": "ena_samples",
+                    "outcome": outcome,
+                    "evidence": evidence,
+                }
+            )
         for r in srs:
             v = sra_map.get(r["sample"])
             outcome = classify_attrs_json(v[0]) if v else "unresolved"
@@ -173,7 +205,9 @@ def main() -> None:
                     if str(k).strip().lower() in CELL_LINE_ATTR_KEYS:
                         ev = f"{k}={val}"
                         break
-            results.append({**r, "source_table": "sra_samples", "outcome": outcome, "evidence": ev})
+            results.append(
+                {**r, "source_table": "sra_samples", "outcome": outcome, "evidence": ev}
+            )
         for r in drs:
             v = dra_map.get(r["sample"])
             outcome = classify_attrs_json(v[0]) if v else "unresolved"
@@ -183,13 +217,24 @@ def main() -> None:
                     if str(k).strip().lower() in CELL_LINE_ATTR_KEYS:
                         ev = f"{k}={val}"
                         break
-            results.append({**r, "source_table": "dra_samples", "outcome": outcome, "evidence": ev})
+            results.append(
+                {**r, "source_table": "dra_samples", "outcome": outcome, "evidence": ev}
+            )
         for r in gsm:
             v = geo_map.get(r["sample"])
             outcome = classify_text(*v) if v else "unresolved"
-            results.append({**r, "source_table": "geo_samples", "outcome": outcome, "evidence": (v[0] if v else None)})
+            results.append(
+                {
+                    **r,
+                    "source_table": "geo_samples",
+                    "outcome": outcome,
+                    "evidence": (v[0] if v else None),
+                }
+            )
         for r in other:
-            results.append({**r, "source_table": None, "outcome": "unresolved", "evidence": None})
+            results.append(
+                {**r, "source_table": None, "outcome": "unresolved", "evidence": None}
+            )
 
         counts: dict[str, int] = {}
         for r in results:
@@ -211,7 +256,14 @@ def main() -> None:
         out_dir = Path(args.out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "hela_cervix_cluster_audit.csv"
-        fieldnames = ["study_accession", "sample", "cell_line", "source_table", "outcome", "evidence"]
+        fieldnames = [
+            "study_accession",
+            "sample",
+            "cell_line",
+            "source_table",
+            "outcome",
+            "evidence",
+        ]
         with out_path.open("w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=fieldnames)
             w.writeheader()

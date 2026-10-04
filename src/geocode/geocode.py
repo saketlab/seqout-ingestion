@@ -79,9 +79,19 @@ _VALID_TABLES = {"unified_centers", "unified_metadata"}
 # territory/metro_area, so a copy-back leaves those blank; harmless, since
 # _find_missing only gates on latitude/longitude.
 _PG_COPYBACK_COLS = [
-    "place_name", "longitude", "latitude", "city", "district", "subdistrict",
-    "state", "state_district", "postcode", "country_code", "country",
-    "country_mismatch", "geocode_score",
+    "place_name",
+    "longitude",
+    "latitude",
+    "city",
+    "district",
+    "subdistrict",
+    "state",
+    "state_district",
+    "postcode",
+    "country_code",
+    "country",
+    "country_mismatch",
+    "geocode_score",
 ]
 
 

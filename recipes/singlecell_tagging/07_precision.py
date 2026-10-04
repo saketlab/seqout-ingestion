@@ -30,7 +30,14 @@ import pandas as pd
 from _db import OUT
 
 TP = {"sc", "spatial"}
-FP = {"bulk_companion", "bulk_sorted", "bulk_other", "microarray", "crispr_bulk", "spatial_roi"}
+FP = {
+    "bulk_companion",
+    "bulk_sorted",
+    "bulk_other",
+    "microarray",
+    "crispr_bulk",
+    "spatial_roi",
+}
 Z = 1.959964
 PREFIX = {1: "06", 2: "06b", 3: "06c"}
 
@@ -50,9 +57,16 @@ def estimate(d: pd.DataFrame, unclear_is_fp: bool = False) -> dict:
     p = float((w * y).sum() / w.sum())
     n_eff = float(w.sum() ** 2 / (w**2).sum())
     lo, hi = wilson(p, n_eff)
-    return {"n_judged": len(j), "tp": int(y.sum()), "fp": int(len(j) - y.sum()),
-            "unclear": int((d.label == "unclear").sum()), "precision": round(p, 3),
-            "ci_low": round(lo, 3), "ci_high": round(hi, 3), "n_eff": round(n_eff, 1)}
+    return {
+        "n_judged": len(j),
+        "tp": int(y.sum()),
+        "fp": int(len(j) - y.sum()),
+        "unclear": int((d.label == "unclear").sum()),
+        "precision": round(p, 3),
+        "ci_low": round(lo, 3),
+        "ci_high": round(hi, 3),
+        "n_eff": round(n_eff, 1),
+    }
 
 
 def weighted(d: pd.DataFrame, pop: pd.DataFrame) -> pd.DataFrame:
@@ -65,7 +79,9 @@ def weighted(d: pd.DataFrame, pop: pd.DataFrame) -> pd.DataFrame:
 def main(rnd: int) -> None:
     pre = PREFIX[rnd]
     s = pd.read_csv(OUT / f"{pre}_sample.csv")[["canonical"]]
-    lab = pd.concat([pd.read_csv(p) for p in sorted((OUT / f"{pre}_labels").glob("labels_*.csv"))])
+    lab = pd.concat(
+        [pd.read_csv(p) for p in sorted((OUT / f"{pre}_labels").glob("labels_*.csv"))]
+    )
     lab = lab.drop_duplicates("accession", keep="last").set_index("accession")
     ov = OUT / f"{pre}_overrides.csv"
     if ov.exists():
@@ -88,13 +104,22 @@ def main(rnd: int) -> None:
     ]:
         sub = weighted(sub, psub)
         rows.append({"scope": scope, "N": len(psub), **estimate(sub)})
-        rows.append({"scope": scope + ", unclear as FP", "N": len(psub), **estimate(sub, True)})
+        rows.append(
+            {"scope": scope + ", unclear as FP", "N": len(psub), **estimate(sub, True)}
+        )
     for h, g in d.groupby("added_by"):
-        rows.append({"scope": f"stratum {h}", "N": int((pop.added_by == h).sum()),
-                     **estimate(g.assign(w=1.0))})
+        rows.append(
+            {
+                "scope": f"stratum {h}",
+                "N": int((pop.added_by == h).sum()),
+                **estimate(g.assign(w=1.0)),
+            }
+        )
     out = pd.DataFrame(rows)
     out.to_csv(OUT / f"07_precision_round{rnd}.csv", index=False)
-    print(f"round {rnd}: {len(s)} sampled, {dropped} no longer tagged by the final rules")
+    print(
+        f"round {rnd}: {len(s)} sampled, {dropped} no longer tagged by the final rules"
+    )
     print(out.to_string(index=False))
     print(d.groupby(["added_by", "label"]).size().unstack(fill_value=0).to_string())
     d.to_csv(OUT / f"07_labels_round{rnd}.csv", index=False)
@@ -104,12 +129,20 @@ def _s1_new() -> set[str]:
     from _db import local  # noqa: PLC0415
 
     con = local(readonly=True)
-    prod = set(pd.read_sql("SELECT study_accession FROM prod_singlecell_study", con).study_accession)
-    st = pd.read_sql("SELECT study_accession FROM staged_pipeline WHERE is_single_cell = 1", con)
+    prod = set(
+        pd.read_sql(
+            "SELECT study_accession FROM prod_singlecell_study", con
+        ).study_accession
+    )
+    st = pd.read_sql(
+        "SELECT study_accession FROM staged_pipeline WHERE is_single_cell = 1", con
+    )
     return set(st.study_accession) - prod
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--round", type=int, choices=(1, 2, 3), required=True)
     main(ap.parse_args().round)

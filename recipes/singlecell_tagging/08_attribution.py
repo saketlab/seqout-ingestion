@@ -19,11 +19,23 @@ from _db import OUT, local
 def main() -> None:
     con = local(readonly=True)
     t = pd.read_csv(OUT / "03_targets.csv", low_memory=False)
-    by = pd.read_sql("SELECT canonical, added_by FROM new_added_by", con).set_index("canonical").added_by
-    s2 = set(pd.read_sql("SELECT study_accession FROM study_single_cell_new WHERE is_single_cell = 1",
-                         con).study_accession)
-    s3 = set(pd.read_sql("SELECT study_accession FROM study_single_cell_new_ext WHERE is_single_cell = 1",
-                         con).study_accession)
+    by = (
+        pd.read_sql("SELECT canonical, added_by FROM new_added_by", con)
+        .set_index("canonical")
+        .added_by
+    )
+    s2 = set(
+        pd.read_sql(
+            "SELECT study_accession FROM study_single_cell_new WHERE is_single_cell = 1",
+            con,
+        ).study_accession
+    )
+    s3 = set(
+        pd.read_sql(
+            "SELECT study_accession FROM study_single_cell_new_ext WHERE is_single_cell = 1",
+            con,
+        ).study_accession
+    )
     prod = pd.read_sql("SELECT * FROM prod_singlecell_study", con)
     ev = prod[["ev_matrix", "ev_barcode", "ev_r1len"]].astype(bool).any(axis=1)
     run_ev = set(prod.loc[ev, "study_accession"])
@@ -42,8 +54,18 @@ def main() -> None:
     for tgt, g in t.groupby("target"):
         if tgt == "Census":
             order = {"not_recovered": 9, "external": 8}
-            g = g.assign(r=g.recovered_by.map(order).fillna(0)).sort_values("r").drop_duplicates("target_id")
-        rows.append(g.groupby(["cause", "recovered_by"]).size().rename("n").reset_index().assign(target=tgt))
+            g = (
+                g.assign(r=g.recovered_by.map(order).fillna(0))
+                .sort_values("r")
+                .drop_duplicates("target_id")
+            )
+        rows.append(
+            g.groupby(["cause", "recovered_by"])
+            .size()
+            .rename("n")
+            .reset_index()
+            .assign(target=tgt)
+        )
     out = pd.concat(rows)[["target", "cause", "recovered_by", "n"]]
     out.to_csv(OUT / "08_attribution_summary.csv", index=False)
     print(out.to_string(index=False))

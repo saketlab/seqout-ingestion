@@ -159,19 +159,47 @@ ONCOLOGY_SUFFIX_RE = re.compile(
 # Checked first; never fed to any matching strategy above.
 CURATED_EXCLUDE = {
     # species / organism names -- not anatomy
-    "yeast", "bacteria", "saccharomyces cerevisiae", "whole animal", "soil",
-    "bacterial culture", "whole worm", "fungus", "bacterial cell",
-    "cryptococcus neoformans", "plasmodium falciparum", "escherichia coli",
-    "dictyostelium discoideum", "bacillus subtilis", "mycelium", "mycelia",
+    "yeast",
+    "bacteria",
+    "saccharomyces cerevisiae",
+    "whole animal",
+    "soil",
+    "bacterial culture",
+    "whole worm",
+    "fungus",
+    "bacterial cell",
+    "cryptococcus neoformans",
+    "plasmodium falciparum",
+    "escherichia coli",
+    "dictyostelium discoideum",
+    "bacillus subtilis",
+    "mycelium",
+    "mycelia",
     # generic sample-processing / non-anatomical words
-    "cell line", "cell culture", "cells", "stem", "immune", "ffpe",
-    "organoid", "retinal organoid", "metastases", "germline",
+    "cell line",
+    "cell culture",
+    "cells",
+    "stem",
+    "immune",
+    "ffpe",
+    "organoid",
+    "retinal organoid",
+    "metastases",
+    "germline",
     # cell-type values (CL ontology, not UBERON) -- out of scope this pass
-    "pbmc", "pbmcs", "embryonic stem cell", "embryonic stem cells",
-    "induced pluripotent stem cell", "dermal fibroblasts",
-    "lymphoblastoid cell line", "neural progenitor cell",
-    "hematopoietic stem and progenitor cells", "embryonic cells",
-    "buccal epithelial cells", "s2r+ cells", "bone marrow-derived macrophages",
+    "pbmc",
+    "pbmcs",
+    "embryonic stem cell",
+    "embryonic stem cells",
+    "induced pluripotent stem cell",
+    "dermal fibroblasts",
+    "lymphoblastoid cell line",
+    "neural progenitor cell",
+    "hematopoietic stem and progenitor cells",
+    "embryonic cells",
+    "buccal epithelial cells",
+    "s2r+ cells",
+    "bone marrow-derived macrophages",
     # qualifier-strip word-sense collisions -- the remainder after stripping
     # a leading qualifier is a real UBERON exact/synonym match, but for the
     # WRONG anatomical sense than what the raw string means in a genomics
@@ -179,7 +207,8 @@ CURATED_EXCLUDE = {
     # means arterial/atherosclerotic plaque, not "dental plaque"; "whole
     # nodule" almost always means a generic tumor/lymph nodule, not the
     # cerebellar vermis lobule literally nicknamed "nodule"
-    "whole nodule", "peripheral plaque",
+    "whole nodule",
+    "peripheral plaque",
 }
 
 # A compound "Organ, Sub-part" string has 2-3 components. Beyond that it is
@@ -206,7 +235,13 @@ TISSUE_LEADING_QUALIFIERS = ("fetal", "whole", "peripheral")
 # relapsed, refractory, localized, advanced, early stage, de novo, invasive,
 # low grade, {well,poorly,moderately} differentiated) were dropped rather
 # than shipped unverified.
-DISEASE_LEADING_QUALIFIERS = ("adult", "childhood", "metastatic", "triple negative", "high grade")
+DISEASE_LEADING_QUALIFIERS = (
+    "adult",
+    "childhood",
+    "metastatic",
+    "triple negative",
+    "high grade",
+)
 DISEASE_TRAILING_PHRASES = ("of no special type",)
 
 # A stripped qualifier must never land on a term whose OWN name asserts the
@@ -218,7 +253,14 @@ DISEASE_TRAILING_PHRASES = ("of no special type",)
 # grade, triple negative) have no analogous age/stage antonym so aren't
 # listed.
 DISEASE_QUALIFIER_CONFLICTS = {
-    "adult": ("childhood", "pediatric", "paediatric", "infantile", "juvenile", "neonatal"),
+    "adult": (
+        "childhood",
+        "pediatric",
+        "paediatric",
+        "infantile",
+        "juvenile",
+        "neonatal",
+    ),
     "childhood": ("adult",),
     "metastatic": ("primary", "localized", "in situ", "non-metastatic"),
     "triple negative": ("triple positive", "her2-positive", "her2 positive"),
@@ -228,10 +270,17 @@ DISEASE_QUALIFIER_CONFLICTS = {
 # Real exact/synonym hits on nodes too generic to carry information --
 # rejected regardless of which strategy produces them. See enhanced_match.
 GENERIC_TERM_DENYLIST = {
-    "tissue", "anatomical structure", "cell", "organ", "structure",
-    "material anatomical entity", "anatomical entity",
-    "intracellular anatomical structure", "anatomical system",
-    "multicellular organism", "epithelium",
+    "tissue",
+    "anatomical structure",
+    "cell",
+    "organ",
+    "structure",
+    "material anatomical entity",
+    "anatomical entity",
+    "intracellular anatomical structure",
+    "anatomical system",
+    "multicellular organism",
+    "epithelium",
 }
 
 _SPLIT_RE = re.compile(r"\s*[,/]\s*|\s+and\s+|\s*&\s*", re.IGNORECASE)
@@ -253,7 +302,9 @@ def _strip_parenthetical(text: str) -> str:
     return text
 
 
-def _strip_leading_qualifier(text: str, qualifiers: tuple[str, ...]) -> tuple[str, str] | None:
+def _strip_leading_qualifier(
+    text: str, qualifiers: tuple[str, ...]
+) -> tuple[str, str] | None:
     """Strip a leading word/phrase from `qualifiers`, longest first so
     "triple negative" isn't shadowed by a shorter overlapping entry.
     Returns (qualifier, remainder) so the caller can check the remainder's
@@ -443,8 +494,12 @@ def _enhanced_match_inner(
             # checked against anything.
             if len(matched) == len(parts) and len(matched) >= 2:
                 for _, hit in matched:
-                    others = [other_hit for _, other_hit in matched if other_hit[0] != hit[0]]
-                    if others and all(_is_descendant_of(index, hit[0], other[0]) for other in others):
+                    others = [
+                        other_hit for _, other_hit in matched if other_hit[0] != hit[0]
+                    ]
+                    if others and all(
+                        _is_descendant_of(index, hit[0], other[0]) for other in others
+                    ):
                         return "component_split", hit
 
     return "unresolved", None
@@ -510,7 +565,9 @@ def apply_field(
             )
             raise RuntimeError(msg)
         if len(rows) < planned_n:
-            print(f"  note: {field}={raw_text!r} updated {len(rows)}/{planned_n} planned (rest resolved elsewhere since selection)")
+            print(
+                f"  note: {field}={raw_text!r} updated {len(rows)}/{planned_n} planned (rest resolved elsewhere since selection)"
+            )
         applied_rows.extend(
             {
                 "study_accession": study_accession,
@@ -526,18 +583,30 @@ def apply_field(
     return applied_rows
 
 
-def write_applied_manifest(manifest_dir: Path, field: str, ts: str, applied_rows: list[dict]) -> None:
+def write_applied_manifest(
+    manifest_dir: Path, field: str, ts: str, applied_rows: list[dict]
+) -> None:
     """Called only after conn.commit() has succeeded -- see apply_field's
     docstring for why write-after-commit matters here."""
     applied_path = manifest_dir / f"applied_{field}_backup_{ts}.csv"
     with applied_path.open("w", newline="") as fh:
         w = csv.DictWriter(
             fh,
-            fieldnames=["study_accession", "sample", "raw_text", "matched_id", "matched_name", "score", "strategy"],
+            fieldnames=[
+                "study_accession",
+                "sample",
+                "raw_text",
+                "matched_id",
+                "matched_name",
+                "score",
+                "strategy",
+            ],
         )
         w.writeheader()
         w.writerows(applied_rows)
-    print(f"row-level backup ({len(applied_rows):,} rows actually updated, committed) -> {applied_path}")
+    print(
+        f"row-level backup ({len(applied_rows):,} rows actually updated, committed) -> {applied_path}"
+    )
 
 
 def run_field(
@@ -577,19 +646,31 @@ def run_field(
             )
 
     print(f"strategy breakdown (distinct strings / total rows):")
-    for strat, n_strings in sorted(strategy_counts.items(), key=lambda kv: -strategy_rows[kv[0]]):
+    for strat, n_strings in sorted(
+        strategy_counts.items(), key=lambda kv: -strategy_rows[kv[0]]
+    ):
         print(f"  {strat}: {n_strings:,} strings / {strategy_rows[strat]:,} rows")
 
     manifest_path = manifest_dir / f"unmapped_{field}_backup_{ts}.csv"
     with manifest_path.open("w", newline="") as fh:
         w = csv.DictWriter(
             fh,
-            fieldnames=["field", "raw_text", "row_count", "strategy", "matched_id", "matched_name", "score"],
+            fieldnames=[
+                "field",
+                "raw_text",
+                "row_count",
+                "strategy",
+                "matched_id",
+                "matched_name",
+                "score",
+            ],
         )
         w.writeheader()
         w.writerows(backup_rows)
     n_rows_affected = sum(r["row_count"] for r in backup_rows)
-    print(f"backup ({len(backup_rows):,} strings, {n_rows_affected:,} rows) -> {manifest_path}")
+    print(
+        f"backup ({len(backup_rows):,} strings, {n_rows_affected:,} rows) -> {manifest_path}"
+    )
 
     return resolved
 
@@ -607,7 +688,9 @@ def main() -> None:
     tissue_file, tissue_keys, tissue_prefix = FIELD_ONTOLOGY_MAP["tissue"]
     disease_file, disease_keys, disease_prefix = FIELD_ONTOLOGY_MAP["disease"]
     tissue_index = OntologyIndex(ONTOLOGY_DIR / tissue_file, tissue_keys, tissue_prefix)
-    disease_index = OntologyIndex(ONTOLOGY_DIR / disease_file, disease_keys, disease_prefix)
+    disease_index = OntologyIndex(
+        ONTOLOGY_DIR / disease_file, disease_keys, disease_prefix
+    )
 
     with connect() as conn:
         conn.autocommit = False
@@ -621,7 +704,9 @@ def main() -> None:
                 cur.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
 
             tissue_resolved = run_field(cur, "tissue", tissue_index, manifest_dir, ts)
-            disease_resolved = run_field(cur, "disease", disease_index, manifest_dir, ts)
+            disease_resolved = run_field(
+                cur, "disease", disease_index, manifest_dir, ts
+            )
 
             if not args.apply:
                 print("\nDry run only. Re-run with --apply to write.")
@@ -646,8 +731,10 @@ def main() -> None:
         try:
             write_applied_manifest(manifest_dir, field, ts, applied)
         except OSError as exc:
-            print(f"WARNING: {field} row-level manifest failed to write ({exc}); "
-                  f"the database change is already committed -- {len(applied):,} applied rows are only in memory now.")
+            print(
+                f"WARNING: {field} row-level manifest failed to write ({exc}); "
+                f"the database change is already committed -- {len(applied):,} applied rows are only in memory now."
+            )
 
 
 if __name__ == "__main__":

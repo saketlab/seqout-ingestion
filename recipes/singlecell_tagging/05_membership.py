@@ -54,20 +54,33 @@ def main(apply: bool) -> None:
     recent = set(um.loc[um.first_published.fillna("") > PG_LOAD, "canonical_accession"])
 
     sc = {
-        "S1": pd.read_sql("SELECT study_accession, is_single_cell FROM staged_pipeline", con),
-        "S2": pd.read_sql("SELECT study_accession, is_single_cell FROM study_single_cell_new", con),
-        "S3": pd.read_sql("SELECT study_accession, is_single_cell FROM study_single_cell_new_ext", con),
+        "S1": pd.read_sql(
+            "SELECT study_accession, is_single_cell FROM staged_pipeline", con
+        ),
+        "S2": pd.read_sql(
+            "SELECT study_accession, is_single_cell FROM study_single_cell_new", con
+        ),
+        "S3": pd.read_sql(
+            "SELECT study_accession, is_single_cell FROM study_single_cell_new_ext", con
+        ),
     }
     mem = {"S0": s0} | {k: members(run_ev, v, canon) for k, v in sc.items()}
     for k, v in sc.items():
         pos = set(v.loc[v.is_single_cell == 1, "study_accession"])
-        print(f"{k}: staged positives not a known canonical (cannot land): {len(pos - canon):,}")
+        print(
+            f"{k}: staged positives not a known canonical (cannot land): {len(pos - canon):,}"
+        )
 
-    added_by = pd.read_sql("SELECT * FROM new_added_by", con).set_index("canonical").added_by
+    added_by = (
+        pd.read_sql("SELECT * FROM new_added_by", con).set_index("canonical").added_by
+    )
     scb = pd.read_sql("SELECT study, canonical, status FROM ext_scbasecount", con)
     ext_ids = set(scb.study) | set(scb.canonical.dropna())
-    cen = pd.read_sql("SELECT collection_id, verdict, seqout_canonical, pmid_seqout_studies,"
-                      " public_accessions FROM ext_census", con)
+    cen = pd.read_sql(
+        "SELECT collection_id, verdict, seqout_canonical, pmid_seqout_studies,"
+        " public_accessions FROM ext_census",
+        con,
+    )
     for c in ["seqout_canonical", "pmid_seqout_studies", "public_accessions"]:
         ext_ids |= {a for s in cen[c].dropna() for a in s.split(";")}
 
@@ -75,20 +88,45 @@ def main(apply: bool) -> None:
     for name, m in mem.items():
         new = m - s0 - recent
         lost = s0 - m
-        rows.append({"scenario": name, "members": len(m - recent), "new_vs_S0": len(new),
-                     "lost_vs_S0": len(lost), "local_only_recent_excluded": len(m & recent - s0),
-                     "new_in_external_sets": len(new & ext_ids), "new_not_in_external": len(new - ext_ids)})
-        cov = scb.assign(hit=[(s in m) or (c in m) for s, c in zip(scb.study, scb.canonical)])
+        rows.append(
+            {
+                "scenario": name,
+                "members": len(m - recent),
+                "new_vs_S0": len(new),
+                "lost_vs_S0": len(lost),
+                "local_only_recent_excluded": len(m & recent - s0),
+                "new_in_external_sets": len(new & ext_ids),
+                "new_not_in_external": len(new - ext_ids),
+            }
+        )
+        cov = scb.assign(
+            hit=[(s in m) or (c in m) for s, c in zip(scb.study, scb.canonical)]
+        )
         was = cov.status.str.startswith("covered")
-        scb_rows.append({"scenario": name, "studies": len(cov),
-                         "covered": int((was & (cov.hit | (name == "S0"))).sum() + (~was & cov.hit).sum()),
-                         "recovered_of_690": int((cov.status == "miss_tagging_gap").mul(cov.hit).sum()),
-                         "covered_lost": int((was & ~cov.hit).sum()) if name != "S0" else 0})
+        scb_rows.append(
+            {
+                "scenario": name,
+                "studies": len(cov),
+                "covered": int(
+                    (was & (cov.hit | (name == "S0"))).sum() + (~was & cov.hit).sum()
+                ),
+                "recovered_of_690": int(
+                    (cov.status == "miss_tagging_gap").mul(cov.hit).sum()
+                ),
+                "covered_lost": int((was & ~cov.hit).sum()) if name != "S0" else 0,
+            }
+        )
         cen_rows.append(_census(cen, m, name))
         if name in ("S2", "S3"):
             for k in sorted(new):
-                new_rows.append({"scenario": name, "canonical": k, "added_by": added_by.get(k, "unknown"),
-                                 "in_external_sets": k in ext_ids})
+                new_rows.append(
+                    {
+                        "scenario": name,
+                        "canonical": k,
+                        "added_by": added_by.get(k, "unknown"),
+                        "in_external_sets": k in ext_ids,
+                    }
+                )
     out = pd.DataFrame(rows)
     out.to_csv(OUT / "05_scenarios.csv", index=False)
     print(out.to_string(index=False))
@@ -101,34 +139,64 @@ def main(apply: bool) -> None:
     print(c.to_string(index=False))
     nt = pd.DataFrame(new_rows)
     nt.to_csv(OUT / "05_new_tags.csv", index=False)
-    print(nt.groupby(["scenario", "added_by", "in_external_sets"]).size().unstack(fill_value=0).to_string())
+    print(
+        nt.groupby(["scenario", "added_by", "in_external_sets"])
+        .size()
+        .unstack(fill_value=0)
+        .to_string()
+    )
     if apply:
         nt.to_sql("new_tags", con, if_exists="replace", index=False)
         con.commit()
 
 
 def _census(cen: pd.DataFrame, m: set[str], name: str) -> dict:
-    public = cen.verdict.isin(["covered_accession", "covered_pmid", "tagging_gap_accession",
-                               "tagging_gap_pmid_only", "catalogue_gap_accession"])
+    public = cen.verdict.isin(
+        [
+            "covered_accession",
+            "covered_pmid",
+            "tagging_gap_accession",
+            "tagging_gap_pmid_only",
+            "catalogue_gap_accession",
+        ]
+    )
 
     def hit(r: pd.Series) -> bool:
-        accs = r.seqout_canonical if r.verdict in ("covered_accession", "tagging_gap_accession") \
+        accs = (
+            r.seqout_canonical
+            if r.verdict in ("covered_accession", "tagging_gap_accession")
             else r.pmid_seqout_studies
-        return any(a in m for a in str(accs).split(";")) if isinstance(accs, str) else False
+        )
+        return (
+            any(a in m for a in str(accs).split(";"))
+            if isinstance(accs, str)
+            else False
+        )
 
     h = cen.apply(hit, axis=1)
     covered_before = cen.verdict.isin(["covered_accession", "covered_pmid"])
     covered = (covered_before if name == "S0" else h) & public
     gaps = cen.verdict.isin(["tagging_gap_accession", "tagging_gap_pmid_only"])
-    return {"scenario": name, "public_deposit_collections": int(public.sum()), "covered": int(covered.sum()),
-            "pct_covered": round(100 * covered.sum() / public.sum(), 1),
-            "recovered_of_25": int((gaps & h).sum()) if name != "S0" else 0,
-            "recovered_accession_of_21": int((cen.verdict.eq("tagging_gap_accession") & h).sum())
-            if name != "S0" else 0,
-            "covered_lost": int((covered_before & ~h).sum()) if name != "S0" else 0}
+    return {
+        "scenario": name,
+        "public_deposit_collections": int(public.sum()),
+        "covered": int(covered.sum()),
+        "pct_covered": round(100 * covered.sum() / public.sum(), 1),
+        "recovered_of_25": int((gaps & h).sum()) if name != "S0" else 0,
+        "recovered_accession_of_21": int(
+            (cen.verdict.eq("tagging_gap_accession") & h).sum()
+        )
+        if name != "S0"
+        else 0,
+        "covered_lost": int((covered_before & ~h).sum()) if name != "S0" else 0,
+    }
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--apply", action="store_true", help="write table new_tags into the LOCAL copy")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--apply", action="store_true", help="write table new_tags into the LOCAL copy"
+    )
     main(ap.parse_args().apply)

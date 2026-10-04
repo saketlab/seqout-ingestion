@@ -27,12 +27,19 @@ PRJ = re.compile(r"^PRJ[A-Z]{1,2}\d+$")
 
 def main(apply: bool) -> None:
     # awk is ~10x faster than Python over 74M lines; it only filters STUDY rows.
-    awk = ["awk", "-F\t", '$7=="STUDY" && $1 ~ /^[SED]RP[0-9]+$/ {print $1"\t"$10"\t"$19}', TAB]
+    awk = [
+        "awk",
+        "-F\t",
+        '$7=="STUDY" && $1 ~ /^[SED]RP[0-9]+$/ {print $1"\t"$10"\t"$19}',
+        TAB,
+    ]
     print("scanning", TAB, "(STUDY rows only)")
     if not apply:
         print("DRY RUN: would write table twins into the local copy")
         return
-    out = subprocess.run(awk, capture_output=True, text=True, check=True, env={"LC_ALL": "C"}).stdout
+    out = subprocess.run(
+        awk, capture_output=True, text=True, check=True, env={"LC_ALL": "C"}
+    ).stdout
     rows: set[tuple[str, str, str]] = set()
     for line in out.splitlines():
         acc, alias, bioproject = (line.split("\t") + ["", ""])[:3]
@@ -51,6 +58,8 @@ def main(apply: bool) -> None:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--apply", action="store_true")
     main(ap.parse_args().apply)

@@ -57,9 +57,9 @@ def ontology_closure_transfer(pg_url: str, db_file: Path) -> None:
             "SELECT ontology, count(*) FROM ontology_closure "
             "GROUP BY ontology ORDER BY ontology"
         ).fetchall()
-        (n_terms,) = cur.execute(
-            "SELECT count(*) FROM ontology_terms"
-        ).fetchone() or (0,)
+        (n_terms,) = cur.execute("SELECT count(*) FROM ontology_terms").fetchone() or (
+            0,
+        )
     logger.info("ontology_closure transfer: closure=%s terms=%d", counts, n_terms)
 
 

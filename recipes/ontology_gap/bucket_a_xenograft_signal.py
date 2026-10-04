@@ -99,9 +99,7 @@ CROSS_SPECIES_CATEGORIES = [
 
 # text that, if present alongside an EV hit, means it's a known false
 # positive (enterovirus, plasmid) rather than extracellular-vesicle biology.
-_EV_FALSE_POSITIVE = re.compile(
-    r"(?i)\bev[\s-]?(?:71|d68|a71)\b|\bempty[\s-]+vector\b"
-)
+_EV_FALSE_POSITIVE = re.compile(r"(?i)\bev[\s-]?(?:71|d68|a71)\b|\bempty[\s-]+vector\b")
 
 # text confirming the pinned line's own identity in cell-culture terms --
 # the OPPOSITE signal: organism metadata may be wrong, not the cell line.
@@ -118,10 +116,19 @@ CELL_CULTURE_CONTEXT_RE = re.compile(
     r"(?i)\bcell[s]?\b|\bcell[\s-]?line\b|\bcancer[\s-]?cells?\b|\bcell[\s-]?cultur"
 )
 
-FIELDS = ("treatment", "disease", "phenotype", "genetic_modification", "sample_type", "title")
+FIELDS = (
+    "treatment",
+    "disease",
+    "phenotype",
+    "genetic_modification",
+    "sample_type",
+    "title",
+)
 
 
-_COMPILED_CROSS_SPECIES = [(label, re.compile(p)) for label, p in CROSS_SPECIES_CATEGORIES]
+_COMPILED_CROSS_SPECIES = [
+    (label, re.compile(p)) for label, p in CROSS_SPECIES_CATEGORIES
+]
 
 
 def classify(row: dict, cell_key: str) -> tuple[str, str]:

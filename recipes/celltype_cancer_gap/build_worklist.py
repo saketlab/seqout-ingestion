@@ -51,7 +51,9 @@ def _fetch_universe(cur) -> list[tuple[str, str, dict]]:  # noqa: ANN001
     return cur.fetchall()
 
 
-def _resolve_links(cur, gse_list: list[str], ae_list: list[str]) -> dict[str, list[DownloadLink]]:  # noqa: ANN001
+def _resolve_links(
+    cur, gse_list: list[str], ae_list: list[str]
+) -> dict[str, list[DownloadLink]]:  # noqa: ANN001
     links: dict[str, list[DownloadLink]] = {acc: [] for acc in (*gse_list, *ae_list)}
 
     if gse_list:
@@ -128,7 +130,9 @@ def main() -> None:
 
     with connect() as c, c.cursor() as cur:
         universe = _fetch_universe(cur)
-        print(f"universe: {len(universe)} cancer-relevant unscanned single-cell studies")
+        print(
+            f"universe: {len(universe)} cancer-relevant unscanned single-cell studies"
+        )
 
         link_key: dict[str, str] = {}
         for accession, source, aliases in universe:
@@ -145,9 +149,10 @@ def main() -> None:
         links_by_key = _resolve_links(cur, gse_list, ae_list)
 
     n_with = n_without = 0
-    with (a.out_dir / "accessions.txt").open("w") as mf, (
-        a.out_dir / "no_link_accessions.txt"
-    ).open("w") as nf:
+    with (
+        (a.out_dir / "accessions.txt").open("w") as mf,
+        (a.out_dir / "no_link_accessions.txt").open("w") as nf,
+    ):
         for accession, source, aliases in universe:
             key = link_key.get(accession, accession)
             dl_items = links_by_key.get(key) or []

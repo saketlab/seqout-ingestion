@@ -696,7 +696,9 @@ def _build_single_cell(  # noqa: C901, PLR0912, PLR0915
     logger.info("library_source vetoes: %s", Counter(lib_vetoed.values()))
     protocol_keys: set[str] = set()
     if protocol:
-        protocol_keys = {resolve(a) or a for a in recall_feeds.protocol_hits_by_study(pg)}
+        protocol_keys = {
+            resolve(a) or a for a in recall_feeds.protocol_hits_by_study(pg)
+        }
     # archive evidence independent of the title/description text
     corroborated = {a for a in declared if a not in lib_vetoed} | protocol_keys
 
@@ -757,7 +759,9 @@ def _build_single_cell(  # noqa: C901, PLR0912, PLR0915
     if protocol:
         staged, n_prot = rr.apply_additive(staged, protocol_keys, rr.PROTOCOL_STATUS)
         logger.info(
-            "protocol-text studies added: %d (of %d with a hit)", n_prot, len(protocol_keys)
+            "protocol-text studies added: %d (of %d with a hit)",
+            n_prot,
+            len(protocol_keys),
         )
 
     if external is not None:
@@ -766,7 +770,9 @@ def _build_single_cell(  # noqa: C901, PLR0912, PLR0915
         accs = {ln.strip() for ln in external.read_text().splitlines() if ln.strip()}
         keys = {resolve(a) or a for a in accs}
         staged, n_ext = rr.apply_additive(staged, keys, rr.EXTERNAL_STATUS)
-        logger.info("external-resource studies added: %d (of %d listed)", n_ext, len(keys))
+        logger.info(
+            "external-resource studies added: %d (of %d listed)", n_ext, len(keys)
+        )
 
     conn.executemany(
         "INSERT OR REPLACE INTO study_single_cell VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -801,7 +807,12 @@ def main() -> int:
     )
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    build(args.db, args.only, protocol=not args.skip_protocol, external=args.external_accessions)
+    build(
+        args.db,
+        args.only,
+        protocol=not args.skip_protocol,
+        external=args.external_accessions,
+    )
     return 0
 
 

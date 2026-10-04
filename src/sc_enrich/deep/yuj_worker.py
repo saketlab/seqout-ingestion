@@ -747,7 +747,9 @@ def _cell_index_type(value: str) -> str:
     return "id"
 
 
-def _header_info_from_rows(cols: list[str], row: list[str], name: str) -> dict[str, Any]:
+def _header_info_from_rows(
+    cols: list[str], row: list[str], name: str
+) -> dict[str, Any]:
     low = [c.lower() for c in cols]
     named_barcode = any(h in c for c in low for h in _BARCODE_COL_HINTS)
     # R row indexes use an empty header or leave data rows one column wider.

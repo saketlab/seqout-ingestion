@@ -56,5 +56,7 @@ def q(conn, sql: str, params=None) -> pd.DataFrame:
 def local(readonly: bool = False) -> sqlite3.Connection:
     if readonly:
         return sqlite3.connect(f"file:{LOCAL_DB}?mode=ro", uri=True)
-    assert str(LOCAL_DB).startswith(str(LOCAL_DIR)), "refusing to write outside the local copy"
+    assert str(LOCAL_DB).startswith(str(LOCAL_DIR)), (
+        "refusing to write outside the local copy"
+    )
     return sqlite3.connect(LOCAL_DB)

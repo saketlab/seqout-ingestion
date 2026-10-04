@@ -54,15 +54,30 @@ SC_TEXT_REGEX = re.compile(
     r"|individual (?:liver |immune |tumou?r )?cells|single cells were",
     re.IGNORECASE,
 )
-READ_STATUSES = {"measured_single_cell", "measured_not_single_cell",
-                 "measured_not_single_cell_text_disagrees", "not_screened"}
-COLS = ["study_accession", "is_single_cell", "single_cell_status", "single_cell_modality",
-        "single_cell_modality_evidence", "max_cells", "max_genes", "n_samples_counted",
-        "n_runs_screened", "n_runs_single_cell"]
+READ_STATUSES = {
+    "measured_single_cell",
+    "measured_not_single_cell",
+    "measured_not_single_cell_text_disagrees",
+    "not_screened",
+}
+COLS = [
+    "study_accession",
+    "is_single_cell",
+    "single_cell_status",
+    "single_cell_modality",
+    "single_cell_modality_evidence",
+    "max_cells",
+    "max_genes",
+    "n_samples_counted",
+    "n_runs_screened",
+    "n_runs_single_cell",
+]
 
 
 def resolver(con):
-    amap = dict(con.execute("SELECT alias, canonical_accession FROM alias_map").fetchall())
+    amap = dict(
+        con.execute("SELECT alias, canonical_accession FROM alias_map").fetchall()
+    )
     canon = {a for (a,) in con.execute("SELECT canonical_accession FROM um")}
     twins: dict[str, str] = {}
     for a, b in con.execute("SELECT a, b FROM twins"):
@@ -77,9 +92,14 @@ def main(apply: bool) -> None:
     st = pd.read_sql("SELECT * FROM staged_pipeline", con)
     st.columns = COLS
     read = st[st.single_cell_status.isin(READ_STATUSES)].copy()
-    read.loc[read.single_cell_status == "measured_not_single_cell_text_disagrees",
-             ["single_cell_status"]] = "measured_not_single_cell"
-    staged = {r[0]: tuple(None if pd.isna(v) else v for v in r) for r in read.itertuples(index=False)}
+    read.loc[
+        read.single_cell_status == "measured_not_single_cell_text_disagrees",
+        ["single_cell_status"],
+    ] = "measured_not_single_cell"
+    staged = {
+        r[0]: tuple(None if pd.isna(v) else v for v in r)
+        for r in read.itertuples(index=False)
+    }
     log = [("read", len(staged))]
     first: dict[str, str] = {}
 
@@ -91,10 +111,16 @@ def main(apply: bool) -> None:
     first.update({k: "read_measured" for k, r in staged.items() if r[1] == 1})
     staged, moved = rr.canonicalise(staged, resolve)
     log.append(("canon_moved", moved))
-    ev = pd.read_sql("SELECT canonical, lib_n_sc, lib_n_exp, lib_veto, prot_hits, ps_cells,"
-                     " pent_n_bulk FROM evidence", con).set_index("canonical")
-    old_lib = set(st.loc[st.single_cell_status == rr.LIBSOURCE_STATUS, "study_accession"].map(
-        lambda a: resolve(a) or a))
+    ev = pd.read_sql(
+        "SELECT canonical, lib_n_sc, lib_n_exp, lib_veto, prot_hits, ps_cells,"
+        " pent_n_bulk FROM evidence",
+        con,
+    ).set_index("canonical")
+    old_lib = set(
+        st.loc[st.single_cell_status == rr.LIBSOURCE_STATUS, "study_accession"].map(
+            lambda a: resolve(a) or a
+        )
+    )
     declared = set(ev.index[ev.lib_n_sc.fillna(0) > 0]) | old_lib
     veto = ev.lib_veto.dropna().to_dict()
     protocol_keys = set(ev.index[ev.prot_hits.fillna(0) > 0])
@@ -105,14 +131,24 @@ def main(apply: bool) -> None:
     # plus the pipeline's own text verdicts for everything else, so tagged studies
     # keep theirs. Local unify output is newer than Postgres and is not used here.
     pgt = pd.read_sql("SELECT raw_study, txt FROM pg_um_text", con)
-    hits = {a: None for a, t in zip(pgt.raw_study, pgt.txt.fillna("")) if SC_TEXT_REGEX.search(t)}
-    text_statuses = ["text_indicates_single_cell", "measured_not_single_cell_text_disagrees"]
+    hits = {
+        a: None
+        for a, t in zip(pgt.raw_study, pgt.txt.fillna(""))
+        if SC_TEXT_REGEX.search(t)
+    }
+    text_statuses = [
+        "text_indicates_single_cell",
+        "measured_not_single_cell_text_disagrees",
+    ]
     for a in st.loc[st.single_cell_status.isin(text_statuses), "study_accession"]:
         hits.setdefault(resolve(a) or a, None)
     # production's own text verdicts: TEXT_SQL on Postgres hits these too, and
     # neither the staging (older) nor pg_um_text (untagged only) carries all of them
-    pg_text = pd.read_sql("SELECT raw_study FROM prod_um_status WHERE single_cell_status IN (?, ?)",
-                          con, params=text_statuses)
+    pg_text = pd.read_sql(
+        "SELECT raw_study FROM prod_um_status WHERE single_cell_status IN (?, ?)",
+        con,
+        params=text_statuses,
+    )
     for a in pg_text.raw_study:
         hits.setdefault(a, None)
     # veto for restored (abstained) rows, from the same Postgres text
@@ -124,7 +160,11 @@ def main(apply: bool) -> None:
     vetoed = {a for a in hits if a in tt and rr.text_promotion_vetoed(*tt[a])}
     restorable = {k for k, r in staged.items() if r[2] == "not_screened"}
     staged, n = rr.apply_text(staged, hits, vetoed=vetoed, corroborated=corroborated)
-    mark({k: r for k, r in before.items() if k not in restorable}, {k: staged[k] for k in restorable}, "text_restored")
+    mark(
+        {k: r for k, r in before.items() if k not in restorable},
+        {k: staged[k] for k in restorable},
+        "text_restored",
+    )
     mark(before, staged, "text")
     log.append(("text_added", n))
 
@@ -132,15 +172,24 @@ def main(apply: bool) -> None:
     lib_ok = sorted(a for a in declared if a not in veto)
     staged, n = rr.apply_additive(staged, lib_ok, rr.LIBSOURCE_STATUS)
     mark(before, staged, "libsource")
-    log += [("libsource_declared", len(declared)), ("libsource_vetoed", len(declared & set(veto))),
-            ("libsource_added", n)]
+    log += [
+        ("libsource_declared", len(declared)),
+        ("libsource_vetoed", len(declared & set(veto))),
+        ("libsource_added", n),
+    ]
 
     before = dict(staged)
-    counts = {a: (int(r.lib_n_sc), int(r.lib_n_exp)) for a, r in ev[ev.lib_n_sc > 0].iterrows()
-              if a not in veto}
+    counts = {
+        a: (int(r.lib_n_sc), int(r.lib_n_exp))
+        for a, r in ev[ev.lib_n_sc > 0].iterrows()
+        if a not in veto
+    }
     bulk_r1 = ev.pent_n_bulk.fillna(0)
-    reads = {a: (int(row[9] or 0), 1, int(bulk_r1.get(a, 0)))
-             for a, row in staged.items() if row[1] == 0}
+    reads = {
+        a: (int(row[9] or 0), 1, int(bulk_r1.get(a, 0)))
+        for a, row in staged.items()
+        if row[1] == 0
+    }
     staged, n = rr.apply_whitelist_override(staged, counts, reads)
     mark(before, staged, "whitelist_override")
     log.append(("whitelist_flipped", n))
@@ -151,7 +200,10 @@ def main(apply: bool) -> None:
     log.append(("protocol_added", n))
 
     scb = pd.read_sql("SELECT study, canonical FROM ext_scbasecount", con)
-    cen = pd.read_sql("SELECT public_accessions FROM ext_census WHERE public_accessions IS NOT NULL", con)
+    cen = pd.read_sql(
+        "SELECT public_accessions FROM ext_census WHERE public_accessions IS NOT NULL",
+        con,
+    )
     ext = set(scb.study) | {a for s in cen.public_accessions for a in s.split(";")}
     ext_keys = {resolve(a) or a for a in ext}
     ext_staged, n_ext = rr.apply_additive(staged, ext_keys, rr.EXTERNAL_STATUS)
@@ -168,15 +220,25 @@ def main(apply: bool) -> None:
         return
     new.to_sql("study_single_cell_new", con, if_exists="replace", index=False)
     pd.DataFrame(list(ext_staged.values()), columns=COLS).to_sql(
-        "study_single_cell_new_ext", con, if_exists="replace", index=False)
-    pd.DataFrame([(k, v, k in ext_first) for k, v in first.items()],
-                 columns=["canonical", "added_by", "without_external"]).to_sql(
-        "new_added_by", con, if_exists="replace", index=False)
-    pd.DataFrame(log, columns=["step", "n"]).to_sql("rebuild_log", con, if_exists="replace", index=False)
+        "study_single_cell_new_ext", con, if_exists="replace", index=False
+    )
+    pd.DataFrame(
+        [(k, v, k in ext_first) for k, v in first.items()],
+        columns=["canonical", "added_by", "without_external"],
+    ).to_sql("new_added_by", con, if_exists="replace", index=False)
+    pd.DataFrame(log, columns=["step", "n"]).to_sql(
+        "rebuild_log", con, if_exists="replace", index=False
+    )
     con.commit()
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--apply", action="store_true", help="write the new staged tables into the LOCAL copy")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--apply",
+        action="store_true",
+        help="write the new staged tables into the LOCAL copy",
+    )
     main(ap.parse_args().apply)

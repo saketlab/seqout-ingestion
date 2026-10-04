@@ -47,7 +47,9 @@ def load_fleet() -> list[tuple[str, str, str, str, str]]:
         user, ip, name, password, key = (line.split(",") + [""] * 5)[:5]
         if ip == "localhost":
             ip = "127.0.0.1"
-        rows.append((user.strip(), ip.strip(), name.strip(), password.strip(), key.strip()))
+        rows.append(
+            (user.strip(), ip.strip(), name.strip(), password.strip(), key.strip())
+        )
     return rows
 
 
@@ -56,14 +58,26 @@ def ssh_cmd(user: str, ip: str, password: str, key: str) -> list[str]:
     if key:
         return ["ssh", "-i", key, *common, "-o", "BatchMode=yes", f"{user}@{ip}"]
     if password:
-        return ["sshpass", "-p", password, "ssh", "-o", "PreferredAuthentications=password",
-                 "-o", "PubkeyAuthentication=no", *common, f"{user}@{ip}"]
+        return [
+            "sshpass",
+            "-p",
+            password,
+            "ssh",
+            "-o",
+            "PreferredAuthentications=password",
+            "-o",
+            "PubkeyAuthentication=no",
+            *common,
+            f"{user}@{ip}",
+        ]
     return ["ssh", *common, "-o", "BatchMode=yes", f"{user}@{ip}"]
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--apply", action="store_true", help="actually push reordered lists")
+    ap.add_argument(
+        "--apply", action="store_true", help="actually push reordered lists"
+    )
     a = ap.parse_args()
 
     for user, ip, name, password, key in load_fleet():
@@ -73,7 +87,10 @@ def main() -> None:
         try:
             out = subprocess.run(
                 [*cmd, "cat seqout-sc-count/items.txt"],
-                capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired:
             print(f"{name:12s} timeout")
@@ -97,7 +114,10 @@ def main() -> None:
             continue
         push = subprocess.run(
             [*cmd, "cat > seqout-sc-count/items.txt"],
-            input="\n".join(reordered) + "\n", capture_output=True, text=True, timeout=20,
+            input="\n".join(reordered) + "\n",
+            capture_output=True,
+            text=True,
+            timeout=20,
         )
         if push.returncode != 0:
             print(f"  push failed: {push.stderr.strip()[:120]}")

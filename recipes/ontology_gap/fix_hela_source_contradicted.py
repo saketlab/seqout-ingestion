@@ -132,7 +132,13 @@ def classify_ena(cell_line, cell_type, sample_title, tissue_type) -> str:
     if text:
         return "supported" if HELA_RE.search(text) else "contradicted"
     joined = " ".join(t for t in (cell_type, sample_title, tissue_type) if t)
-    return "supported" if HELA_RE.search(joined) else "unresolved" if joined.strip() else "unresolved"
+    return (
+        "supported"
+        if HELA_RE.search(joined)
+        else "unresolved"
+        if joined.strip()
+        else "unresolved"
+    )
 
 
 def classify_attrs_json(attrs) -> tuple[str, str | None]:
@@ -185,7 +191,9 @@ def find_contradicted(cur: psycopg.Cursor) -> tuple[list[dict], dict]:
         for r in ers:
             v = ena_map.get(r["sample"])
             if v and classify_ena(*v) == "contradicted":
-                out.append({**r, "evidence": v[0] or " | ".join(str(x) for x in v[1:] if x)})
+                out.append(
+                    {**r, "evidence": v[0] or " | ".join(str(x) for x in v[1:] if x)}
+                )
 
     for table, prefix in (("sra_samples", "SRS"), ("dra_samples", "DRS")):
         subset = by_prefix.get(prefix, [])
@@ -266,13 +274,17 @@ def clear_composite_checked(
     return [(row[0], row[1]) for row in cur.fetchall()]
 
 
-def clear_dependents(cur: psycopg.Cursor, table: str, field: str, matched: list[Key]) -> None:
+def clear_dependents(
+    cur: psycopg.Cursor, table: str, field: str, matched: list[Key]
+) -> None:
     if table != "ontology_samples_v5" or not matched:
         return
     studies = [k[0] for k in matched]
     samples = [k[1] for k in matched]
-    deps = [f"{field}{suf}" for suf in ONTOLOGY_SUFFIXES] if field in ("tissue", "disease") else (
-        list(AGE_DERIVATIVES) if field == "age" else []
+    deps = (
+        [f"{field}{suf}" for suf in ONTOLOGY_SUFFIXES]
+        if field in ("tissue", "disease")
+        else (list(AGE_DERIVATIVES) if field == "age" else [])
     )
     for dep in deps:
         cur.execute(
@@ -363,9 +375,11 @@ def main() -> None:
                 print(f"  {table}: {joined:,} / {total:,}")
             near_miss_total = sum(diagnostics["near_miss_keys"].values())
             if near_miss_total:
-                print(f"\nWARNING: {near_miss_total:,} near-miss attribute keys "
-                      f"(contain 'cell'+'line' but not an exact CELL_LINE_ATTR_KEYS match): "
-                      f"{diagnostics['near_miss_keys']}")
+                print(
+                    f"\nWARNING: {near_miss_total:,} near-miss attribute keys "
+                    f"(contain 'cell'+'line' but not an exact CELL_LINE_ATTR_KEYS match): "
+                    f"{diagnostics['near_miss_keys']}"
+                )
             else:
                 print("\nno near-miss attribute keys found")
 
@@ -385,14 +399,23 @@ def main() -> None:
                 w.writerow(["study_accession", "sample", "cell_line", "evidence"])
                 for c in candidates:
                     w.writerow(
-                        [c["study_accession"], c["sample"], c["cell_line"], c["evidence"]]
+                        [
+                            c["study_accession"],
+                            c["sample"],
+                            c["cell_line"],
+                            c["evidence"],
+                        ]
                     )
             print(f"manifest ({len(candidates):,} rows) -> {manifest_path}")
 
-            print(f"\ncell_line eligible (all {len(keys):,} candidates, re-checked at write):")
+            print(
+                f"\ncell_line eligible (all {len(keys):,} candidates, re-checked at write):"
+            )
             for t in CELL_LINE_CLEAR_TABLES:
                 print(f"  {t}.cell_line")
-            print(f"  enriched_samples_v5.cell_line: preserved (raw/audit evidence, not cleared)")
+            print(
+                f"  enriched_samples_v5.cell_line: preserved (raw/audit evidence, not cleared)"
+            )
             print("\ndonated-field eligible:")
             for t in TABLES:
                 for f in GATED_FIELDS:
