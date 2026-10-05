@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from _typeshed import WriteableBuffer
 
 import httpx
-import psycopg
 import socks
 from tqdm import tqdm
 
@@ -815,6 +814,8 @@ def exec_query_from_file(
     pg_dsn: str | None = None,
     conn: Any | None = None,
 ) -> None:
+    import psycopg  # noqa: PLC0415 (lazy: fleet workers import helpers without needing a working psycopg install)
+
     is_custom_conn = conn is not None
     if not is_custom_conn:
         if pg_dsn:

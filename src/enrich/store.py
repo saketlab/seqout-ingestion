@@ -49,10 +49,8 @@ _ONTOLOGY_SUFFIXES = (
     "match_method",
     "ancestors",
 )
-# `age` carries two formats: hours-as-a-string from the embedding path, a
-# Cellosaurus token (30Y6M, Fetus) from the donation path. These four give one
-# unit, so a consumer never branches on age_source. _derive_age fills them; the
-# CSV has no such columns.
+# Normalize age strings (hours or Cellosaurus tokens such as 30Y6M) into
+# shared columns. _derive_age adds these fields; source CSVs omit them.
 AGE_CANON_COLS = ["age_days", "age_group", "prenatal", "age_raw"]
 
 ONTOLOGY_COLS = [
@@ -124,6 +122,10 @@ CORRECTIONS_COLS = (
 )
 
 
+def _fast_name(table: str) -> str:
+    return f"{table}_fast"
+
+
 def schema_sql() -> str:
     """Generate the DDL from the column lists above."""
     parts = [
@@ -131,15 +133,23 @@ def schema_sql() -> str:
         "    accession TEXT PRIMARY KEY,\n"
         "    title     TEXT,\n"
         "    n_samples INTEGER NOT NULL DEFAULT 0\n);",
+        # Keep embedding-only results in separate _fast tables; full enrichment
+        # leaves them untouched, and consumers prefer the non-_fast tables. See
+        # docs/superpowers/specs/2026-09-14-embedding-only-enrichment.md.
+        f"CREATE TABLE IF NOT EXISTS {_fast_name('enriched_studies')} (\n"
+        "    accession TEXT PRIMARY KEY,\n"
+        "    title     TEXT,\n"
+        "    n_samples INTEGER NOT NULL DEFAULT 0\n);",
     ]
     for table, cols in TABLES.items():
         defs = ",\n    ".join(f"{c} TEXT" for c in cols)
-        parts.append(
-            f"CREATE TABLE IF NOT EXISTS {table} (\n"
+        parts.extend(
+            f"CREATE TABLE IF NOT EXISTS {name} (\n"
             f"    study_accession TEXT NOT NULL,\n"
             f"    sample          TEXT NOT NULL,\n"
             f"    {defs},\n"
             f"    PRIMARY KEY (study_accession, sample)\n);"
+            for name in (table, _fast_name(table))
         )
     parts.append(
         "CREATE TABLE IF NOT EXISTS enrichment_corrections_log (\n    "
@@ -147,8 +157,9 @@ def schema_sql() -> str:
         + "\n);"
     )
     parts += [
-        f"CREATE INDEX IF NOT EXISTS idx_{t}_study ON {t}(study_accession);"
+        f"CREATE INDEX IF NOT EXISTS idx_{name}_study ON {name}(study_accession);"
         for t in TABLES
+        for name in (t, _fast_name(t))
     ]
     return "\n\n".join(parts) + "\n"
 
@@ -167,8 +178,7 @@ def _derive_age(rows: list[dict]) -> list[dict]:
     for row in rows:
         raw = (row.get("age") or "").strip()
         if not raw:
-            # parse_age calls "" unspecified; here it means no age was recorded,
-            # so leave nothing behind.
+            # Treat blank age as missing, not parse_age's "unspecified" category.
             row.update(dict.fromkeys(AGE_CANON_COLS, ""))
             continue
         norm = parse_age(raw)
@@ -229,8 +239,16 @@ def ingest(
     db_file: Path,
     unified_db: Path | None = None,
     limit: int | None = None,
+    *,
+    fast: bool = False,
 ) -> dict[str, int]:
-    """Load every study in ``csv_dir`` into ``db_file``.  Returns row counts."""
+    """
+    Load every study in ``csv_dir`` into ``db_file``.  Returns row counts.
+
+    fast=True routes every table to its _fast twin (an embedding-only batch's
+    output), never touching the trusted tables a full `enrich batch` run
+    writes to.
+    """
     files = [
         f
         for f in sorted(csv_dir.glob("*_enriched.csv"))
@@ -242,6 +260,7 @@ def ingest(
     logger.info("%d studies with an _enriched.csv", len(accessions))
 
     titles = load_titles(unified_db)
+    studies_table = _fast_name("enriched_studies") if fast else "enriched_studies"
 
     db_file.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite_connect(db_file)
@@ -256,29 +275,30 @@ def ingest(
             continue
         studies.append((acc, titles.get(acc), len(rows)))
         for table, cols in TABLES.items():
+            dest = _fast_name(table) if fast else table
             path = csv_dir / f"{acc}_{_SUFFIX[table]}.csv"
             if table == "enriched_samples":
-                _insert(conn, table, cols, acc, rows)
+                _insert(conn, dest, cols, acc, rows)
             elif path.exists() and (extra := _read_csv(path)):
                 if table == "ontology_samples":
                     _derive_age(extra)
-                _insert(conn, table, cols, acc, extra)
+                _insert(conn, dest, cols, acc, extra)
         if len(studies) >= COMMIT_INTERVAL:
-            _flush(conn, studies)
-    _flush(conn, studies)
+            _flush(conn, studies, studies_table)
+    _flush(conn, studies, studies_table)
 
     counts = {
         t: conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0]  # noqa: S608
-        for t in ("enriched_studies", *TABLES)
+        for t in (studies_table, *(_fast_name(t) if fast else t for t in TABLES))
     }
     conn.close()
     return counts
 
 
-def _flush(conn: sqlite3.Connection, studies: list[tuple]) -> None:
+def _flush(conn: sqlite3.Connection, studies: list[tuple], table: str) -> None:
     if studies:
         conn.executemany(
-            "INSERT OR REPLACE INTO enriched_studies (accession, title, n_samples) "
+            f"INSERT OR REPLACE INTO {table} (accession, title, n_samples) "  # noqa: S608
             "VALUES (?, ?, ?)",
             studies,
         )
@@ -291,8 +311,7 @@ def install_corrections(db_file: Path, audits: list[tuple]) -> int:
     conn = sqlite_connect(db_file)
     exec_query_from_file("tables/enrichment.sql", conn=conn)
     if audits:
-        # S608: the only interpolation is a run of `?` placeholders sized by a
-        # module constant. Every value is bound.
+        # S608: only placeholder counts are interpolated; all values are bound.
         conn.executemany(
             "INSERT INTO enrichment_corrections_log VALUES "  # noqa: S608
             f"({', '.join(['?'] * len(CORRECTIONS_COLS))})",

@@ -1,0 +1,16 @@
+in_S1               False  True 
+added_by                        
+libsource            1088   5517
+protocol             3541      7
+read_measured           0   1054
+text                  660    609
+text_restored         189      0
+unknown                 0      1
+whitelist_override    977      0
+added_by
+libsource             20
+protocol              20
+read_measured         20
+text                  20
+text_restored         20
+whitelist_override    20

@@ -53,6 +53,7 @@ def main() -> int:
         _int_env("PREFLIGHT_DEEP_N_READS", 400_000),
         _int_env("PREFLIGHT_DEEP_MAX_RUNS", 2),
         accession,
+        _int_env("PREFLIGHT_THREADS", 1),
     )
     logger.info("preflight %s: %s", accession, json.dumps(counts))
     return 0

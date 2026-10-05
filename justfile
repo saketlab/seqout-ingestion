@@ -6,8 +6,17 @@ export DATA_DIR := env("DATA_DIR", "/data/share/seqout")
 LOG_LEVEL := env("LOG_LEVEL", "info")
 START_DATE := env("START_DATE", "2026-04-28")
 END_DATE := env("END_DATE", "2026-05-31")
+# each NCBI_SRA_Metadata_*.tar.gz is a per-day incremental dump, not a full
+# snapshot; the shared multi-day START_DATE window would download one per
+# day in range and risk filling disk. ingest_sra gets its own short window.
+SRA_START_DATE := env("SRA_START_DATE", "2026-04-28")
+SRA_END_DATE := env("SRA_END_DATE", "2026-05-31")
 RETRIES := env("RETRIES", "20")
 WORKERS := env("WORKERS", "8")
+# NCBI 503s under 8-way concurrency (GEO/SRA ftp.ncbi.nlm.nih.gov); EBI/DDBJ haven't shown this, so only these two get throttled
+NCBI_WORKERS := env("NCBI_WORKERS", "3")
+# CNCB 429s under 8-way concurrency scraping GSA study pages
+CNCB_WORKERS := env("CNCB_WORKERS", "3")
 BATCH_SIZE := env("BATCH_SIZE", "500")
 TIMEOUT := env("TIMEOUT", "30")
 MAX_TIMEOUT := env("MAX_TIMEOUT", "120")
@@ -36,6 +45,7 @@ NCOUNT_EXTRA_DB_FILE := env("NCOUNT_EXTRA_DB_FILE", shell("ls -1 " + justfile_di
 ENA_DELTA_DB_FILE := env("ENA_DELTA_DB_FILE", "")
 ENRICHED_DB_FILE := env("ENRICHED_DB_FILE", "/data/share/saket_dump/enrichment/enriched_metadata_v4_combined.sqlite")
 
+DELTA_DIR := env("DELTA_DIR", DATA_DIR + "/delta")
 UNIFIED_CATALOG_DB_FILE := env("UNIFIED_CATALOG_DB_FILE", DATA_DIR + "/unified_catalog/unified_catalog.db")
 UNIFIED_METADATA_DB_FILE := env("UNIFIED_METADATA_DB_FILE", DATA_DIR + "/unified_metadata/unified_metadata.db")
 DOWNLOAD_LINKS_DB_FILE := env("DOWNLOAD_LINKS_DB_FILE", DATA_DIR + "/download_links/download_links.db")
@@ -69,7 +79,7 @@ _gsa_db_args := "--gsa-db-file " + GSA_DB_FILE + " --gsa-human-db-file " + GSA_H
 [private]
 _sc_extra_db_args := (if ENA_DELTA_DB_FILE != "" { "--ena-delta-db-file " + ENA_DELTA_DB_FILE + " " } else { "" }) + (if ENRICHED_DB_FILE != "" { "--enriched-db-file " + ENRICHED_DB_FILE + " " } else { "" })
 [private]
-_ddbj_db_args := "--dra-db-file " + DRA_DB_FILE + " --gea-db-file " + GEA_DB_FILE + " "
+_ddbj_db_args := (if DRA_DB_FILE != "" { "--dra-db-file " + DRA_DB_FILE + " " } else { "" }) + (if GEA_DB_FILE != "" { "--gea-db-file " + GEA_DB_FILE + " " } else { "" })
 [private]
 _transfer_args := _all_db_args + " --pubmed-metadata-db-file " + PUBMED_METADATA_DB_FILE + " --unified-metadata-db-file " + UNIFIED_METADATA_DB_FILE + " --download-links-db-file " + DOWNLOAD_LINKS_DB_FILE + " --read-batch-size " + BATCH_SIZE + " --workers " + WORKERS + " "
 [private]
@@ -81,6 +91,18 @@ _tox_cuda := "tox run -e cuda -- "
 ingest_sra *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest sra \
         {{ _ingest_args }} \
+        --write-batch-size {{ BATCH_SIZE }} \
+        --workers {{ NCBI_WORKERS }} \
+        {{ flags }}
+
+[group("ingest")]
+ingest_sra_daily *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ingest sra-daily \
+        --output-dir {{ DATA_DIR }} \
+        --start-date {{ SRA_START_DATE }} \
+        --end-date {{ SRA_END_DATE }} \
+        --workers {{ NCBI_WORKERS }} \
+        --retries {{ RETRIES }} \
         --write-batch-size {{ BATCH_SIZE }} \
         {{ flags }}
 
@@ -114,6 +136,7 @@ ingest_gea *flags:
 ingest_geo *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest geo \
         {{ _ingest_args }} \
+        --workers {{ NCBI_WORKERS }} \
         {{ flags }}
 
 [group("ingest")]
@@ -132,18 +155,20 @@ ingest_ae *flags:
 ingest_gsa *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest gsa \
         {{ _ingest_args }} \
+        --workers {{ CNCB_WORKERS }} \
         {{ flags }}
 
 [group("ingest")]
 ingest_gsa_human *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest gsa-human \
         {{ _ingest_args }} \
+        --workers {{ CNCB_WORKERS }} \
         {{ flags }}
 
 [group("ingest")]
 ingest_gsa_bioproject *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ingest gsa-bioproject \
-        --output-dir {{ DATA_DIR }} --workers {{ WORKERS }} --retries {{ RETRIES }} \
+        --output-dir {{ DATA_DIR }} --workers {{ CNCB_WORKERS }} --retries {{ RETRIES }} \
         {{ _gsa_db_args }} \
         {{ flags }}
 
@@ -158,6 +183,7 @@ backfill_download_links *flags:
         --batch-size {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
         --timeout {{ TIMEOUT }} \
+        --source both \
         {{ flags }}
 
 [group("backfill")]
@@ -287,6 +313,15 @@ unify_build_metadata *flags:
         --taxonomy-mapping-csv-file {{ TAXONOMY_MAPPING_FILE }} \
         {{ flags }}
 
+# Dated copy of unified_metadata.db, taken right after unify_build_metadata
+# and before transfer. unified_metadata.db itself is a single flat path
+# overwritten every night, so this is the only record of a given day's
+# pre-transfer state.
+[group("unify")]
+snapshot_unified_metadata:
+    mkdir -p {{ DATA_DIR }}/unified_metadata/history
+    cp {{ UNIFIED_METADATA_DB_FILE }} {{ DATA_DIR }}/unified_metadata/history/unified_metadata_$(date -u +%F).db
+
 [group("geocode")]
 geocode *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} geocode \
@@ -296,6 +331,7 @@ geocode *flags:
         --cache-file {{ GEOCODING_CACHE_FILE }} \
         --save-every {{ BATCH_SIZE }} \
         --retries {{ RETRIES }} \
+        --pg-url "$PG_URL" \
         {{ flags }}
 
 [group("sc_enrich")]
@@ -405,6 +441,48 @@ transfer_parquet *flags:
         {{ _transfer_args }} \
         {{ flags }}
 
+[group("transfer")]
+build_deltas:
+    mkdir -p {{ DELTA_DIR }}
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ SRA_DB_FILE }} --out-db-file {{ DELTA_DIR }}/sra_delta.db \
+        --table sra_studies --table sra_submissions --table sra_experiments \
+        --table sra_samples --table sra_runs
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ GEO_DB_FILE }} --out-db-file {{ DELTA_DIR }}/geo_delta.db \
+        --table geo_series --table geo_samples --table geo_platforms --table geo_contributors
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ ENA_DB_FILE }} --out-db-file {{ DELTA_DIR }}/ena_delta.db \
+        --table ena_experiments --table ena_studies --table ena_samples --table ena_studies_search
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ AE_DB_FILE }} --out-db-file {{ DELTA_DIR }}/ae_delta.db \
+        --table arrayexpress_experiments --table arrayexpress_samples
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ PUBMED_METADATA_DB_FILE }} --out-db-file {{ DELTA_DIR }}/pubmed_delta.db \
+        --table pubmed_metadata
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ UNIFIED_METADATA_DB_FILE }} --out-db-file {{ DELTA_DIR }}/unified_delta.db \
+        --table unified_metadata --table unified_metadata_centers
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer delta --pg-url "$PG_URL" \
+        --source-db-file {{ DOWNLOAD_LINKS_DB_FILE }} --out-db-file {{ DELTA_DIR }}/download_links_delta.db \
+        --table sra_run_download_links
+
+[group("transfer")]
+transfer_postgres_incremental *flags: build_deltas
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer postgres \
+        --pg-url "$PG_URL" \
+        --sra-db-file {{ DELTA_DIR }}/sra_delta.db \
+        --geo-db-file {{ DELTA_DIR }}/geo_delta.db \
+        --ena-db-file {{ DELTA_DIR }}/ena_delta.db \
+        --ae-db-file {{ DELTA_DIR }}/ae_delta.db \
+        --pubmed-metadata-db-file {{ DELTA_DIR }}/pubmed_delta.db \
+        --unified-metadata-db-file {{ DELTA_DIR }}/unified_delta.db \
+        --download-links-db-file {{ DELTA_DIR }}/download_links_delta.db \
+        --read-batch-size {{ BATCH_SIZE }} \
+        --workers {{ WORKERS }} \
+        {{ _gsa_db_args }} \
+        {{ flags }}
+
 [group("ontology")]
 ontology_build *flags:
     {{ PYTHON }} {{ ENTRYPOINT }} ontology build \
@@ -479,6 +557,15 @@ embed_neighbors *flags:
     {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed neighbors \
         --chroma-db-dir {{ CHROMA_DB_DIR }} \
         --neighbors-db-file {{ NEIGHBORS_DB_FILE }} \
+        {{ flags }}
+
+# incremental, writes straight to Postgres; run after embed_run. See
+# src/embed/quick_neighbors.py for why this skips coords/UMAP.
+[group("embed")]
+embed_neighbors_quick *flags:
+    {{ _tox_cuda }} {{ PYTHON }} {{ ENTRYPOINT }} embed neighbors-quick \
+        --chroma-db-dir {{ CHROMA_DB_DIR }} \
+        --pg-url "$PG_URL" \
         {{ flags }}
 
 [group("embed")]
@@ -718,11 +805,11 @@ NORD_DB_FILE := env("NORD_DB_FILE", QUANT_DIR + "/nord/nord.db")
 NORD_CSV_FILE := env("NORD_CSV_FILE", QUANT_DIR + "/nord/rare_diseases.csv")
 INHERITANCE_DB_FILE := env("INHERITANCE_DB_FILE", QUANT_DIR + "/inheritance/inheritance.db")
 GARD_ONTOLOGY_DIR := env("GARD_ONTOLOGY_DIR", QUANT_DIR + "/ontology")
+ONTOLOGY_CLOSURE_DB_FILE := env("ONTOLOGY_CLOSURE_DB_FILE", QUANT_DIR + "/ontology_closure/ontology_closure.db")
 
 PG_SSH_HOST := env("PG_SSH_HOST", "sramap@167.114.208.177")
 PG_SOCKET_PORT := env("PG_SOCKET_PORT", "15433")
 PG_SOCKET_URL := "postgresql://sramap@127.0.0.1:" + PG_SOCKET_PORT + "/pysradb"
-SERVER_REPO := env("SERVER_REPO", justfile_directory() + "/../pysradb-server")
 
 [private]
 _pg_tunnel:
@@ -759,28 +846,199 @@ gard_index: _pg_tunnel
     psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 \
         -f sql/indexes/ontology_ancestors_pg.sql
 
+# Full-DAG closure (mondo/uberon/cl/efo) behind resolve_ontology_term and the
+# Beacon includeDescendantTerms filter; the ontology_* group above rebuilds
+# the Neo4j query-expansion graph instead.
+[group("ontology_closure")]
+ontology_closure_build *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology_closure build \
+        --output-db-file {{ ONTOLOGY_CLOSURE_DB_FILE }} \
+        {{ flags }}
+
+[group("ontology_closure")]
+ontology_closure_verify_sqlite *flags:
+    {{ PYTHON }} {{ ENTRYPOINT }} ontology_closure verify-sqlite \
+        --db-file {{ ONTOLOGY_CLOSURE_DB_FILE }} \
+        {{ flags }}
+
+[group("ontology_closure")]
+ontology_closure_transfer *flags: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ontology-closure \
+        --pg-url "{{ PG_SOCKET_URL }}" \
+        --db-file {{ ONTOLOGY_CLOSURE_DB_FILE }} \
+        {{ flags }}
+
+[group("ontology_closure")]
+ontology_closure_filtering_terms: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ontology-closure-filtering-terms \
+        --pg-url "{{ PG_SOCKET_URL }}"
+
+[group("ontology_closure")]
+ontology_closure_verify_pg: _pg_tunnel
+    {{ PYTHON }} {{ ENTRYPOINT }} transfer ontology-closure-verify-pg \
+        --pg-url "{{ PG_SOCKET_URL }}"
+
 [group("disease")]
 disease_matview collection: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_rare_disease_matview.sh {{ collection }}
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_rare_disease_matview.sh {{ collection }}
+
+# Long-read collection behind /technology/longread and the long_read search
+# filter. Reads the experiment tables, so it needs no transfer of its own; rerun
+# after any archive ingest.
+[group("technology")]
+longread_matview: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/longread_pg.sql
+    @echo "long-read stack rebuilt: /longread/{summary,facets,projects}"
+
+# Single-cell collection behind /singlecell/{summary,facets,projects}.
+# Reverse-engineered from production; see sql/matviews/singlecell_pg.sql's
+# header. Depends on longread_study; run longread_matview first, or use
+# refresh_technology_matviews for the whole stack in order.
+[group("technology")]
+singlecell_matview: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/singlecell_pg.sql
+    @echo "single-cell stack rebuilt: /singlecell/{summary,facets,projects}"
+
+# Per-country collection behind /country/{code}/{summary,facets,projects}.
+# Depends on singlecell_study and longread_study; run those first, or use
+# refresh_technology_matviews for the whole stack in order.
+[group("technology")]
+country_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_country_matview.sh
+    @echo "country stack rebuilt: /country/{code}/{summary,facets,projects}"
+
+# Full longread -> singlecell -> country/tissue/disease-ontology/perturbation/
+# spatial rebuild in dependency order. longread_study CASCADEs into country,
+# tissue and disease_ontology directly on each DROP; perturbation and spatial
+# CASCADE transitively through singlecell_study instead. Run this rather than
+# the recipes above individually, or a dependent matview stays missing.
+[group("technology")]
+refresh_technology_matviews: longread_matview singlecell_matview country_matview tissue_matview disease_ontology_matview perturbation_matview spatial_matview
+
+# ChEBI lexicon behind singlecell_perturbation_study; downloads chebi.obo once
+# (delete data/perturbation/chebi.obo to refresh), then replaces
+# perturbation_lexicon whole. No model: every hit is a ChEBI id.
+[group("technology")]
+perturbation_lexicon: _pg_tunnel
+    mkdir -p data/perturbation
+    test -s data/perturbation/chebi.obo || { curl -fsSL -o data/perturbation/chebi.obo.gz https://ftp.ebi.ac.uk/pub/databases/chebi/ontology/chebi.obo.gz && gunzip -kf data/perturbation/chebi.obo.gz; }
+    PYTHONPATH=src {{ PYTHON }} -m perturbation.lexicon data/perturbation/chebi.obo data/perturbation/lexicon.tsv
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/tables/perturbation_lexicon_pg.sql
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -c "BEGIN; TRUNCATE perturbation_lexicon;" -c "\\copy perturbation_lexicon FROM 'data/perturbation/lexicon.tsv' WITH (FORMAT csv, DELIMITER E'\\t', HEADER true)" -c "COMMIT;"
+    @echo "perturbation_lexicon loaded"
+
+# Single-cell perturbation studies (genetic/chemical/other) with confidence,
+# readout assay and matrix/FASTQ availability. CASCADE-dropped whenever
+# singlecell_study rebuilds, hence the refresh_technology_matviews entry.
+[group("technology")]
+perturbation_matview: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/singlecell_perturbation_pg.sql
+    @echo "perturbation view rebuilt: singlecell_perturbation_study"
+
+# Platform lexicon behind spatial_study's `platforms`/`resolution`/
+# `technology` columns. Hand-curated (unlike perturbation_lexicon), so this
+# just applies sql/tables/spatial_platform_lexicon_pg.sql directly: no
+# download, no generation script. Run this before spatial_matview after
+# editing a row in that file; a plain spatial_matview run will fail loudly
+# (empty-lexicon guard) rather than silently miss every platform.
+[group("technology")]
+spatial_platform_lexicon: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/tables/spatial_platform_lexicon_pg.sql
+    @echo "spatial_platform_lexicon loaded"
+
+# Spatial transcriptomics studies, with named platform(s), resolution and
+# technology class. Depends on singlecell_study and spatial_platform_lexicon;
+# CASCADE-dropped whenever singlecell_study is rebuilt, hence the
+# refresh_technology_matviews entry.
+[group("technology")]
+spatial_matview: _pg_tunnel
+    psql "{{ PG_SOCKET_URL }}" -v ON_ERROR_STOP=1 -f sql/matviews/spatial_pg.sql
+    @echo "spatial view rebuilt: spatial_study"
+
+LONGREAD_CHEM_DIR := env("LONGREAD_CHEM_DIR", QUANT_DIR + "/longread_chemistry")
+LONGREAD_CHEM_DB := env("LONGREAD_CHEM_DB", LONGREAD_CHEM_DIR + "/longread_chemistry.db")
+
+# longread_chemistry.db's bucket tier (instrument_model + first_public date)
+# covers most long-read runs; see recipes/longread_chemistry_populate.py
+[group("technology")]
+longread_chem_manifest *flags:
+    {{ PYTHON }} recipes/longread_chemistry/build_manifest.py \
+        --db {{ LONGREAD_CHEM_DB }} \
+        --out yuj/longread_chem/runs.txt \
+        {{ flags }}
+
+[group("technology")]
+longread_chem_scatter: longread_chem_manifest
+    cd yuj/longread_chem && env -u PYTHON_GIL yuj scatter && env -u PYTHON_GIL yuj run
+
+[group("technology")]
+longread_chem_collect:
+    cd yuj/longread_chem && env -u PYTHON_GIL yuj pull
+    {{ PYTHON }} recipes/longread_chemistry/ingest_results.py \
+        --db {{ LONGREAD_CHEM_DB }} \
+        --results-dir yuj/longread_chem/results
 
 [group("disease")]
 alias_matview: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_disease_alias_matview.sh
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_disease_alias_matview.sh
 
 [group("disease")]
 inheritance_matview: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_disease_inheritance_matview.sh
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_disease_inheritance_matview.sh
 
 [group("gard")]
 downloads_matview: _pg_tunnel
-    cd {{ SERVER_REPO }} && DATABASE_URL="{{ PG_SOCKET_URL }}" \
-        bash scripts/create_study_download_matview.sh
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_study_download_matview.sh
+
+[group("stats")]
+organism_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_organism_matview.sh
+
+[group("stats")]
+platform_matviews: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_platform_matviews.sh
+
+[group("stats")]
+database_growth_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_database_growth_matview.sh
+
+[group("stats")]
+database_volume_growth_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/refresh_database_volume_growth.sh
 
 [group("gard")]
 gard_matview: _pg_tunnel (disease_matview "gard")
+
+# Any-MONDO-term collection behind /disease/{term}/{summary,facets,projects},
+# distinct from disease_matview (rare/nord catalogues only). Needs
+# study_canonical already built. Not declared as a dependency here: just
+# reruns a prerequisite on every invocation, and this and tissue_matview
+# would otherwise CASCADE-drop each other's _term view on every solo rebuild.
+[group("ontology")]
+disease_ontology_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_ontology_matview.sh disease
+    @echo "disease-ontology stack rebuilt: /disease/{term}/{summary,facets,projects}"
+
+# Any-UBERON-term collection behind /tissue/{term}/{summary,facets,projects}.
+# Needs study_canonical already built; see disease_ontology_matview above.
+[group("ontology")]
+tissue_matview: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" bash sql/matviews/create_ontology_matview.sh tissue
+    @echo "tissue stack rebuilt: /tissue/{term}/{summary,facets,projects}"
+
+# Maps every accession to one canonical winner per study so
+# tissue_study/disease_study_ontology don't double-count aliased studies.
+# Rerun via refresh_ontology_matviews, not alone: a standalone run
+# CASCADEs onto both _term views with nothing left in the chain to rebuild them.
+[group("ontology")]
+study_canonical: _pg_tunnel
+    DATABASE_URL="{{ PG_SOCKET_URL }}" {{ PYTHON }} sql/matviews/build_study_canonical.py
+
+# The only supported way to rebuild the three targets above: one
+# study_canonical pass then both matviews, in one invocation so no later
+# prerequisite rerun CASCADE-drops what an earlier step just built.
+[group("ontology")]
+refresh_ontology_matviews: study_canonical tissue_matview disease_ontology_matview
 
 [group("disease")]
 disease_all: gard_fetch gard_inheritance gard_transfer \

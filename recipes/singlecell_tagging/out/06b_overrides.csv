@@ -1,0 +1,8 @@
+accession,label,note
+SRP379466,sc,"full description: ""RNA sequencing (RNA-seq), single-cell RNA sequencing (scRNA-seq) ... were used"" (mixed)"
+SRP537596,sc,"overall design: ""processed for the single-cell RNA sequencing based on the Smart-seq3xpress protocol"""
+GSE325380,sc,"full description: ""Single-nucleus RNA sequencing revealed widespread transcriptional reprogramming"""
+SRP333800,sc,"overall design: ""scRNA-seq profiling of WT, TSC1-/-, and TSC2-/- renal organoids"""
+SRP517270,sc,"full description: ""Using unbiased single cell sequencing, we demonstrate that myeloid cells..."""
+SRP299168,bulk_sorted,"""100 cells of each condition were flow sorted into one well ... processed according to the SmartSeq2 protocol"""
+SRP500320,bulk_sorted,"""PGCs with the same genotypes were pooled together and lysed for Smart-seq"""

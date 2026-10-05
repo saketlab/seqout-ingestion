@@ -14,7 +14,7 @@ def delta(
     pg_url: str = typer.Option(..., envvar="PG_URL"),
     source_db_file: Path = typer.Option(...),
     out_db_file: Path = typer.Option(...),
-    table: list[str] = typer.Option(  # noqa: B008
+    table: list[str] = typer.Option(
         ...,
         "--table",
         help="Repeatable. Transfer task names to include, e.g. --table sra_studies.",
@@ -22,11 +22,10 @@ def delta(
     read_batch_size: int = typer.Option(default=500),
 ) -> None:
     """
-    Write a slim sqlite holding only rows postgres lacks, for a faster transfer.
+    Write a SQLite delta containing rows missing from Postgres.
 
-    Run after ingest, then point transfer postgres at out_db_file. Keys come from
-    the transfer's own task table, so this cannot disagree with what the transfer
-    treats as a conflict.
+    Run after ingest, then pass out_db_file to `transfer postgres`.
+    Uses the transfer task table's conflict keys.
     """
     from transfer.delta import build_delta
 
@@ -36,15 +35,18 @@ def delta(
 
 @transfer_app.command()
 def postgres(
-    # envvar keeps the password out of argv, where ps and the shell history see it
+    # Read credentials from the environment to keep them out of command arguments.
     pg_url: str = typer.Option(..., envvar="PG_URL"),
-    sra_db_file: Path = typer.Option(...),
-    geo_db_file: Path = typer.Option(...),
-    ena_db_file: Path = typer.Option(...),
-    ae_db_file: Path = typer.Option(...),
-    pubmed_metadata_db_file: Path = typer.Option(...),
-    unified_metadata_db_file: Path = typer.Option(...),
-    download_links_db_file: Path = typer.Option(...),
+    # Database paths are optional unless a selected table's modifier needs them.
+    # Tasks run after --table filtering; geo_series also needs sra_db_file,
+    # while geo_samples/platforms/contributors do not.
+    sra_db_file: Path | None = typer.Option(None),
+    geo_db_file: Path | None = typer.Option(None),
+    ena_db_file: Path | None = typer.Option(None),
+    ae_db_file: Path | None = typer.Option(None),
+    pubmed_metadata_db_file: Path | None = typer.Option(None),
+    unified_metadata_db_file: Path | None = typer.Option(None),
+    download_links_db_file: Path | None = typer.Option(None),
     read_batch_size: int = typer.Option(default=500),
     num_retries: int = typer.Option(3, "--retries"),
     num_workers: int = typer.Option(4, "--workers"),
@@ -271,7 +273,7 @@ def pentimento(
     if report is not None:
         logger.info("dry run report: %s", _json.dumps(report, indent=2))
         if any(r["blanked"] for r in report):
-            # non-zero exit prevents scripts from transferring past this
+            # Stop downstream transfers on failure.
             raise typer.Exit(1)
 
 
@@ -336,6 +338,52 @@ def inheritance(
     inheritance_transfer(pg_url, inheritance_db_file)
 
 
+@transfer_app.command("ontology-closure")
+def ontology_closure(
+    pg_url: str = typer.Option(...),
+    db_file: Path = typer.Option(
+        ..., help="ontology_closure.db from `ontology_closure build`"
+    ),
+) -> None:
+    """Load the ontology closure and term labels into pg."""
+    from transfer.ontology_closure import ontology_closure_transfer
+
+    ontology_closure_transfer(pg_url, db_file)
+
+
+@transfer_app.command("ontology-closure-filtering-terms")
+def ontology_closure_filtering_terms(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Rebuild beacon_filtering_terms from ontology_samples_v4 + ontology_closure."""
+    from transfer.ontology_closure import ontology_closure_filtering_terms as run
+
+    run(pg_url)
+
+
+@transfer_app.command("ontology-closure-verify-pg")
+def ontology_closure_verify_pg(
+    pg_url: str = typer.Option(...),
+) -> None:
+    """Read-only: confirm the closure landed and the descendant filter uses an index."""
+    from transfer.ontology_closure import ontology_closure_verify_pg as run
+
+    run(pg_url)
+
+
+@transfer_app.command("longread-chemistry")
+def longread_chemistry(
+    pg_url: str = typer.Option(...),
+    longread_chemistry_db_file: Path = typer.Option(
+        ..., help="longread_chemistry.db from recipes/longread_chemistry_populate.py"
+    ),
+) -> None:
+    """Load the long-read chemistry dimension table into pg (non-nulling)."""
+    from transfer.longread_chemistry import longread_chemistry_transfer
+
+    longread_chemistry_transfer(pg_url, longread_chemistry_db_file)
+
+
 @transfer_app.command()
 def parquet(
     output_dir: Path = typer.Option(...),
@@ -384,10 +432,9 @@ def parquet_from_pg(
     resume: bool = typer.Option(False, "--resume", help="skip already-exported tables"),
 ) -> None:
     """
-    Build the parquet dump straight from Postgres, the source of truth.
+    Build the Parquet dump from Postgres, including GSA, DRA and GEA.
 
-    Covers all public tables plus GSA, DRA and GEA, replacing the SQLite-fed
-    parquet command.
+    Replaces the SQLite-fed parquet command.
     """
     from transfer.parquet import pg_parquet_transfer
 

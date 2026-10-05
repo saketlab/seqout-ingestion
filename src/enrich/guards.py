@@ -3,12 +3,13 @@ Post-hoc correction tiers.
 
 Guard mapping:
 
-  guard_h9            <- detect_h9_v4.py + apply_h9_v4.py
-  guard_organism      <- build_organism_truth_v4.py + apply_organism_v4.py
-                         (source-DB sweep remains post-hoc)
-  guard_placeholder   <- enrich.cellosaurus.CELL_LINE_PLACEHOLDERS (F5)
-  guard_declared      <- ENA typed sample columns
-  guard_insdc_assay   <- INSDC library triple
+  guard_h9                 <- detect_h9_v4.py + apply_h9_v4.py
+  guard_organism            <- build_organism_truth_v4.py + apply_organism_v4.py
+                               (source-DB sweep remains post-hoc)
+  guard_placeholder         <- enrich.cellosaurus.CELL_LINE_PLACEHOLDERS (F5)
+  guard_declared            <- ENA typed sample columns
+  guard_insdc_assay         <- INSDC library triple
+  guard_cell_line_species   <- Cellosaurus species vs the settled organism
 
 """
 
@@ -64,7 +65,12 @@ def _ts() -> str:
 
 
 def _blank(v) -> bool:
-    return v is None or (isinstance(v, float) and pd.isna(v)) or str(v).strip() == ""
+    return (
+        v is None
+        or v is pd.NA
+        or (isinstance(v, float) and pd.isna(v))
+        or str(v).strip() == ""
+    )
 
 
 def id_column(df: pd.DataFrame) -> str | None:
@@ -463,6 +469,157 @@ def guard_organism(project, frames: dict, log: _Log) -> int:
     return n
 
 
+# G7. cell_line species mismatch
+#
+# Fires only for a pinned allowlist of names Cellosaurus resolves
+# unambiguously (re-checked against the live lookup's cvcl_id every call),
+# crossed with organisms verified to have no xenograft/EV-transfer paradigm
+# for those lines. Widening either list needs the same per-case evidence.
+#
+# A flat Cellosaurus lookup can silently return the wrong entry for an
+# ambiguous name: "E14"/"R1"/"B16" each collapse onto one unrelated line
+# (enrich.cellosaurus.load_lookup). Xenograft/EV-transfer experiments into
+# mouse/rat/zebrafish legitimately produce a species mismatch (e.g.
+# SRP457338: HeLa cells dosed with mouse-donor EVs).
+
+ALLOWED_CELL_LINES = {
+    "hela": "CVCL_0030",
+    "k562": "CVCL_0004",
+    "mcf7": "CVCL_0031",
+    "hepg2": "CVCL_0027",
+    "jurkat": "CVCL_0065",
+    "a549": "CVCL_0023",
+    "hct116": "CVCL_0291",
+}
+
+SPECIES_SAFE_TAXIDS = {
+    "4932": "Saccharomyces cerevisiae",
+    "4896": "Schizosaccharomyces pombe",
+    "7227": "Drosophila melanogaster",
+    "6239": "Caenorhabditis elegans",
+    "3702": "Arabidopsis thaliana",
+}
+
+SPECIES_DETECTOR = "wrong_cell_line_species"
+SPECIES_REASON = "cell_line_species_mismatch_vs_organism"
+
+_SPECIES_BACKPROP_FIELDS = tuple(
+    f for f in DONATED_FIELDS if f not in ("cell_line", "organism")
+)
+_SPECIES_SITE_FIELDS = ("tissue_primary_site", "tissue_site_type")
+
+
+_NO_DONATION_CHECK = object()
+
+
+def _matches_donation(current, donated) -> bool:
+    """Only clear a field still holding exactly what this entry donated."""
+    if _blank(donated):
+        return _blank(current)
+    if _blank(current):
+        return False
+    return str(current).strip().lower() == str(donated).strip().lower()
+
+
+def _clear_species_field(
+    frames: dict,
+    i,
+    field: str,
+    key_frames: tuple[str, ...],
+    log: _Log,
+    sample,
+    pinned_cvcl: str,
+    donated=_NO_DONATION_CHECK,
+) -> None:
+    for key_frame in key_frames:
+        if donated is not _NO_DONATION_CHECK:
+            df = frames.get(key_frame)
+            if df is None or field not in df.columns or i not in df.index:
+                continue
+            if not _matches_donation(df.at[i, field], donated):
+                continue  # value has since diverged from the donation
+        _set(
+            frames,
+            key_frame,
+            i,
+            field,
+            None,
+            log,
+            sample,
+            "null",
+            SPECIES_REASON,
+            SPECIES_DETECTOR,
+            source_value=pinned_cvcl,
+        )
+
+
+def guard_cell_line_species(
+    project, frames: dict, log: _Log, lookup: dict | None = None
+) -> int:
+    onto = frames.get("ontology")
+    if onto is None or "cell_line" not in onto.columns or "taxid" not in onto.columns:
+        return 0
+    lookup = cellosaurus_lookup_table() if lookup is None else lookup
+    ids = _sample_ids(frames)
+    prov = frames.get("provenance")
+    n = 0
+    for i in onto.index:
+        cl = onto.at[i, "cell_line"]
+        if _blank(cl):
+            continue
+        key = _normalize_cell_line_name(cl)
+        pinned_cvcl = ALLOWED_CELL_LINES.get(key)
+        if pinned_cvcl is None:
+            continue  # not on the pinned, verified-unambiguous allowlist
+        entry = lookup.get(key)
+        if entry is None or entry.get("cvcl_id") != pinned_cvcl:
+            continue  # lookup no longer agrees with the pin: abstain
+        cur_taxid = onto.at[i, "taxid"]
+        if _blank(cur_taxid):
+            continue
+        cur_taxid = str(cur_taxid).strip()
+        if cur_taxid not in SPECIES_SAFE_TAXIDS:
+            continue  # not a verified-incompatible organism: abstain
+        sample = ids.get(i)
+        donate = _entry_donations(entry)
+
+        _clear_species_field(
+            frames,
+            i,
+            "cell_line",
+            ("output", "cello", "ontology"),
+            log,
+            sample,
+            pinned_cvcl,
+        )
+        for field in _SPECIES_BACKPROP_FIELDS:
+            if _prov(prov, i, field) == "cellosaurus":
+                _clear_species_field(
+                    frames,
+                    i,
+                    field,
+                    ("output", "cello", "ontology"),
+                    log,
+                    sample,
+                    pinned_cvcl,
+                    donate.get(field),
+                )
+        if _prov(prov, i, "tissue") == "cellosaurus":
+            for field in _SPECIES_SITE_FIELDS:
+                _clear_species_field(
+                    frames,
+                    i,
+                    field,
+                    ("cello", "ontology"),
+                    log,
+                    sample,
+                    pinned_cvcl,
+                    donate.get(field),
+                )
+        n += 1
+    return n
+
+
 # G3. cell-line placeholders in the OUTPUT
 #
 # enrich.cellosaurus.CELL_LINE_PLACEHOLDERS stops "N/A" resolving to Cellosaurus NA
@@ -509,6 +666,98 @@ def guard_placeholder(project, frames: dict, log: _Log) -> int:
             )
         n += 1
     return n
+
+
+# G3b. Species as tissue
+#
+# Submitters sometimes put the species in a column named "tissue", and an
+# Organism column used to be fuzzy-matched as tissue. Either way a species
+# name is never a tissue, and mapping it gives a tissue ontology term such as
+# "Homo sapiens".
+
+SPECIES_TISSUE_DETECTOR = "species_as_tissue"
+SPECIES_TISSUE_REASON = "tissue_value_is_a_species_name"
+TAXON_TERM_REASON = "tissue_mapped_to_a_taxon_term"
+
+
+_PLURAL_SPECIES = {"mice": "mouse", "humans": "human", "rats": "rat"}
+
+
+def _species_like(value) -> bool:
+    """A species name, allowing plurals and a trailing sample number ("Mice", "Human1")."""
+    if _blank(value):
+        return False
+    key = re.sub(r"[^a-z ]+", " ", str(value).lower()).strip()
+    key = re.sub(r"\s+", " ", key)
+    return _species_taxid(_PLURAL_SPECIES.get(key, key)) is not None
+
+
+def _taxon_named(tissue, taxon_name) -> bool:
+    """The tissue text is the taxon itself (species "Xenopus Laevis", genus "Mus")."""
+    if _blank(tissue) or _blank(taxon_name):
+        return False
+    t = str(tissue).strip().lower()
+    name = str(taxon_name).strip().lower()
+    return t == name or t == name.split(" <")[0] or t == name.split()[0]
+
+
+def guard_species_tissue(project, frames: dict, log: _Log) -> int:
+    ids = _sample_ids(frames)
+    onto = frames.get("ontology")
+    has_ids = onto is not None and "tissue_ontology_id" in onto.columns
+    clear_text, clear_term = set(), set()
+    for key in ("output", "cello", "ontology"):
+        df = frames.get(key)
+        if df is not None and "tissue" in df.columns:
+            clear_text |= {i for i in df.index if _species_like(df.at[i, "tissue"])}
+    if has_ids:
+        for i in onto.index:
+            if not str(onto.at[i, "tissue_ontology_id"]).startswith("NCBITaxon:"):
+                continue
+            name = (
+                onto.at[i, "tissue_ontology_name"]
+                if "tissue_ontology_name" in onto.columns
+                else None
+            )
+            # NCBITaxon:1 is the taxonomy root: "Root" is a plant tissue, keep it
+            if str(onto.at[i, "tissue_ontology_id"]) != "NCBITaxon:1" and _taxon_named(
+                onto.at[i, "tissue"], name
+            ):
+                clear_text.add(i)
+            else:
+                clear_term.add(i)
+    for i in clear_text:
+        for key in ("output", "cello", "ontology"):
+            _set(
+                frames,
+                key,
+                i,
+                "tissue",
+                None,
+                log,
+                ids.get(i),
+                "null",
+                SPECIES_TISSUE_REASON,
+                SPECIES_TISSUE_DETECTOR,
+            )
+    for i in clear_term - clear_text:
+        for col in [c for c in onto.columns if c.startswith("tissue_ontology_")] + [
+            c for c in ("tissue_match_method", "tissue_ancestors") if c in onto.columns
+        ]:
+            _set(
+                frames,
+                "ontology",
+                i,
+                col,
+                None,
+                log,
+                ids.get(i),
+                "null",
+                TAXON_TERM_REASON,
+                SPECIES_TISSUE_DETECTOR,
+                clear_ontology=False,
+            )
+    return len(clear_text | clear_term)
 
 
 # G4. Bad labels
@@ -1161,6 +1410,7 @@ def apply_inline_guards(
     stats["h9"] = guard_h9(project, frames, log)
     stats["placeholder"] = guard_placeholder(project, frames, log)
     stats["organism"] = guard_organism(project, frames, log)
+    stats["species_tissue"] = guard_species_tissue(project, frames, log)
     # declared values last among the fill guards: they must see the settled
     # cell-line state, because the one disease override is gated on a
     # provenance the H9 guard can rewrite.
@@ -1171,6 +1421,9 @@ def apply_inline_guards(
         stats["evidenced"] = mark_evidence_confirmed(
             project, frames, log, supported, vocab
         )
+    # after organism/declared settle taxid; a species-mismatched cell_line was
+    # never valid, no evidence gate needed.
+    stats["cell_line_species"] = guard_cell_line_species(project, frames, log)
     stats["bad_label"] = guard_bad_label(project, frames, log, tierc_policy)
     stats["audit_rows"] = len(log)
     return (
@@ -1349,6 +1602,107 @@ def _demo() -> None:
     out, cel, prov, ont = frames_for("K-562", "Blood", None, None, None)
     _, _, st = apply_inline_guards(u, out, cel, prov, ont)
     assert st["organism"] == 0, st
+
+    # 5d. cell_line species mismatch, in scope: K-562 (pinned allowlist) on a
+    # yeast sample (pinned safe-organism list). No xenograft ambiguity is
+    # possible for either, so G7 must retract K-562 and what it donated.
+    yeast = _P()
+    yeast.title = "x"
+    yeast.samples = pd.DataFrame(
+        {
+            "Sample": ["GSM1"],
+            "Organism": ["Saccharomyces cerevisiae"],
+            "Taxon ID": ["4932"],
+        }
+    )
+    out, cel, prov, ont = frames_for(
+        "K-562",
+        "Pleural effusion",
+        "Blast phase chronic myelogenous leukemia, BCR-ABL1 positive",
+        None,
+        None,
+    )
+    log_d = _Log("GSETEST")
+    frames_d = {"output": out, "cello": cel, "provenance": prov, "ontology": ont}
+    guard_h9(yeast, frames_d, log_d)
+    guard_placeholder(yeast, frames_d, log_d)
+    guard_organism(yeast, frames_d, log_d)
+    n_species = guard_cell_line_species(yeast, frames_d, log_d)
+    assert n_species == 1, n_species
+    assert _blank(frames_d["ontology"].at[0, "cell_line"])
+    assert _blank(frames_d["ontology"].at[0, "tissue"])
+    assert _blank(frames_d["ontology"].at[0, "disease"])
+    assert frames_d["ontology"].at[0, "taxid"] == "4932"
+    assert frames_d["ontology"].at[0, "organism"] == "Saccharomyces cerevisiae"
+    assert {r[9] for r in log_d.rows if r[3] == "cell_line"} == {
+        "wrong_cell_line_species"
+    }
+
+    # 5e. HeLa/K-562/etc. xenografts into mice are a real experimental
+    # design, so mouse stays off the safe-organism list even for a pinned
+    # name.
+    mono = _P()
+    mono.title = "x"
+    mono.samples = pd.DataFrame(
+        {"Sample": ["GSM1"], "Organism": ["Mus musculus"], "Taxon ID": ["10090"]}
+    )
+    out, cel, prov, ont = frames_for("K-562", "Pleural effusion", None, None, None)
+    log_e = _Log("GSETEST")
+    frames_e = {"output": out, "cello": cel, "provenance": prov, "ontology": ont}
+    guard_organism(mono, frames_e, log_e)
+    n_species_mouse = guard_cell_line_species(mono, frames_e, log_e)
+    assert n_species_mouse == 0, n_species_mouse
+    assert frames_e["ontology"].at[0, "cell_line"] == "K-562"
+
+    # 5f. matching species: K-562 on a human sample is never touched.
+    human = _P()
+    human.title = "x"
+    human.samples = pd.DataFrame(
+        {"Sample": ["GSM1"], "Organism": ["Homo sapiens"], "Taxon ID": ["9606"]}
+    )
+    out, cel, prov, ont = frames_for("K-562", "Pleural effusion", None, None, None)
+    log_f = _Log("GSETEST")
+    frames_f = {"output": out, "cello": cel, "provenance": prov, "ontology": ont}
+    guard_organism(human, frames_f, log_f)
+    n_species_ok = guard_cell_line_species(human, frames_f, log_f)
+    assert n_species_ok == 0, n_species_ok
+
+    # 5g. an ambiguous, unpinned name (E14: several real cell lines share the
+    # key) never fires regardless of organism; only the pinned allowlist
+    # triggers this guard.
+    e14 = _P()
+    e14.title = "x"
+    e14.samples = pd.DataFrame(
+        {"Sample": ["GSM1"], "Organism": ["Mus musculus"], "Taxon ID": ["10090"]}
+    )
+    out, cel, prov, ont = frames_for("E14", "Blastocyst", None, None, None)
+    log_g = _Log("GSETEST")
+    frames_g = {"output": out, "cello": cel, "provenance": prov, "ontology": ont}
+    guard_organism(e14, frames_g, log_g)
+    n_species_e14 = guard_cell_line_species(e14, frames_g, log_g)
+    assert n_species_e14 == 0, n_species_e14
+    assert frames_g["ontology"].at[0, "cell_line"] == "E14"
+
+    # 5h. a value that has already diverged from the donation (e.g. a later
+    # pipeline stage overwrote it without updating provenance) is left alone
+    # even when the field's *_source still says cellosaurus.
+    yeast2 = _P()
+    yeast2.title = "x"
+    yeast2.samples = pd.DataFrame(
+        {
+            "Sample": ["GSM1"],
+            "Organism": ["Saccharomyces cerevisiae"],
+            "Taxon ID": ["4932"],
+        }
+    )
+    out, cel, prov, ont = frames_for("K-562", "Cancer", None, None, None)
+    log_h = _Log("GSETEST")
+    frames_h = {"output": out, "cello": cel, "provenance": prov, "ontology": ont}
+    guard_organism(yeast2, frames_h, log_h)
+    n_species_diverged = guard_cell_line_species(yeast2, frames_h, log_h)
+    assert n_species_diverged == 1, n_species_diverged
+    assert _blank(frames_h["ontology"].at[0, "cell_line"])
+    assert frames_h["ontology"].at[0, "tissue"] == "Cancer"
 
     # 6. bad_label predicate: llm tissue "Hippocampus" vs CVCL site "Kidney".
     v = _P()

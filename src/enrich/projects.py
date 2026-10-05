@@ -1,14 +1,19 @@
-"""Fetch metadata details and create cache."""
+"""Fetch and cache project metadata."""
 
 from __future__ import annotations
 
 import logging
 import os
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +80,127 @@ def fetch_projects(
         max_wait=max_wait,
     )
     return [Project.from_dict(item) for item in resp.json()]
+
+
+def fetch_projects_batched(
+    accessions: list[str],
+    batch_size: int = 25,
+    on_batch: Callable[[list[Project], int, int], None] | None = None,
+) -> dict[str, Project]:
+    """
+    Fetch projects in batches, retrying each failed batch once after five seconds.
+
+    Log and skip batches that fail again. Call
+    `on_batch(projects, done_count, total_count)` after each successful batch.
+    """
+    got: dict[str, Project] = {}
+    for i in range(0, len(accessions), batch_size):
+        chunk = accessions[i : i + batch_size]
+        try:
+            projects = fetch_projects(chunk)
+        except Exception as exc:
+            logger.warning(
+                "batch %d-%d failed (%s), retrying once after 5s",
+                i,
+                i + len(chunk),
+                exc,
+            )
+            time.sleep(5)
+            try:
+                projects = fetch_projects(chunk)
+            except Exception as retry_exc:
+                logger.warning(
+                    "batch %d-%d failed again, SKIPPING %d accessions: %s",
+                    i,
+                    i + len(chunk),
+                    len(chunk),
+                    retry_exc,
+                )
+                continue
+        for project in projects:
+            got[project.accession] = project
+        if on_batch:
+            on_batch(projects, len(got), len(accessions))
+    return got
+
+
+def write_projects_sqlite(projects: list[Project], db_file: Path) -> None:
+    """
+    Cache projects and sample DataFrames in SQLite for offline fleet workers.
+
+    Alternative to the default `enrich prefetch` pickle cache. Store sample rows
+    as JSON to preserve study-specific columns; `load_projects_sqlite` rebuilds
+    the DataFrames.
+    """
+    import json
+
+    db_file = Path(db_file)
+    db_file.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_file)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects ("
+        "accession TEXT PRIMARY KEY, title TEXT, description TEXT, "
+        "source TEXT, overall_design TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS project_samples ("
+        "accession TEXT NOT NULL, sample_index INTEGER NOT NULL, "
+        "attributes_json TEXT NOT NULL, "
+        "PRIMARY KEY (accession, sample_index))"
+    )
+    for p in projects:
+        conn.execute(
+            "INSERT OR REPLACE INTO projects VALUES (?, ?, ?, ?, ?)",
+            (p.accession, p.title, p.description, p.source, p.overall_design),
+        )
+        conn.execute("DELETE FROM project_samples WHERE accession = ?", (p.accession,))
+        records = p.samples.to_dict("records") if not p.samples.empty else []
+        conn.executemany(
+            "INSERT INTO project_samples VALUES (?, ?, ?)",
+            [
+                (p.accession, i, json.dumps(row, default=str))
+                for i, row in enumerate(records)
+            ],
+        )
+    conn.commit()
+    conn.close()
+
+
+def load_projects_sqlite(accessions: list[str], db_file: Path) -> dict[str, Project]:
+    """Read projects back from a cache `write_projects_sqlite` built."""
+    import json
+
+    conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True)
+    out: dict[str, Project] = {}
+    for acc in accessions:
+        row = conn.execute(
+            "SELECT title, description, source, overall_design "
+            "FROM projects WHERE accession = ?",
+            (acc,),
+        ).fetchone()
+        if row is None:
+            continue
+        title, description, source, overall_design = row
+        sample_rows = conn.execute(
+            "SELECT attributes_json FROM project_samples "
+            "WHERE accession = ? ORDER BY sample_index",
+            (acc,),
+        ).fetchall()
+        samples = (
+            pd.DataFrame([json.loads(r[0]) for r in sample_rows])
+            if sample_rows
+            else pd.DataFrame()
+        )
+        out[acc] = Project(
+            accession=acc,
+            title=title,
+            description=description,
+            source=source,
+            overall_design=overall_design,
+            samples=samples,
+        )
+    conn.close()
+    return out
 
 
 def _sra_alias_query(query: str, param: str, db_path: Path | None) -> str | None:

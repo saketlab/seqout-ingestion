@@ -1,0 +1,5 @@
+scenario,studies,covered,recovered_of_690,covered_lost,pct_covered
+S0,6931,6240,0,0,90.03
+S1,6931,6699,459,0,96.65
+S2,6931,6892,652,0,99.44
+S3,6931,6914,674,0,99.75

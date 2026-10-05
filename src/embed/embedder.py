@@ -1,14 +1,9 @@
 """
-Embed new accessions into the shared chroma space.
+Embed missing accessions into shared Chroma collections with MedEmbed.
 
-Diffs each source's studies against the corresponding chroma collection, builds
-cleaned text for the missing ones, and embeds them with the shared MedEmbed model.
-Existing accessions are left untouched (their metadata is assumed unchanged).
-
-Encoding reuses the adaptive length-sorted batching from the original sra embed:
-batch size is chosen per-batch from a token budget and auto-shrinks on CUDA OOM,
-so a few very long abstracts don't blow up memory. Texts longer than the model's
-max sequence length are chunked and mean-pooled instead.
+Existing accessions are assumed unchanged. Encoding sorts texts by length,
+batches within a token budget, and shrinks batches on CUDA OOM. Texts exceeding
+the model's sequence limit are chunked and mean-pooled.
 """
 
 import gc
@@ -37,8 +32,7 @@ from embed.text import (
 
 logger = logging.getLogger(__name__)
 
-# Patch for the custom F2LLM model code that still calls the old
-# DynamicCache.get_usable_length (renamed to get_seq_length upstream).
+# Support F2LLM's legacy DynamicCache.get_usable_length call.
 if not hasattr(DynamicCache, "get_usable_length"):
     DynamicCache.get_usable_length = lambda self, *_args, **_kwargs: (  # type: ignore[attr-defined]
         self.get_seq_length()
@@ -49,7 +43,7 @@ CHARS_PER_TOKEN = 3  # conservative proxy for length estimation
 
 
 def _existing_ids(collection: chromadb.Collection) -> set[str]:
-    """All accessions already in a collection, paged (a full get() OOMs sqlite)."""
+    """Page through collection accessions to avoid SQLite OOM on a full get()."""
     ids: set[str] = set()
     total = collection.count()
     for offset in tqdm(
@@ -166,7 +160,7 @@ def _embed_collection(
     model: SentenceTransformer,
     collection: chromadb.Collection,
     pairs: Iterator[tuple[str, str]],
-) -> None:
+) -> int:
     ids: list[str] = []
     texts: list[str] = []
     for acc, text in pairs:
@@ -175,7 +169,7 @@ def _embed_collection(
 
     if not ids:
         logger.info("%s: nothing new to embed", collection.name)
-        return
+        return 0
 
     logger.info("%s: embedding %d new accessions", collection.name, len(ids))
     max_len = model.max_seq_length
@@ -184,6 +178,7 @@ def _embed_collection(
         _encode_chunked(model, ids, texts, max_len, collection)
     else:
         _encode_adaptive(model, ids, texts, max_len, collection)
+    return len(ids)
 
 
 def embed_new(
@@ -204,10 +199,10 @@ def embed_new(
     model = SentenceTransformer(model_name, trust_remote_code=True)
 
     try:
-        _embed_collection(
+        n_geo = _embed_collection(
             model, geo, iter_new_geo_texts(geo_db_file, _existing_ids(geo))
         )
-        _embed_collection(
+        n_sra = _embed_collection(
             model, sra, iter_new_sra_texts(sra_db_file, _existing_ids(sra))
         )
         _embed_collection(
@@ -222,3 +217,12 @@ def embed_new(
 
     for coll in (geo, sra, ae):
         logger.info("%s now has %d entries", coll.name, coll.count())
+
+    if n_geo or n_sra:
+        logger.info(
+            "%d new geo + %d new sra accession(s) have no `neighbors` in "
+            "Postgres yet -- run `just embed_neighbors_quick` (or "
+            "`embed neighbors-quick`) to populate Similar Projects for them",
+            n_geo,
+            n_sra,
+        )

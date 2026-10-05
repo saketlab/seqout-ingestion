@@ -10,10 +10,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pycountry
 from geopy.extra.rate_limiter import RateLimiter
 from geopy.geocoders import ArcGIS, Nominatim
 from geopy.location import Location
+from psycopg import sql as psycopg_sql
 from rapidfuzz import fuzz
 from tqdm import tqdm
 
@@ -72,6 +74,114 @@ _UPDATE_EXCLUDE = {
 UPDATE_COLS = [k for k in FIELD_KEYS if k not in _UPDATE_EXCLUDE]
 _VALID_TABLES = {"unified_centers", "unified_metadata"}
 
+# Postgres columns that mirror unified_centers' own geocode fields. Postgres
+# lacks short_label/osm_id/osm_type/place_id/county/suburb/neighbourhood/
+# territory/metro_area, so a copy-back leaves those blank; harmless, since
+# _find_missing only gates on latitude/longitude.
+_PG_COPYBACK_COLS = [
+    "place_name",
+    "longitude",
+    "latitude",
+    "city",
+    "district",
+    "subdistrict",
+    "state",
+    "state_district",
+    "postcode",
+    "country_code",
+    "country",
+    "country_mismatch",
+    "geocode_score",
+]
+
+
+def _pg_connect_or_none(pg_url: str | None) -> "psycopg.Connection | None":
+    if not pg_url:
+        return None
+    try:
+        return psycopg.connect(pg_url)
+    except Exception:
+        logger.warning(
+            "could not reach postgres at pg_url; geocoding without a postgres"
+            " cross-check (no copy-back, no new-ids restriction)",
+        )
+        return None
+
+
+def _copy_back_from_pg(db_file: Path, pg_conn: "psycopg.Connection") -> int:
+    """
+    Fill locally-missing unified_centers rows from Postgres before calling ArcGIS.
+
+    unified_metadata.db is a staging snapshot that never receives back what a
+    prior geocode + transfer already wrote to Postgres, so a center geocoded
+    months ago still reads as "missing" here.
+    """
+    conn = sqlite_connect(str(db_file))
+    accs = [
+        acc
+        for (acc,) in conn.execute(
+            "SELECT DISTINCT canonical_accession FROM unified_centers "
+            "WHERE center_name IS NOT NULL AND center_name != '' "
+            "AND (latitude IS NULL OR longitude IS NULL)",
+        ).fetchall()
+    ]
+    if not accs:
+        conn.close()
+        return 0
+
+    query = psycopg_sql.SQL(
+        "SELECT canonical_accession, center_name, {cols} FROM unified_metadata"
+        " WHERE canonical_accession = ANY(%s) AND latitude IS NOT NULL"
+        " AND longitude IS NOT NULL AND center_name IS NOT NULL",
+    ).format(
+        cols=psycopg_sql.SQL(", ").join(
+            psycopg_sql.Identifier(c) for c in _PG_COPYBACK_COLS
+        ),
+    )
+    with pg_conn.cursor() as cur:
+        cur.execute(query, (accs,))
+        pg_rows = cur.fetchall()
+
+    set_clause = ", ".join(f"{c} = ?" for c in _PG_COPYBACK_COLS)
+    sql = (
+        f"UPDATE unified_centers SET {set_clause} "  # noqa: S608
+        "WHERE canonical_accession = ? AND center_name = ? "
+        "AND (latitude IS NULL OR longitude IS NULL)"
+    )
+    params = [(*vals, acc, center_name) for acc, center_name, *vals in pg_rows]
+    updated = conn.executemany(sql, params).rowcount
+    conn.commit()
+    conn.close()
+    logger.info(
+        "copied geocode data back from postgres for %d unified_centers rows",
+        updated,
+    )
+    return updated
+
+
+def _restrict_to_new_accessions(
+    missing: list[tuple[str, str]],
+    pg_conn: "psycopg.Connection",
+) -> list[tuple[str, str]]:
+    """
+    After the copy-back, keep only centers tied to accessions Postgres has never seen.
+
+    An accession already in Postgres without coordinates is pre-existing
+    backlog, not new data from this ingest -- leave it for a dedicated
+    backfill rather than blocking every nightly geocode on it.
+    """
+    accs = sorted({acc for _, acc in missing})
+    if not accs:
+        return missing
+    with pg_conn.cursor() as cur:
+        cur.execute(
+            "SELECT canonical_accession FROM unified_metadata"
+            " WHERE canonical_accession = ANY(%s)",
+            (accs,),
+        )
+        known = {r[0] for r in cur.fetchall()}
+    return [(cn, acc) for cn, acc in missing if acc not in known]
+
 
 def geocode_missing(
     unified_metadata_db_file: Path,
@@ -84,8 +194,26 @@ def geocode_missing(
     is_dry_run: bool,
     ror_data_file: Path | None = None,
     mode: str = "missing",
+    pg_url: str | None = None,
 ) -> None:
+    pg_conn = _pg_connect_or_none(pg_url)
+    if pg_conn is not None:
+        _copy_back_from_pg(unified_metadata_db_file, pg_conn)
+
     missing = _find_missing(unified_metadata_db_file, mode)
+
+    if pg_conn is not None and mode != "all":
+        before = len(missing)
+        missing = _restrict_to_new_accessions(missing, pg_conn)
+        logger.info(
+            "restricted to centers for accessions new to postgres: %d -> %d",
+            before,
+            len(missing),
+        )
+
+    if pg_conn is not None:
+        pg_conn.close()
+
     logger.info("found %d records with missing geocoded information", len(missing))
 
     if is_dry_run or not missing:

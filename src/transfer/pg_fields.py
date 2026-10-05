@@ -379,10 +379,10 @@ _UNIFIED_METADATA_CENTERS_INSERT_COLS = _UNIFIED_METADATA_CENTERS_SELECT_COLS
 
 def overwrite_update(table: str, payload_cols: list[str]) -> str:
     """
-    Build SET ... WHERE for an overwriting upsert, guard included.
+    Build SET ... WHERE for an upsert that overwrites values, including NULLs.
 
-    Use when incoming data is rebuilt whole and NULL is factual. The IS DISTINCT
-    FROM guard prevents unchanged conflicts from creating dead tuples.
+    Use for fully rebuilt data. IS DISTINCT FROM skips unchanged conflicts
+    to avoid dead tuples.
     """
     if not payload_cols:
         return ""
@@ -400,13 +400,11 @@ def non_nulling_update(
     insert_only: bool = False,
 ) -> str:
     """
-    Build SET ... WHERE for an upsert that preserves existing non-NULLs.
+    Build SET ... WHERE for an upsert that ignores incoming NULLs.
 
-    COALESCE protects later backfills from per-window SQLite retransfers. The
-    IS DISTINCT FROM guard prevents unchanged conflicts from creating dead tuples.
-
-    insert_only returns "", which every caller renders as ON CONFLICT DO NOTHING,
-    so an existing row keeps even the values a fresher archive record disagrees with.
+    COALESCE preserves backfills when SQLite retransfers contain NULLs.
+    IS DISTINCT FROM skips unchanged conflicts to avoid dead tuples.
+    With insert_only=True, return "" for callers to use ON CONFLICT DO NOTHING.
     """
     if insert_only or not payload_cols:
         return ""
@@ -418,3 +416,39 @@ def non_nulling_update(
         for c in payload_cols
     )
     return f"SET {updates} WHERE {guard}"
+
+
+def tier_guarded_update(
+    table: str,
+    tier_cols: list[str],
+    tier_value_col: str,
+    tier_rank: list[str],
+    plain_cols: list[str],
+) -> str:
+    """
+    Build a non-nulling upsert that preserves tier_cols against lower tiers.
+
+    tier_rank orders tiers worst to best; unlisted values rank below all listed
+    tiers. Keep tier_cols when the current tier outranks the incoming tier.
+    Apply ordinary non-nulling updates to plain_cols.
+    """
+    rank_case = (
+        "CASE {col} "
+        + " ".join(f"WHEN '{tier}' THEN {i}" for i, tier in enumerate(tier_rank))
+        + " ELSE -1 END"
+    )
+    keep = (
+        f"({rank_case.format(col=f'{table}.{tier_value_col}')}) "
+        f"> ({rank_case.format(col=f'EXCLUDED.{tier_value_col}')})"
+    )
+    updates = [
+        f"{c} = CASE WHEN {keep} THEN {table}.{c} "
+        f"ELSE COALESCE(EXCLUDED.{c}, {table}.{c}) END"
+        for c in tier_cols
+    ] + [f"{c} = COALESCE(EXCLUDED.{c}, {table}.{c})" for c in plain_cols]
+    payload_cols = [*tier_cols, *plain_cols]
+    guard = " OR ".join(
+        f"(EXCLUDED.{c} IS NOT NULL AND {table}.{c} IS DISTINCT FROM EXCLUDED.{c})"
+        for c in payload_cols
+    )
+    return f"SET {', '.join(updates)} WHERE {guard}"

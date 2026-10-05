@@ -19,6 +19,7 @@ from ingest.gsa import ingest_gsa
 from ingest.gsa_bioproject import ingest_gsa_bioproject
 from ingest.gsa_human import ingest_gsa_human
 from ingest.sra import ingest_sra
+from ingest.sra_daily import ingest_sra_daily
 
 ingest_app = typer.Typer()
 
@@ -52,6 +53,36 @@ def sra(
     max_timeout: int = _MAX_TIMEOUT,
 ) -> None:
     ingest_sra(
+        base_output_dir,
+        db_file,
+        start_date,
+        end_date,
+        num_workers,
+        chunk_size,
+        write_batch_size,
+        accessions_ttl,
+        retries,
+        timeout,
+        max_timeout,
+    )
+
+
+@ingest_app.command("sra-daily")
+@_validate_date_range
+def sra_daily(
+    base_output_dir: Path = _BASE_OUTPUT_DIR_FLAG,
+    db_file: Path | None = _DB_FILE_FLAG,
+    start_date: datetime.date = _DATE_FLAG,
+    end_date: datetime.date = _DATE_FLAG,
+    num_workers: int = _NUM_WORKERS_FLAG,
+    chunk_size: int = _CHUNK_SIZE_FLAG,
+    write_batch_size: int = typer.Option(50000),
+    accessions_ttl: int = typer.Option("2 days", parser=_parse_timespan),
+    retries: int = _RETRIES_FLAG,
+    timeout: int = _TIMEOUT_FLAG,
+    max_timeout: int = _MAX_TIMEOUT,
+) -> None:
+    ingest_sra_daily(
         base_output_dir,
         db_file,
         start_date,
@@ -136,8 +167,7 @@ def gea(
     """
     Ingest DDBJ GEA (expression).
 
-    No novelty filter: unlike DRA, no GEA experiment is mirrored into GEO or
-    ArrayExpress, so everything public is ingested.
+    Ingest all public experiments; GEA has no GEO or ArrayExpress mirrors.
     """
     ingest_gea(
         base_output_dir,
@@ -252,6 +282,12 @@ def gsa(
     retries: int = _RETRIES_FLAG,
     timeout: int = _TIMEOUT_FLAG,
     max_timeout: int = _MAX_TIMEOUT,
+    pg_url: str | None = typer.Option(
+        None,
+        "--pg-url",
+        envvar="PG_URL",
+        help="Skip studies already in gsa_studies instead of re-downloading",
+    ),
 ) -> None:
     ingest_gsa(
         base_output_dir,
@@ -262,6 +298,7 @@ def gsa(
         retries,
         timeout,
         max_timeout,
+        pg_url=pg_url,
     )
 
 

@@ -33,6 +33,12 @@ def pm_ids(
     retries: int = typer.Option(20),
     timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
     process_all: bool = typer.Option(default=False),
+    pg_url: str | None = typer.Option(
+        None,
+        envvar="PG_URL",
+        help="skip accessions Postgres already checked, so a re-appearing row"
+        " in the rolling ingest window doesn't cost another NCBI lookup",
+    ),
 ) -> None:
     backfill_pubmed_ids(
         geo_db_file,
@@ -50,6 +56,7 @@ def pm_ids(
         retries,
         timeout,
         process_all,
+        pg_url,
     )
 
 
@@ -115,7 +122,7 @@ def citation_pmids(
     timeout: int = typer.Option("30 seconds", parser=_parse_timespan),
     process_all: bool = typer.Option(default=False),
 ) -> None:
-    """Resolve GEO <Citation> DOIs to PMIDs into geo_series.pubmed_id_citation."""
+    """Resolve GEO citation DOIs to PMIDs in geo_series.pubmed_id_citation."""
     backfill_citation_pmids(
         geo_db_file,
         ncbi_keys_file,
@@ -149,7 +156,7 @@ def download_links(
     ),
 ) -> None:
     """
-    FASTQ links for study runs, from ENA and/or NCBI.
+    Backfill study-run FASTQ links from ENA and/or NCBI.
 
     `--accession-file` skips source DB scans for pinned snapshots.
     """

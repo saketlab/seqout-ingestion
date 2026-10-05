@@ -1,0 +1,20 @@
+round 1: 151 sampled, 21 no longer tagged by the final rules
+                                                  scope     N  n_judged  tp  fp  unclear  precision  ci_low  ci_high  n_eff
+               ALL new tags (not in scBaseCount/Census) 14308       126 119   7        4      0.941   0.867    0.975   80.4
+ALL new tags (not in scBaseCount/Census), unclear as FP 14308       130 119  11        4      0.911   0.830    0.956   82.7
+                      code_fix (not in current staging)  7121        82  80   2        3      0.982   0.919    0.996   72.3
+       code_fix (not in current staging), unclear as FP  7121        85  80   5        3      0.959   0.887    0.986   74.6
+                   lag (current staging, untransferred)  7187        44  39   5        1      0.881   0.698    0.959   24.3
+    lag (current staging, untransferred), unclear as FP  7187        45  39   6        1      0.838   0.653    0.935   25.3
+                                      stratum libsource  6605        23  21   2        1      0.913   0.732    0.976   23.0
+                                       stratum protocol  3548        35  35   0        0      1.000   0.901    1.000   35.0
+                                  stratum read_measured  1054        25  22   3        0      0.880   0.700    0.958   25.0
+                                           stratum text  2124        20  19   1        1      0.950   0.764    0.991   20.0
+                             stratum whitelist_override   977        23  22   1        2      0.957   0.790    0.992   23.0
+label               bulk_companion  bulk_other  bulk_sorted  sc  spatial  unclear
+added_by                                                                         
+libsource                        0           2            0  21        0        1
+protocol                         0           0            0  29        6        0
+read_measured                    2           0            1  22        0        0
+text                             0           0            1  19        0        1
+whitelist_override               0           1            0  22        0        2

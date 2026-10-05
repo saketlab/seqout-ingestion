@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING
 
 import humanfriendly
+import psycopg
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 GSA_OUTPUT_DIR = "gsa"
 # CRA accessions are spread across these storage roots; the union is the full set.
-GSA_STORAGE_ROOTS = ["gsa", "gsa2", "gsa3", "gsa4", "gsa5"]
+GSA_STORAGE_ROOTS = ["gsa", "gsa2", "gsa3", "gsa4", "gsa5", "gsa6"]
 GSA_EXPORT_URL = f"{GSA_BASE_URL}/gsa/file/exportExcelFile"
 GSA_BROWSE_URL = f"{GSA_BASE_URL}/gsa/browse/"
 GSA_SEARCH_URL = f"{GSA_BASE_URL}/gsa/search?searchTerm="
@@ -159,6 +160,12 @@ FETCH_LOG_COLUMNS = [
 ]
 
 
+def _have_from_postgres(pg_url: str) -> set[str]:
+    with psycopg.connect(pg_url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT study_accession FROM gsa_studies")
+        return {acc for (acc,) in cur.fetchall() if acc}
+
+
 def ingest_gsa(
     base_output_dir: Path,
     db_file: Path | None,
@@ -168,6 +175,7 @@ def ingest_gsa(
     retries: int,
     timeout: int,
     max_timeout: int,
+    pg_url: str | None = None,
 ) -> None:
     output_dir = base_output_dir / GSA_OUTPUT_DIR
     data_dir = output_dir / "data" / "studies"
@@ -221,6 +229,17 @@ def ingest_gsa(
             "date filter %s..%s -> %d studies",
             start_date,
             end_date,
+            len(studies),
+        )
+
+    if pg_url:
+        have = _have_from_postgres(pg_url)
+        before = len(studies)
+        studies = [acc for acc in studies if acc not in have]
+        logger.info(
+            "postgres novelty filter: %d/%d already in gsa_studies, %d to fetch",
+            before - len(studies),
+            before,
             len(studies),
         )
 
@@ -294,14 +313,12 @@ _STUDY_FIELDS = {
     "release_time": ("发布日期", "Release date"),
     "organization": ("单位", "Organization"),
 }
-# Values run to the next label ("单位: X 提交日期: Y"). Multi-word labels are spelled
-# out; a one-token terminator would split "Submitted date:" at "date:".
+# Match full labels so "Submitted date:" is not split at "date:".
 _NEXT_LABEL = (
     r"(?=\s*(?:Release date|Submission date|Submitted date|File size|\S{1,12})"
     r"\s*[:：]|$)"  # noqa: RUF001
 )
-# Titles carry their own "<token>:" ("...3g/kg and 12g/kg: a comparative analysis").
-# Only a known label ends a title.
+# Titles may contain colons; only known labels terminate them.
 _PAGE_LABELS = (
     "Release date|Submission date|Submitted date|Organization|Submitter"
     "|BioProject|Platform|Status|Files|File size"
@@ -327,11 +344,10 @@ def _scrape_all_study_meta(
     max_timeout: int,
 ) -> dict[str, dict]:
     """
-    Scrape every study's page. Studies whose page fails are simply absent.
+    Scrape study pages, omitting failures and caching each page on disk.
 
-    Each page is cached to disk. CNCB throttles a crawl this size (18k pages) down
-    to 503s and dropped connections, so a run that dies partway must resume rather
-    than pay for the whole scrape again.
+    CNCB throttles large crawls with 503s and dropped connections; caching
+    allows interrupted runs to resume.
     """
     meta: dict[str, dict] = {}
     todo: list[str] = []
@@ -397,11 +413,10 @@ def _scrape_study_meta(
     use_search: bool = False,
 ) -> dict | None:
     """
-    Study metadata: title / organization / release_time, which live nowhere else.
+    Fetch title, organization and release_time from a study page.
 
-    The bulk listing stopped returning CRA rows, so per-study is the only source.
-    /browse/ and /search serve the same fields and CNCB drops them independently;
-    /browse/ is preferred because it alone declares the submitter's publications.
+    The bulk listing no longer returns CRA rows. /browse/ and /search expose
+    the same fields and can fail independently; prefer /browse/ for publications.
     """
     base = GSA_SEARCH_URL if use_search else GSA_BROWSE_URL
     url = f"{base}{accession}"
@@ -524,8 +539,7 @@ def _ingest(
             if xlsx_path.exists():
                 try:
                     sheets = parse_workbook(xlsx_path.read_bytes())
-                    # some CRA workbooks split samples across Sample1/Sample2/Sample3
-                    # sheets instead of a single "Sample".
+                    # Some workbooks split samples across Sample1/Sample2/Sample3 sheets.
                     samples = [
                         r
                         for name, rows in sheets.items()
@@ -544,8 +558,7 @@ def _ingest(
                     status = "failed"
 
             if parsed_ok:
-                # clear this study's prior child rows before reinserting, so rows
-                # dropped upstream don't linger.
+                # Replace child rows so records removed upstream do not linger.
                 static = {"study_accession": acc}
                 for table in ("gsa_samples", "gsa_experiments", "gsa_runs"):
                     conn.execute(

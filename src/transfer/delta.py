@@ -1,16 +1,9 @@
 """
-Build a slim SQLite holding only the rows Postgres does not already have.
+Build a SQLite delta containing rows absent from Postgres.
 
-A transfer pushes every staged row through COPY so Postgres can decide what to
-skip, so a full window costs hours to add a fraction of its rows. Selecting the
-new keys first turns that into one indexed comparison plus a small copy.
-
-Keys come from the transfer's own task table, so a table has one definition of
-what makes a row unique.
-
-The delta is a drop-in for the source: same table names, same DDL, so the
-transfer reads it without knowing the difference. Tables with no conflict key
-are copied whole, since without a key there is no way to tell new from seen.
+Compare keys before copying payloads to avoid transferring existing rows.
+Use the transfer task table's conflict keys and preserve source table names
+and DDL. Copy tables without conflict keys in full.
 """
 
 from __future__ import annotations
@@ -68,7 +61,12 @@ def _copy_rows(
 ) -> int:
     cols = [r[1] for r in src.execute(f"PRAGMA table_info({table})")]
     placeholders = ", ".join("?" * len(cols))
-    insert = f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})"  # noqa: S608
+    # Ignore duplicate rows when destination tasks share a SQLite source table
+    # (e.g. ena_studies and ena_studies_search).
+    insert = (
+        f"INSERT OR IGNORE INTO {table} ({', '.join(cols)}) "  # noqa: S608
+        f"VALUES ({placeholders})"
+    )
     batch: list[tuple] = []
     written = 0
     for row in src.execute(f"SELECT {', '.join(cols)} FROM {table}"):  # noqa: S608
@@ -107,7 +105,7 @@ def build_delta(
     out_db_file.unlink(missing_ok=True)
     src = sqlite3.connect(f"file:{source_db_file}?mode=ro", uri=True)
     dst = sqlite3.connect(out_db_file)
-    # the delta is rebuilt from scratch on every run, so durability buys nothing
+    # Disable durability for this disposable, rebuilt delta.
     dst.execute("PRAGMA journal_mode=OFF")
     dst.execute("PRAGMA synchronous=OFF")
 
@@ -128,7 +126,13 @@ def build_delta(
                     "%s absent from %s; skipped", sqlite_table, source_db_file
                 )
                 continue
-            dst.execute(ddl_row[0])
+            # Tasks sharing a SQLite source table must reuse its delta table.
+            already_created = dst.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (sqlite_table,),
+            ).fetchone()
+            if not already_created:
+                dst.execute(ddl_row[0])
 
             if not meta.conflict_cols:
                 written = _copy_rows(src, dst, sqlite_table, None, 0)

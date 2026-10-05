@@ -192,6 +192,7 @@ def ingest_sra(
 def _extract_sra_file_dumps_in_range(
     start_date: datetime.date,
     end_date: datetime.date,
+    pattern: re.Pattern[str] = SRA_TARBALL_RE_PAT,
 ) -> list[str]:
     file_dumps: list[str] = []
 
@@ -202,7 +203,7 @@ def _extract_sra_file_dumps_in_range(
 
     for a in soup.find_all("a", href=True):
         href = str(a["href"])
-        match = SRA_TARBALL_RE_PAT.match(href)
+        match = pattern.match(href)
         if match is None:
             continue
 

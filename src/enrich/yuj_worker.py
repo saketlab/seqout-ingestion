@@ -1,4 +1,4 @@
-"""Fleet worker for `enrich batch`, one study per invocation."""
+"""Fleet worker for `enrich batch`, accepting an accession or accession file."""
 
 from __future__ import annotations
 
@@ -29,16 +29,34 @@ def _bool_env(name: str, default: str = "1") -> bool:
 
 
 def _fatal(message: str, code: int) -> int:
-    # loud, and non-zero: a host that cannot enrich must not report success
+    # Report host failures with a non-zero exit.
     sys.stderr.write(f"FATAL: {message}\n")
     return code
 
 
-def main() -> int:
+def _missing_reference_files() -> list[str]:
+    """Ontology and Cellosaurus files the engine needs but cannot read."""
+    from enrich.cellosaurus import lookup_path
+    from enrich.ontology_map import FIELD_ONTOLOGY_MAP, ONTOLOGY_DIR
+
+    paths = {ONTOLOGY_DIR / name for name, _, _ in FIELD_ONTOLOGY_MAP.values()}
+    paths.add(Path(lookup_path()))
+    return sorted(str(p) for p in paths if not p.is_file())
+
+
+def main() -> int:  # noqa: PLR0911 (early-return fatal guards)
     if len(sys.argv) < _ARGV_MIN:
-        sys.stderr.write("usage: yuj_worker.py <ACCESSION>\n")
+        sys.stderr.write("usage: yuj_worker.py <ACCESSION|accessions.txt>\n")
         return _EXIT_USAGE
-    accession = sys.argv[-1]
+    arg = sys.argv[-1]
+    # Batch mode loads the embedding model once for the accession file.
+    batch_path = Path(arg)
+    if batch_path.is_file() and batch_path.suffix == ".txt":
+        accessions = [
+            line.strip() for line in batch_path.read_text().splitlines() if line.strip()
+        ]
+    else:
+        accessions = [arg]
 
     try:
         from enrich.batch import enrich_batch, load_projects
@@ -52,8 +70,7 @@ def main() -> int:
 
     module = os.environ.get("ENRICH_MODULE", "enrich.evidence_gate")
     try:
-        # Probe the engine, not just wrappers. The wrappers import without the
-        # heavy dependencies; the lazy engine import is what fails on bare hosts.
+        # Import the lazy engine too; wrappers alone do not check heavy dependencies.
         importlib.import_module(module)
         importlib.import_module("enrich.extract")
     except ImportError as exc:
@@ -71,10 +88,37 @@ def main() -> int:
             _EXIT_MISSING_DEPENDENCY,
         )
 
-    projects = load_projects([accession], Path(cache))
-    if accession not in projects:
-        # The slice and cache disagree; report studies that were never attempted.
-        return _fatal(f"{accession} is not in {cache}", _EXIT_NO_METADATA)
+    missing_refs = _missing_reference_files()
+    if missing_refs:
+        return _fatal(
+            f"ontology/cellosaurus files missing: {', '.join(missing_refs)}. The "
+            f"engine only warns and carries on, writing output with no ontology "
+            f"ids that the resume check then counts as done",
+            _EXIT_MISSING_DEPENDENCY,
+        )
+
+    out_dir = Path(os.environ.get("ENRICH_OUT_DIR", HERE / "results"))
+    # Resume partial runs by skipping accessions with output files.
+    pending = [a for a in accessions if not (out_dir / f"{a}_enriched.csv").exists()]
+    if not pending:
+        logger.info("batch of %d: all already enriched, nothing to do", len(accessions))
+        return 0
+
+    projects = load_projects(pending, Path(cache))
+    missing = [a for a in pending if a not in projects]
+    if missing:
+        logger.warning(
+            "%d/%d accessions not in %s, skipping: %s",
+            len(missing),
+            len(pending),
+            cache,
+            ", ".join(missing[:10]),
+        )
+    if not projects:
+        return _fatal(
+            f"none of {len(pending)} accessions are in {cache}",
+            _EXIT_NO_METADATA,
+        )
 
     species = {}
     for env_name, key in (
@@ -86,7 +130,7 @@ def main() -> int:
 
     _, totals = enrich_batch(
         projects,
-        Path(os.environ.get("ENRICH_OUT_DIR", HERE / "results")),
+        out_dir,
         module=module,
         model=os.environ.get("ENRICH_MODEL", "rnj-1"),
         embedding_model=os.environ.get(
@@ -96,11 +140,18 @@ def main() -> int:
         vocab=os.environ.get("ENRICH_VOCAB", "v5"),
         species=species,
         declared=_bool_env("ENRICH_DECLARED"),
+        embedding_only=_bool_env("ENRICH_EMBEDDING_ONLY", default="0"),
     )
-    logger.info("enrich %s: %s", accession, json.dumps(totals, sort_keys=True))
-    # a study the module could not enrich is a failure of THIS item, not of the
-    # host; report it so yuj does not count an empty result as done
-    return 1 if totals.get("failed_studies") else 0
+    logger.info(
+        "enrich batch of %d (%d pending): %s",
+        len(accessions),
+        len(pending),
+        json.dumps(totals, sort_keys=True),
+    )
+    # Fail if every pending study failed. Partial successes return 0;
+    # per-item output checks allow later runs to retry missing results.
+    failed = totals.get("failed_studies", 0)
+    return 1 if failed and failed >= len(pending) else 0
 
 
 if __name__ == "__main__":

@@ -7,7 +7,34 @@ CREATE TABLE IF NOT EXISTS enriched_studies (
     n_samples INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS enriched_studies_fast (
+    accession TEXT PRIMARY KEY,
+    title     TEXT,
+    n_samples INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS enriched_samples (
+    study_accession TEXT NOT NULL,
+    sample          TEXT NOT NULL,
+    age TEXT,
+    sex TEXT,
+    ethnicity TEXT,
+    phenotype TEXT,
+    cell_type TEXT,
+    tissue TEXT,
+    strain TEXT,
+    disease TEXT,
+    assay TEXT,
+    assay_category TEXT,
+    cell_line TEXT,
+    treatment TEXT,
+    development_stage TEXT,
+    sample_type TEXT,
+    genetic_modification TEXT,
+    PRIMARY KEY (study_accession, sample)
+);
+
+CREATE TABLE IF NOT EXISTS enriched_samples_fast (
     study_accession TEXT NOT NULL,
     sample          TEXT NOT NULL,
     age TEXT,
@@ -53,7 +80,86 @@ CREATE TABLE IF NOT EXISTS cellosaurus_samples (
     PRIMARY KEY (study_accession, sample)
 );
 
+CREATE TABLE IF NOT EXISTS cellosaurus_samples_fast (
+    study_accession TEXT NOT NULL,
+    sample          TEXT NOT NULL,
+    age TEXT,
+    sex TEXT,
+    ethnicity TEXT,
+    phenotype TEXT,
+    cell_type TEXT,
+    tissue TEXT,
+    strain TEXT,
+    disease TEXT,
+    assay TEXT,
+    assay_category TEXT,
+    cell_line TEXT,
+    treatment TEXT,
+    development_stage TEXT,
+    sample_type TEXT,
+    genetic_modification TEXT,
+    organism TEXT,
+    taxid TEXT,
+    tissue_primary_site TEXT,
+    tissue_site_type TEXT,
+    PRIMARY KEY (study_accession, sample)
+);
+
 CREATE TABLE IF NOT EXISTS ontology_samples (
+    study_accession TEXT NOT NULL,
+    sample          TEXT NOT NULL,
+    age TEXT,
+    sex TEXT,
+    ethnicity TEXT,
+    phenotype TEXT,
+    cell_type TEXT,
+    tissue TEXT,
+    strain TEXT,
+    disease TEXT,
+    assay TEXT,
+    assay_category TEXT,
+    cell_line TEXT,
+    treatment TEXT,
+    development_stage TEXT,
+    sample_type TEXT,
+    genetic_modification TEXT,
+    organism TEXT,
+    taxid TEXT,
+    tissue_primary_site TEXT,
+    tissue_site_type TEXT,
+    disease_ontology_id TEXT,
+    disease_ontology_name TEXT,
+    disease_ontology_score TEXT,
+    disease_match_method TEXT,
+    disease_ancestors TEXT,
+    tissue_ontology_id TEXT,
+    tissue_ontology_name TEXT,
+    tissue_ontology_score TEXT,
+    tissue_match_method TEXT,
+    tissue_ancestors TEXT,
+    cell_type_ontology_id TEXT,
+    cell_type_ontology_name TEXT,
+    cell_type_ontology_score TEXT,
+    cell_type_match_method TEXT,
+    cell_type_ancestors TEXT,
+    assay_ontology_id TEXT,
+    assay_ontology_name TEXT,
+    assay_ontology_score TEXT,
+    assay_match_method TEXT,
+    assay_ancestors TEXT,
+    development_stage_ontology_id TEXT,
+    development_stage_ontology_name TEXT,
+    development_stage_ontology_score TEXT,
+    development_stage_match_method TEXT,
+    development_stage_ancestors TEXT,
+    age_days TEXT,
+    age_group TEXT,
+    prenatal TEXT,
+    age_raw TEXT,
+    PRIMARY KEY (study_accession, sample)
+);
+
+CREATE TABLE IF NOT EXISTS ontology_samples_fast (
     study_accession TEXT NOT NULL,
     sample          TEXT NOT NULL,
     age TEXT,
@@ -203,7 +309,127 @@ CREATE TABLE IF NOT EXISTS provenance_samples (
     PRIMARY KEY (study_accession, sample)
 );
 
+CREATE TABLE IF NOT EXISTS provenance_samples_fast (
+    study_accession TEXT NOT NULL,
+    sample          TEXT NOT NULL,
+    age_source TEXT,
+    age_score TEXT,
+    age_column TEXT,
+    age_original_source TEXT,
+    age_original_column TEXT,
+    age_original_score TEXT,
+    sex_source TEXT,
+    sex_score TEXT,
+    sex_column TEXT,
+    sex_original_source TEXT,
+    sex_original_column TEXT,
+    sex_original_score TEXT,
+    ethnicity_source TEXT,
+    ethnicity_score TEXT,
+    ethnicity_column TEXT,
+    ethnicity_original_source TEXT,
+    ethnicity_original_column TEXT,
+    ethnicity_original_score TEXT,
+    phenotype_source TEXT,
+    phenotype_score TEXT,
+    phenotype_column TEXT,
+    phenotype_original_source TEXT,
+    phenotype_original_column TEXT,
+    phenotype_original_score TEXT,
+    cell_type_source TEXT,
+    cell_type_score TEXT,
+    cell_type_column TEXT,
+    cell_type_original_source TEXT,
+    cell_type_original_column TEXT,
+    cell_type_original_score TEXT,
+    tissue_source TEXT,
+    tissue_score TEXT,
+    tissue_column TEXT,
+    tissue_original_source TEXT,
+    tissue_original_column TEXT,
+    tissue_original_score TEXT,
+    strain_source TEXT,
+    strain_score TEXT,
+    strain_column TEXT,
+    strain_original_source TEXT,
+    strain_original_column TEXT,
+    strain_original_score TEXT,
+    disease_source TEXT,
+    disease_score TEXT,
+    disease_column TEXT,
+    disease_original_source TEXT,
+    disease_original_column TEXT,
+    disease_original_score TEXT,
+    assay_source TEXT,
+    assay_score TEXT,
+    assay_column TEXT,
+    assay_original_source TEXT,
+    assay_original_column TEXT,
+    assay_original_score TEXT,
+    assay_category_source TEXT,
+    assay_category_score TEXT,
+    assay_category_column TEXT,
+    assay_category_original_source TEXT,
+    assay_category_original_column TEXT,
+    assay_category_original_score TEXT,
+    cell_line_source TEXT,
+    cell_line_score TEXT,
+    cell_line_column TEXT,
+    cell_line_original_source TEXT,
+    cell_line_original_column TEXT,
+    cell_line_original_score TEXT,
+    treatment_source TEXT,
+    treatment_score TEXT,
+    treatment_column TEXT,
+    treatment_original_source TEXT,
+    treatment_original_column TEXT,
+    treatment_original_score TEXT,
+    development_stage_source TEXT,
+    development_stage_score TEXT,
+    development_stage_column TEXT,
+    development_stage_original_source TEXT,
+    development_stage_original_column TEXT,
+    development_stage_original_score TEXT,
+    sample_type_source TEXT,
+    sample_type_score TEXT,
+    sample_type_column TEXT,
+    sample_type_original_source TEXT,
+    sample_type_original_column TEXT,
+    sample_type_original_score TEXT,
+    genetic_modification_source TEXT,
+    genetic_modification_score TEXT,
+    genetic_modification_column TEXT,
+    genetic_modification_original_source TEXT,
+    genetic_modification_original_column TEXT,
+    genetic_modification_original_score TEXT,
+    PRIMARY KEY (study_accession, sample)
+);
+
 CREATE TABLE IF NOT EXISTS declared_samples (
+    study_accession TEXT NOT NULL,
+    sample          TEXT NOT NULL,
+    insdc_analyte TEXT,
+    insdc_assay_modality TEXT,
+    insdc_library_strategy TEXT,
+    insdc_library_source TEXT,
+    insdc_library_selection TEXT,
+    library_strategy TEXT,
+    insdc_conflict TEXT,
+    ena_cell_line TEXT,
+    ena_cell_type TEXT,
+    ena_tissue_type TEXT,
+    ena_tissue_lib TEXT,
+    ena_disease TEXT,
+    ena_dev_stage TEXT,
+    ena_strain TEXT,
+    ena_sub_strain TEXT,
+    ena_sex TEXT,
+    ena_host_sex TEXT,
+    ena_age TEXT,
+    PRIMARY KEY (study_accession, sample)
+);
+
+CREATE TABLE IF NOT EXISTS declared_samples_fast (
     study_accession TEXT NOT NULL,
     sample          TEXT NOT NULL,
     insdc_analyte TEXT,
@@ -244,10 +470,20 @@ CREATE TABLE IF NOT EXISTS enrichment_corrections_log (
 
 CREATE INDEX IF NOT EXISTS idx_enriched_samples_study ON enriched_samples(study_accession);
 
+CREATE INDEX IF NOT EXISTS idx_enriched_samples_fast_study ON enriched_samples_fast(study_accession);
+
 CREATE INDEX IF NOT EXISTS idx_cellosaurus_samples_study ON cellosaurus_samples(study_accession);
+
+CREATE INDEX IF NOT EXISTS idx_cellosaurus_samples_fast_study ON cellosaurus_samples_fast(study_accession);
 
 CREATE INDEX IF NOT EXISTS idx_ontology_samples_study ON ontology_samples(study_accession);
 
+CREATE INDEX IF NOT EXISTS idx_ontology_samples_fast_study ON ontology_samples_fast(study_accession);
+
 CREATE INDEX IF NOT EXISTS idx_provenance_samples_study ON provenance_samples(study_accession);
 
+CREATE INDEX IF NOT EXISTS idx_provenance_samples_fast_study ON provenance_samples_fast(study_accession);
+
 CREATE INDEX IF NOT EXISTS idx_declared_samples_study ON declared_samples(study_accession);
+
+CREATE INDEX IF NOT EXISTS idx_declared_samples_fast_study ON declared_samples_fast(study_accession);

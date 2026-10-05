@@ -6,42 +6,54 @@ import shutil
 import tarfile
 import tempfile
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, cast
 
 import h5py
 
-try:
-    import pyreadr
-    from pyreadr.custom_errors import LibrdataError
-except ImportError:
-    _PYREADR_HINT = (
-        "reading .rds files needs pyreadr. install with: uv pip install pyreadr"
-    )
+# pyreadr and rpy2 are imported LAZILY (via _pyreadr()/_ro() below), not at
+# module load. Both are native-code bridges (pyreadr wraps librdata in C;
+# rpy2 links a system R), and both have failed in ways that are NOT
+# catchable Python exceptions on some fleet hosts -- pyreadr's librdata has
+# segfaulted outright on a free-threaded Python 3.14 build, and rpy2 has
+# raised cffi's ffi.error (not ImportError) on an ABI-mismatched R install.
+# Importing either at module level means every item on an affected host
+# crashes on startup, not just .rds ones, since yuj_worker imports this
+# module unconditionally. Deferring the import to first actual .rds use
+# confines the damage to .rds items only -- everything else on the host
+# keeps working.
 
-    class LibrdataError(Exception):  # placeholder so except LibrdataError resolves
-        pass
 
-    class _MissingPyreadr:
-        def __getattr__(self, _name: str) -> object:
-            raise ImportError(_PYREADR_HINT)
+class LibrdataError(Exception):
+    """Re-exported lazily from pyreadr.custom_errors; see _pyreadr()."""
 
-    pyreadr = _MissingPyreadr()  # type: ignore[assignment]
 
-try:  # fallback for S4/Seurat objects; needs system R
-    import rpy2.robjects as ro
-except ImportError:
-    _R_HINT = (
-        "this .rds needs the rpy2 fallback, which requires a system R install. "
-        "install with: uv sync --extra rds"
-    )
+def _pyreadr() -> Any:
+    global LibrdataError  # noqa: PLW0603 - swapped for the real class on first success
+    try:
+        import pyreadr as _pyreadr_mod
+        from pyreadr.custom_errors import LibrdataError as _RealLibrdataError
+    except ImportError as exc:
+        msg = "reading .rds files needs pyreadr. install with: uv sync --extra rds"
+        raise ImportError(msg) from exc
+    LibrdataError = _RealLibrdataError  # noqa: PLW0603
+    return _pyreadr_mod
 
-    class _MissingR:  # any attribute access raises the friendly hint
-        def __getattr__(self, _name: str) -> object:
-            raise ImportError(_R_HINT)
 
-    ro = _MissingR()  # type: ignore[assignment]
+def _ro() -> Any:
+    try:
+        import rpy2.robjects as _ro_mod
+    except Exception as exc:  # noqa: BLE001 - rpy2 fails in more ways than ImportError
+        # A missing package raises ImportError, but a present-but-ABI-mismatched
+        # rpy2/R pair raises cffi's ffi.error instead.
+        msg = (
+            "this .rds needs the rpy2 fallback, which requires a system R "
+            "install. install with: uv sync --extra rds"
+        )
+        raise ImportError(msg) from exc
+    return _ro_mod
+
 
 from helpers import ftp_data_stream, open_http_range
 from sc_enrich.deep.counter_common import FileType, RdsReadError
@@ -100,8 +112,7 @@ RELIABLE_TYPES = frozenset(
     {FileType.Mtx, FileType.Barcodes, FileType.H5, FileType.H5ad, FileType.Rds},
 )
 
-# cell-by-gene matrices have cells as rows, so these are kept despite the "gene"
-# in the name and counted by row
+# These cell-by-gene matrices count cells by row despite "gene" in the name.
 CELL_MAJOR_HINTS = (
     "cell_by_gene",
     "cellxgene",
@@ -291,15 +302,20 @@ def _get_sc_count(  # noqa: PLR0911
     return 0
 
 
-def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> int:
-    try:
-        with tarfile.open(path, "r:*") as tar:
-            max_count = 0
-            extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+def _iter_tar_members(
+    path: Path, chunk_size: int, tmp_dir: Path | None = None
+) -> Iterator[tuple[FileType, Path]]:
+    """
+    Extract classifiable tar members to temporary files.
 
+    Yield (resolved_type, sniffed_path); each file is deleted before the next
+    member. Shared by the cell-only and cell-plus-gene processing paths.
+    """
+    with tarfile.open(path, "r:*") as tar:
+        extract_dir = Path(tempfile.mkdtemp(dir=tmp_dir))
+        try:
             for member in tar.getmembers():
-                name = member.name.lower()
-                file_type = _classify_file(name)
+                file_type = _classify_file(member.name.lower())
                 if file_type == FileType.Unknown:
                     continue
 
@@ -325,26 +341,59 @@ def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> in
                         decompressed.unlink(missing_ok=True)
                     continue
 
-                file_type, sniffed_path = result
-                single_cell_count = _get_sc_count(
-                    sniffed_path,
-                    file_type,
-                    chunk_size,
-                    tmp_dir=extract_dir,
-                )
+                resolved, sniffed_path = result
+                yield resolved, sniffed_path
                 Path(tmp_path).unlink(missing_ok=True)
-
                 if sniffed_path != tmp_path:
                     sniffed_path.unlink(missing_ok=True)
-                max_count = max(max_count, single_cell_count)
-
+        finally:
             shutil.rmtree(extract_dir, ignore_errors=True)
 
+
+def _process_tar(path: Path, chunk_size: int, tmp_dir: Path | None = None) -> int:
+    try:
+        max_count = 0
+        for resolved, sniffed_path in _iter_tar_members(path, chunk_size, tmp_dir):
+            max_count = max(
+                max_count,
+                _get_sc_count(sniffed_path, resolved, chunk_size, tmp_dir=tmp_dir),
+            )
     except Exception:
         logger.exception("failed to process %s", path)
         return -1
     else:
         return max_count
+
+
+def process_tar_with_genes(
+    path: Path, chunk_size: int, tmp_dir: Path | None = None
+) -> tuple[int, int, str]:
+    """
+    Count cells and genes per local tar member for the SC_FORCE_HTTP fallback.
+
+    Read genes before each temporary file is deleted. Return
+    (best_cells, best_genes, best_format), maximizing cells and genes independently
+    because triplet counts may come from different members. For mtx results,
+    the caller reads nnz through last_mtx_nnz().
+    """
+    best_cells, best_genes, best_format = 0, -1, ""
+    try:
+        for resolved, sniffed_path in _iter_tar_members(path, chunk_size, tmp_dir):
+            count = _get_sc_count(sniffed_path, resolved, chunk_size, tmp_dir=tmp_dir)
+            genes = (
+                gene_count_for(sniffed_path, resolved, chunk_size) if count > 0 else -1
+            )
+            # Prefer mtx on cell-count ties so last_mtx_nnz() reflects the selected format.
+            if count > best_cells or (
+                count == best_cells and count > 0 and resolved == FileType.Mtx
+            ):
+                best_cells, best_format = count, resolved.value
+            best_genes = max(best_genes, genes)
+    except Exception:
+        logger.exception("failed to process %s", path)
+        return -1, -1, ""
+    else:
+        return best_cells, best_genes, best_format
 
 
 def _member_head(f: Any, name: str, max_bytes: int) -> bytes:
@@ -543,8 +592,7 @@ def count_h5_via_http(url: str, file_type: FileType) -> int | None:
         reader.close()
 
 
-# feature/gene axis datasets in a 10x-style .h5 (CellRanger v2 "genes", v3
-# "features") plus h5ad-in-h5 "var" indexes; matched by suffix on the h5 path
+# 10x HDF5 gene axes (v2 genes, v3 features) and h5ad var indexes; match path suffixes.
 _H5_GENE_SUFFIXES = (
     "/features/id",
     "/features/name",
@@ -558,10 +606,7 @@ _H5_GENE_SUFFIXES = (
 _H5_GENE_LEAVES = ("genes", "gene_names", "var_names")
 
 
-#: No reference annotation approaches this; a larger value means the count came
-#: off the wrong axis. Returning -1 makes that "unknown" rather than a confident
-#: lie, which is what every consumer of `genes` needs -- a study is far better
-#: served by a missing count than by its barcode count wearing a gene label.
+# Counts above this bound indicate the wrong axis; return -1 (unknown).
 MAX_PLAUSIBLE_GENES = 200_000
 
 
@@ -622,13 +667,91 @@ def count_h5_dims_via_http(url: str, file_type: FileType) -> tuple[int, int] | N
         reader.close()
 
 
+def _h5ad_obs_columns(f: Any) -> list[str]:
+    """obs column names of an already-open .h5ad; [] if no obs group."""
+    if "obs" not in f:
+        return []
+    try:
+        return [k for k in f["obs"] if k not in ("_index", "__categories")]
+    except Exception:  # noqa: BLE001 (a malformed obs group must not crash the scan)
+        return []
+
+
+def h5ad_obs_columns_via_http(url: str) -> list[str] | None:
+    """obs column names of an .h5ad over HTTP range reads; None = full download needed.
+
+    Cheap: HDF5 group listing needs only the file's metadata, not its data, so
+    this reads a few KB regardless of the file's actual size.
+    """
+    reader = open_http_range(url.replace("ftp://", "https://", 1))
+    if reader is None:
+        return None
+    try:
+        with h5py.File(reader, "r") as f:
+            return _h5ad_obs_columns(f)
+    except (OSError, ValueError, KeyError):
+        return None
+    finally:
+        reader.close()
+
+
+def h5ad_obs_columns_local(path: Path) -> list[str]:
+    """obs column names of a local .h5ad file."""
+    try:
+        with h5py.File(path, "r") as f:
+            return _h5ad_obs_columns(f)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+_RDS_COLUMNS_R = """
+get_cols <- function(obj) {
+  if (inherits(obj, "Seurat")) return(colnames(obj@meta.data))
+  if (inherits(obj, "SeuratObject")) return(colnames(obj@meta.data))
+  if (inherits(obj, "SingleCellExperiment")) {
+    return(colnames(SummarizedExperiment::colData(obj)))
+  }
+  if (inherits(obj, "cell_data_set")) {
+    return(colnames(SummarizedExperiment::colData(obj)))
+  }
+  if (is.data.frame(obj)) return(colnames(obj))
+  character(0)
+}
+get_cols(obj)
+"""
+
+
+def _rds_columns_rpy2(path: Path) -> list[str]:
+    try:
+        ro = _ro()
+        ro.r(f'obj <- readRDS("{path}")')
+        cols = ro.r(_RDS_COLUMNS_R)
+        return [str(c) for c in cols]
+    except Exception:  # noqa: BLE001 (unreadable object -> no columns, not a crash)
+        return []
+
+
+def rds_columns(path: Path) -> list[str]:
+    """Column names of a local .rds file's data.frame / meta.data, via whichever
+    reader (pyreadr, then rpy2) can open it. [] on any failure -- callers treat
+    that as "no evidence", not as a positive or negative signal.
+    """
+    try:
+        result = _pyreadr().read_r(path)
+    except Exception:  # noqa: BLE001
+        return _rds_columns_rpy2(path)
+    if not result:
+        return []
+    obj = next(iter(result.values()))
+    return [str(c) for c in obj.columns] if hasattr(obj, "columns") else []
+
+
 def _mtx_genes(path: Path, chunk_size: int) -> int:
     """
-    Gene axis from an .mtx header (-1 if unparseable).
+    Read the gene-axis length from an .mtx header; return -1 if unparseable.
 
-    Matrix Market gives "rows cols nnz" and says nothing about which axis is
-    which. 10x writes genes x cells, so rows is the default, but a cell-major
-    file returns its barcode count instead.
+    Assume 10x genes-by-cells orientation: Matrix Market stores dimensions
+    without axis labels, so cell-major files would yield barcode counts.
     """
     try:
         with path.open("rb") as f:
@@ -741,7 +864,7 @@ def _process_rds(path: Path, _: int) -> int:
     _rds_state["class"] = ""
     _rds_genes["genes"] = -1
     try:
-        result = pyreadr.read_r(path)
+        result = _pyreadr().read_r(path)
     except LibrdataError:
         return _process_rds_rpy2(path)
 
@@ -763,6 +886,7 @@ def _process_rds(path: Path, _: int) -> int:
 def _process_rds_rpy2(path: Path) -> int:
     _rds_state["class"] = ""
     try:
+        ro = _ro()
         ro.r(f'obj <- readRDS("{path}")')
     except Exception as exc:
         # S4 class is often undefined, e.g. monocle3 missing for a cell_data_set

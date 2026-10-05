@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -25,18 +26,45 @@ from sentence_transformers import SentenceTransformer, util
 from tqdm import tqdm
 from typing_extensions import TypedDict
 
+from age import rules as age_rules
 from enrich import cellosaurus as _cello
 from enrich.prompts import PROMPTS
 
 console = Console()
 _FUZZ_THRESHOLD = 75  # rapidfuzz score threshold for column matching (0-100)
 _EMBEDDING_MODELS = {}
+# Rows are enriched on a thread pool; without this every thread that misses
+# the cache loads its own copy of the model (1.3GB each) at the same time.
+_EMBEDDING_LOCK = threading.Lock()
+# Every study re-asks the same query terms ("sex", "age", "tissue", ...) against
+# column names that recur across studies. Encoding each distinct string once per
+# process removes most encoder calls, which dominate a study on CPU.
+_TEXT_EMBEDDINGS: dict = {}
+_TEXT_EMBEDDINGS_MAX = 50_000  # ponytail: clear-all when full; LRU if it thrashes
+
+
+def _embed_texts(model, model_name: str, texts: list[str]):
+    """Embeddings for `texts` as one (n, dim) tensor, encoding only unseen strings."""
+    import torch
+
+    with _EMBEDDING_LOCK:
+        have = {t: _TEXT_EMBEDDINGS.get((model_name, t)) for t in dict.fromkeys(texts)}
+    missing = [t for t, emb in have.items() if emb is None]
+    if missing:
+        encoded = model.encode(missing, convert_to_tensor=True)
+        have.update(zip(missing, encoded, strict=True))
+        with _EMBEDDING_LOCK:
+            if len(_TEXT_EMBEDDINGS) + len(missing) > _TEXT_EMBEDDINGS_MAX:
+                _TEXT_EMBEDDINGS.clear()
+            _TEXT_EMBEDDINGS.update({(model_name, t): have[t] for t in missing})
+    return torch.stack([have[t] for t in texts])
+
 
 load_dotenv()
 
 
-# Resolved at call time by enrich.cellosaurus, which owns the env-var layering
-# (CELLOSAURUS_LOOKUP / DISEASE_PRIMARY_TISSUE -> ONTOLOGY_DIR -> site default).
+# enrich.cellosaurus resolves paths at call time: explicit env vars,
+# then ONTOLOGY_DIR, then site defaults.
 _ontology_path = _cello.ontology_path
 
 
@@ -116,10 +144,10 @@ def _is_metastatic_tissue(tissue: str) -> bool:
 
 def get_primary_tissue(disease: str) -> str | None:
     """
-    Look up the primary organ for a disease.
+    Look up a disease's primary organ.
 
-    Metastatic-site hits trigger shorter disease-name prefix lookups, e.g.
-    "blast phase CML" to "CML".
+    For missing or metastatic-site hits, retry after dropping leading words
+    and common qualifiers, e.g. "blast phase CML" to "CML".
     """
     mapping = load_disease_primary_tissue()
     d = disease.lower().strip()
@@ -127,7 +155,7 @@ def get_primary_tissue(disease: str) -> str | None:
     if result and not _is_metastatic_tissue(result):
         return result
 
-    # Try shorter prefixes, e.g. "blast phase chronic myelogenous ...".
+    # Drop leading words to try shorter disease names.
     parts = d.split()
     for start in range(1, len(parts)):
         shorter = " ".join(parts[start:])
@@ -135,7 +163,7 @@ def get_primary_tissue(disease: str) -> str | None:
         if candidate and not _is_metastatic_tissue(candidate):
             return candidate
 
-    # Also try stripping common qualifiers from the start
+    # Try removing common leading qualifiers.
     for prefix in ("blast phase ", "childhood ", "adult ", "juvenile ", "infantile "):
         if d.startswith(prefix):
             candidate = mapping.get(d[len(prefix) :])
@@ -151,12 +179,10 @@ cellosaurus_lookup = _cello.lookup
 
 CELLOSAURUS_SPECIES_GUARD_REFUSED = "species_guard_refused"
 
-# Sources for which _record_provenance keeps the pre-override source as
-# {field}_original_source
+# Sources whose overrides preserve {field}_original_source.
 _PROVENANCE_TWO_LEVEL_SOURCES = ("cellosaurus", CELLOSAURUS_SPECIES_GUARD_REFUSED)
 
-# common names and binomials map to NCBI taxid, so a caller may pass either
-# expected_taxid="10090" or expected_species="mouse" / "Mus musculus".
+# Map common and scientific names to NCBI taxids for species checks.
 _SPECIES_TAXID = {
     "homo sapiens": "9606",
     "human": "9606",
@@ -311,14 +337,12 @@ def apply_cellosaurus_entries(
 
         entry = cellosaurus_lookup(str(cell_line_val))
         if cellosaurus_species_conflict(entry, expected_taxid, expected_species):
-            # Name collision across species. Refuse the override and leave the LLM
-            # tissue and cell_type intact.
+            # Reject cross-species name collisions; keep the LLM tissue and cell_type.
             species_refused.add(i)
             record_provenance(i, "cell_line", CELLOSAURUS_SPECIES_GUARD_REFUSED)
             entry = None
         if not entry:
-            # cell line not in Cellosaurus, so restore the LLM values
-            # that were blanked in the "clear cell_type/tissue" step above.
+            # Restore LLM values cleared before the failed Cellosaurus lookup.
             for field in ("tissue", "cell_type"):
                 current = row.get(field)
                 if not current or (isinstance(current, float) and pd.isna(current)):
@@ -356,11 +380,10 @@ def apply_cellosaurus_entries(
                 cello_df.loc[i, "ethnicity"] = entry["population"]
                 record_provenance(i, "ethnicity", "cellosaurus")
 
-        # tissue: override unless it came from an embedding-matched column
-        # (embedding match = metadata explicitly had a tissue column, so trust it)
+        # Preserve tissue from an embedding-matched metadata column.
         tissue_from_emb = tissue_from_embedding_flags.get(i, False)
         if entry.get("tissue"):
-            # Also check: if current tissue value IS a cell line name, override it
+            # Replace tissue if it contains a cell line name.
             current_tissue = row.get("tissue")
             tissue_is_cell_line = (
                 current_tissue and cellosaurus_lookup(str(current_tissue)) is not None
@@ -1053,7 +1076,13 @@ _ASSAY_REGEX_MAP = [
 
 
 def _get_embedding_model(model_name: str, *, verbose: bool = True):
-    global _EMBEDDING_MODELS
+    if model_name in _EMBEDDING_MODELS:
+        return _EMBEDDING_MODELS[model_name]
+    with _EMBEDDING_LOCK:
+        return _load_embedding_model(model_name, verbose=verbose)
+
+
+def _load_embedding_model(model_name: str, *, verbose: bool) -> SentenceTransformer:
     if model_name not in _EMBEDDING_MODELS:
         if verbose:
             console.print("Setting up embedding model...")
@@ -1074,10 +1103,9 @@ def _fuzz_match_keys(
     threshold: int = _FUZZ_THRESHOLD,
 ) -> list[tuple[str, float]]:
     """
-    Return [(key, score)] for keys with rapidfuzz token_sort_ratio >= threshold.
+    Return [(key, score)] for rapidfuzz token_sort_ratio >= threshold.
 
-    Score is normalized to 0-1 range (from rapidfuzz's 0-100) for backward
-    compatibility with the provenance tracking that expects cosine-sim-like scores.
+    Normalize scores from 0-100 to 0-1 for provenance compatibility.
     """
     if not keys:
         return []
@@ -1088,6 +1116,24 @@ def _fuzz_match_keys(
         if score >= threshold:
             results.append((key, score / 100.0))
     return results
+
+
+# "organ" scores just over _FUZZ_THRESHOLD against "Organism", so without this a
+# sheet with no tissue column reports the species as its tissue. "organism part"
+# is AE's name for tissue and must stay.
+_NOT_TISSUE_KEY = re.compile(
+    r"^(organism|species|taxon|taxonomy|taxon id|taxid|scientific name|"
+    r"organism name|source organism)( ch\d+)?$"
+)
+
+
+def _drop_organism_keys(keys: list[str]) -> list[str]:
+    """Remove species-naming columns from tissue candidates."""
+    return [
+        k
+        for k in keys
+        if not _NOT_TISSUE_KEY.match(re.sub(r"[_\-\s]+", " ", k).strip().lower())
+    ]
 
 
 def _title_case(value: str) -> str:
@@ -1186,13 +1232,17 @@ def enrich_df(
     debug: bool = False,
     expected_taxid: str | None = None,
     expected_species: str | None = None,
+    embedding_only: bool = False,
 ):
     """
     Enrich a project's sample metadata.
 
-    Returns enriched, Cellosaurus-adjusted, provenance and ontology DataFrames.
-    Species gates refuse Cellosaurus matches that contradict the expected
-    taxid/name.
+    Return enriched, Cellosaurus-adjusted, provenance and ontology DataFrames.
+    Species gates reject Cellosaurus matches that contradict the expected taxid/name.
+
+    With embedding_only=True, matched columns retain raw values with
+    source="embedding"; unmatched fields remain None. No LLM calls are made.
+    See docs/superpowers/specs/2026-09-14-embedding-only-enrichment.md.
     """
     # Maps row_index to {field: {source, column, score}}.
     _provenance: dict[int, dict[str, dict]] = {}
@@ -1223,6 +1273,27 @@ def enrich_df(
                 "column": column,
                 "score": round(score, 4) if score is not None else None,
             }
+
+    def _embedding_only_value(
+        field: str,
+        row_idx: int,
+        matched: dict,
+        best_col: str | None,
+        score: float | None,
+    ) -> str | None:
+        """
+        Return the matched column's raw value with source="embedding", or None.
+
+        Embedding-only callers return immediately without LLM or free-text fallback.
+        If best_col is None, no column met the threshold; another field's match
+        is not a valid substitute. See
+        docs/superpowers/specs/2026-09-14-embedding-only-enrichment.md.
+        """
+        raw = matched.get(best_col) if best_col else None
+        if raw and _normalized(raw) not in na_strings and not _is_garbage(raw):
+            _record_provenance(row_idx, field, "embedding", best_col, score)
+            return _title_case(raw)
+        return None
 
     def _debug_attrs(node: str, keys: list[str], attributes: dict):
         if not debug:
@@ -1354,14 +1425,18 @@ def enrich_df(
     _embedding_model_instance = None
     _key_embeddings_cache = None  # tensor, lazily computed
 
+    _embeddings_lock = threading.Lock()
+
     def _ensure_embeddings(keys: list[str]):
         nonlocal _embedding_model_instance, _key_embeddings_cache
-        if _key_embeddings_cache is None:
+        with _embeddings_lock:
+            if _key_embeddings_cache is not None:
+                return _embedding_model_instance, _key_embeddings_cache
             _embedding_model_instance = _get_embedding_model(
                 embedding_model, verbose=verbose
             )
-            _key_embeddings_cache = _embedding_model_instance.encode(
-                keys, convert_to_tensor=True
+            _key_embeddings_cache = _embed_texts(
+                _embedding_model_instance, embedding_model, keys
             )
         return _embedding_model_instance, _key_embeddings_cache
 
@@ -1371,7 +1446,7 @@ def enrich_df(
         if not keys:
             return []
         model, embs = _ensure_embeddings(keys)
-        query = model.encode(term, convert_to_tensor=True)
+        query = _embed_texts(model, embedding_model, [term])[0]
         similarities = util.cos_sim(query, embs).squeeze(0)
         if similarities.dim() == 0:
             s = similarities.item()
@@ -1424,11 +1499,13 @@ def enrich_df(
         )
 
     def get_tissue_keys(embeddings, keys: list[str]):
-        return _dedup_keys(
-            get_relevant_keys("tissue", embeddings, keys)
-            + get_relevant_keys("organ", embeddings, keys)
-            + get_relevant_keys("body site", embeddings, keys)
-            + get_relevant_keys("tumor site", embeddings, keys)
+        return _drop_organism_keys(
+            _dedup_keys(
+                get_relevant_keys("tissue", embeddings, keys)
+                + get_relevant_keys("organ", embeddings, keys)
+                + get_relevant_keys("body site", embeddings, keys)
+                + get_relevant_keys("tumor site", embeddings, keys)
+            )
         )
 
     def get_tissue_scores(
@@ -1633,23 +1710,59 @@ def enrich_df(
         # Provenance flags used by Cellosaurus step
         _tissue_from_embedding: bool
 
+    def _is_human(attributes: dict) -> bool:
+        if expected_taxid:
+            return str(expected_taxid) == "9606"
+        return any(
+            _NOT_TISSUE_KEY.match(re.sub(r"[_\-\s]+", " ", str(k)).strip().lower())
+            and _normalized(v) in {"homo sapiens", "human"}
+            for k, v in attributes.items()
+        )
+
     def estimate_age(state: State):
         row_idx = state["row_index"]
-        keys = get_age_keys(state["embeddings"], state["raw_keys"])
+        attributes = state["attributes"]
+        # A column that names age as a word, parsed by rule. The fuzzy ratio
+        # passes Stage/agent and misses "age (years)", and _is_garbage drops
+        # every bare-number age, so numeric ages never reach the fallback below.
+        word_keys = [k for k in state["raw_keys"] if age_rules.is_age_tag(k)]
+        pairs = [(k, v) for k in word_keys if (v := _coerce_str(attributes.get(k)))]
+        hit = age_rules.pick_age(pairs, human=_is_human(attributes))
+        if hit["status"] == "recovered":
+            _record_provenance(row_idx, "age", "rule", hit["tag"], 1.0)
+            if embedding_only:
+                return {"age": hit["text"]}
+            return {"age": str(round(hit["years"] * 8760, 1))}
+
+        # Free text ("6 weeks old (P42)", "adult") goes on to the old path.
+        keys = word_keys or [
+            k
+            for k in get_age_keys(state["embeddings"], state["raw_keys"])
+            if not age_rules.is_excluded_tag(k)
+        ]
         if not keys:
             return {"age": None}
         age_values = _collect_values(state, keys)
         if not age_values:
             return {"age": None}
-        _debug_attrs("estimate_age", list(age_values.keys()), state["attributes"])
-        age_text = next((v for v in age_values.values() if not _is_garbage(v)), None)
-        if not age_text:
+        _debug_attrs("estimate_age", list(age_values.keys()), attributes)
+        matched_col = next(
+            (k for k, v in age_values.items() if not _is_garbage(v)), None
+        )
+        if not matched_col:
             return {"age": None}
+        age_text = age_values[matched_col]
 
-        matched_col = next(iter(age_values))
         scores = get_best_score(
             ["age"], state["embeddings"], state["raw_keys"], [matched_col]
         )
+
+        if embedding_only:
+            # Embedding-only mode keeps raw ages; age_to_hours requires an LLM tool call.
+            _record_provenance(
+                row_idx, "age", "embedding", matched_col, scores.get(matched_col)
+            )
+            return {"age": age_text}
 
         sys_prompt = PROMPTS["age_primary"]
         prompt = build_prompt(sys_prompt, json.dumps({"age": age_text}))
@@ -1658,8 +1771,7 @@ def enrich_df(
         tool_calls = getattr(result, "tool_calls", [])
         for call in tool_calls:
             if call.get("name") == "age_to_hours":
-                # The LLM sometimes passes a non-numeric value (e.g. "P21",
-                # "adult"), which fails the tool's float validation.
+                # Non-numeric LLM values such as "P21" fail the tool's float validation.
                 try:
                     age_hours = age_to_hours.invoke(call.get("args", {}))
                 except Exception:
@@ -1699,7 +1811,14 @@ def enrich_df(
             scores = get_tissue_scores(
                 state["embeddings"], state["raw_keys"], list(values.keys())
             )
-            best_col = max(scores, key=scores.get) if scores else next(iter(values))
+            best_col = max(scores, key=scores.get) if scores else None
+
+            if embedding_only:
+                value = _embedding_only_value(
+                    "tissue", row_idx, values, best_col, scores.get(best_col)
+                )
+                return {"tissue": value, "_tissue_from_embedding": value is not None}
+
             info_json = json.dumps(values)
             sys_prompt = PROMPTS["tissue_primary"]
             prompt = build_prompt(sys_prompt, info_json)
@@ -1720,6 +1839,8 @@ def enrich_df(
                 }
 
         # Fallback
+        if embedding_only:
+            return {"tissue": None, "_tissue_from_embedding": False}
         fallback = _fallback_info(state)
         if not fallback:
             return {"tissue": None, "_tissue_from_embedding": False}
@@ -1806,7 +1927,14 @@ def enrich_df(
                     state["raw_keys"],
                     list(clean.keys()),
                 )
-                best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+                best_col = max(scores, key=scores.get) if scores else None
+
+                if embedding_only:
+                    value = _embedding_only_value(
+                        "cell_type", row_idx, clean, best_col, scores.get(best_col)
+                    )
+                    return {"cell_type": value}
+
                 info_json = json.dumps(clean)
                 sys_prompt = PROMPTS["cell_type_primary"]
                 prompt = build_prompt(sys_prompt, info_json)
@@ -1827,6 +1955,8 @@ def enrich_df(
                     )
                     return {"cell_type": _title_case(ct_value)}
 
+        if embedding_only:
+            return {"cell_type": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"cell_type": None}
@@ -1866,6 +1996,13 @@ def enrich_df(
             list(clean.keys()),
         )
         best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+
+        if embedding_only:
+            value = _embedding_only_value(
+                "ethnicity", row_idx, clean, best_col, scores.get(best_col)
+            )
+            return {"ethnicity": value}
+
         info_json = json.dumps(clean)
         sys_prompt = PROMPTS["ethnicity_primary"]
         prompt = build_prompt(sys_prompt, info_json)
@@ -1908,7 +2045,14 @@ def enrich_df(
                 state["raw_keys"],
                 list(values.keys()),
             )
-            best_col = max(scores, key=scores.get) if scores else next(iter(values))
+            best_col = max(scores, key=scores.get) if scores else None
+
+            if embedding_only:
+                value = _embedding_only_value(
+                    "disease", row_idx, values, best_col, scores.get(best_col)
+                )
+                return {"disease": value}
+
             info_json = json.dumps(values)
             sys_prompt = PROMPTS["disease_primary"]
             prompt = build_prompt(sys_prompt, info_json)
@@ -1925,6 +2069,8 @@ def enrich_df(
                 )
                 return {"disease": _title_case(disease_value)}
 
+        if embedding_only:
+            return {"disease": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"disease": None}
@@ -1982,6 +2128,14 @@ def enrich_df(
         if not assay_context_keys:
             return {"assay": None}
 
+        if embedding_only:
+            raw = _coerce_str(state["attributes"].get(assay_context_keys[0]))
+            normalized = _normalize_assay(raw) if raw else None
+            if normalized is not None:
+                _record_provenance(row_idx, "assay", "embedding", assay_context_keys[0])
+                return {"assay": normalized}
+            return {"assay": None}
+
         _debug_attrs("estimate_assay", assay_context_keys, state["attributes"])
         info_json = filter_dict(state["attributes"], assay_context_keys)
         sys_prompt = PROMPTS["assay_primary"]
@@ -2022,7 +2176,14 @@ def enrich_df(
                     state["raw_keys"],
                     list(clean.keys()),
                 )
-                best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+                best_col = max(scores, key=scores.get) if scores else None
+
+                if embedding_only:
+                    value = _embedding_only_value(
+                        "cell_line", row_idx, clean, best_col, scores.get(best_col)
+                    )
+                    return {"cell_line": value}
+
                 info_json = json.dumps(clean)
                 sys_prompt = PROMPTS["cell_line_primary"]
                 prompt = build_prompt(sys_prompt, info_json)
@@ -2043,6 +2204,8 @@ def enrich_df(
                     )
                     return {"cell_line": _title_case(cl_value)}
 
+        if embedding_only:
+            return {"cell_line": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"cell_line": None}
@@ -2087,7 +2250,14 @@ def enrich_df(
                     state["raw_keys"],
                     list(clean.keys()),
                 )
-                best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+                best_col = max(scores, key=scores.get) if scores else None
+
+                if embedding_only:
+                    value = _embedding_only_value(
+                        "treatment", row_idx, clean, best_col, scores.get(best_col)
+                    )
+                    return {"treatment": value}
+
                 info_json = json.dumps(clean)
                 sys_prompt = PROMPTS["treatment_primary"]
                 prompt = build_prompt(sys_prompt, info_json)
@@ -2108,6 +2278,8 @@ def enrich_df(
                     )
                     return {"treatment": _title_case(tx_value)}
 
+        if embedding_only:
+            return {"treatment": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"treatment": None}
@@ -2154,7 +2326,18 @@ def enrich_df(
                     state["raw_keys"],
                     list(clean.keys()),
                 )
-                best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+                best_col = max(scores, key=scores.get) if scores else None
+
+                if embedding_only:
+                    value = _embedding_only_value(
+                        "development_stage",
+                        row_idx,
+                        clean,
+                        best_col,
+                        scores.get(best_col),
+                    )
+                    return {"development_stage": value}
+
                 info_json = json.dumps(clean)
                 sys_prompt = PROMPTS["development_stage_primary"]
                 prompt = build_prompt(sys_prompt, info_json)
@@ -2175,6 +2358,8 @@ def enrich_df(
                     )
                     return {"development_stage": _title_case(ds_value)}
 
+        if embedding_only:
+            return {"development_stage": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"development_stage": None}
@@ -2216,7 +2401,14 @@ def enrich_df(
                     state["raw_keys"],
                     list(clean.keys()),
                 )
-                best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+                best_col = max(scores, key=scores.get) if scores else None
+
+                if embedding_only:
+                    value = _embedding_only_value(
+                        "sample_type", row_idx, clean, best_col, scores.get(best_col)
+                    )
+                    return {"sample_type": value}
+
                 info_json = json.dumps(clean)
                 sys_prompt = PROMPTS["sample_type_primary"]
                 prompt = build_prompt(sys_prompt, info_json)
@@ -2237,6 +2429,8 @@ def enrich_df(
                     )
                     return {"sample_type": _title_case(st_value)}
 
+        if embedding_only:
+            return {"sample_type": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"sample_type": None}
@@ -2282,7 +2476,18 @@ def enrich_df(
                     state["raw_keys"],
                     list(clean.keys()),
                 )
-                best_col = max(scores, key=scores.get) if scores else next(iter(clean))
+                best_col = max(scores, key=scores.get) if scores else None
+
+                if embedding_only:
+                    value = _embedding_only_value(
+                        "genetic_modification",
+                        row_idx,
+                        clean,
+                        best_col,
+                        scores.get(best_col),
+                    )
+                    return {"genetic_modification": value}
+
                 info_json = json.dumps(clean)
                 sys_prompt = PROMPTS["genetic_modification_primary"]
                 prompt = build_prompt(sys_prompt, info_json)
@@ -2305,6 +2510,8 @@ def enrich_df(
                     )
                     return {"genetic_modification": _title_case(gm_value)}
 
+        if embedding_only:
+            return {"genetic_modification": None}
         fallback = _fallback_info(state)
         if not fallback:
             return {"genetic_modification": None}
@@ -2502,8 +2709,7 @@ def enrich_df(
     rows = list(detailed_df[all_cols].iterrows())
     tissue_from_embedding_flags: dict[int, bool] = {}
 
-    # Deduplicate by attribute fingerprint before LLM calls, then broadcast
-    # results across replicate rows.
+    # Enrich each biological metadata fingerprint once, then broadcast to replicates.
 
     def _row_fingerprint(row_dict: dict) -> str:
         """Create a hashable fingerprint from row values (excluding sample ID)."""
@@ -2567,9 +2773,8 @@ def enrich_df(
     if verbose:
         console.print(f"Enrichment completed in {elapsed:.2f} seconds.")
 
-    # Clear cell_type/tissue when the LLM found a cell_line. Parallel nodes often
-    # echo the line name as cell_type; Cellosaurus fills tissue/cell_type from the
-    # cell line identity afterward.
+    # LLM nodes may echo a cell line as tissue or cell_type. Clear inferred
+    # values for Cellosaurus to fill; preserve directly matched metadata.
     for i in range(len(detailed_df)):
         cell_line_val = (
             detailed_df.loc[i, "cell_line"]
@@ -2586,8 +2791,7 @@ def enrich_df(
             # Clear cell_type; Cellosaurus will set it from cell line identity
             ct_source = prov.get("cell_type", {}).get("source", "")
             if ct_source != "embedding":
-                # Clear when cell_type came from the LLM; direct metadata columns stay
-                # authoritative.
+                # Preserve directly matched cell_type metadata.
                 detailed_df.loc[i, "cell_type"] = None
             # Clear tissue; Cellosaurus will fill from cell line site of origin
             tissue_from_emb = tissue_from_embedding_flags.get(i, False)
@@ -2640,9 +2844,7 @@ def enrich_df(
     # Populate assay_category from normalized assay values
     output_df["assay_category"] = output_df["assay"].map(_get_assay_category)
 
-    # Fix 4: Move misclassified cell types out of cell_line
-    # LLM sometimes places cell type terms (e.g. "Monocytes") or patient
-    # identifiers (e.g. "Patient-19") in the cell_line column.
+    # Move cell types and patient identifiers misclassified as cell lines.
 
     for i in range(len(output_df)):
         cl = output_df.loc[i, "cell_line"] if "cell_line" in output_df.columns else None
@@ -2683,18 +2885,14 @@ def enrich_df(
         cello_df["taxid"] = None
         species_refused = set()
 
-    # Add tissue_primary_site and tissue_site_type. For cancer cell lines,
-    # Cellosaurus tissue may be a metastatic/effusion site; primary site records
-    # the disease origin.
+    # Record the primary disease site separately from metastatic/effusion tissue.
 
     cello_df["tissue_primary_site"] = None
     cello_df["tissue_site_type"] = None
 
     for i, row in cello_df.iterrows():
         if i in species_refused:
-            # The species gate refused this row's override, but cell_line is still
-            # the LLM's own string and still name-matches the foreign entry, so
-            # re-deriving the primary site here would leak what we just refused.
+            # A refused cross-species match must not donate its primary site either.
             continue
         cell_line_val = row.get("cell_line")
         if not cell_line_val or (

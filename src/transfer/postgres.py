@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _TableInfo:
-    sqlite_db_file: Path
+    sqlite_db_file: Path | None
     modifier: _Modifier
     select_cols: list[str] | None = None
     insert_cols: list[str] | None = None
@@ -67,23 +67,26 @@ class _TableInfo:
 
 
 def build_table_info(
-    sra_db_file: Path,
-    geo_db_file: Path,
-    ena_db_file: Path,
-    ae_db_file: Path,
-    pubmed_metadata_db_file: Path,
-    unified_metadata_db_file: Path,
-    download_links_db_file: Path,
+    sra_db_file: Path | None,
+    geo_db_file: Path | None,
+    ena_db_file: Path | None,
+    ae_db_file: Path | None,
+    pubmed_metadata_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
+    download_links_db_file: Path | None,
     read_batch_size: int,
 ) -> dict[str, _TableInfo]:
     """
-    Every sqlite-backed transfer task: its source file, key and column lists.
+    Describe SQLite-backed transfer tasks: source files, keys and columns.
 
-    Shared with the delta builder so a table's conflict key has one definition;
-    two lists would drift the first time a table is added.
+    Shared with the delta builder to keep conflict keys consistent.
     """
-    return {
-        "geo_series": _TableInfo(
+    table_info: dict[str, _TableInfo] = {}
+
+    # geo_series, sra_studies and arrayexpress_experiments modifiers need other
+    # sources. Skip task construction when those files are missing.
+    if sra_db_file is not None and unified_metadata_db_file is not None:
+        table_info["geo_series"] = _TableInfo(
             sqlite_db_file=geo_db_file,
             modifier=_geo_series_batch_modifier(
                 sra_db_file,
@@ -94,24 +97,10 @@ def build_table_info(
             select_cols=_GEO_SERIES_SELECT_COLS,
             insert_cols=_GEO_SERIES_INSERT_COLS,
             conflict_cols=["accession"],
-        ),
-        "geo_samples": _TableInfo(
-            sqlite_db_file=geo_db_file,
-            modifier=_geo_sample_batch_modifier,
-            conflict_cols=["accession"],
-        ),
-        "geo_platforms": _TableInfo(
-            sqlite_db_file=geo_db_file,
-            modifier=_geo_platforms_batch_modifier,
-            conflict_cols=["accession"],
-        ),
-        "geo_contributors": _TableInfo(
-            sqlite_db_file=geo_db_file,
-            modifier=_no_op_batch_modifier,
-            select_cols=_GEO_CONTRIBUTORS_COLS,
-            insert_cols=_GEO_CONTRIBUTORS_COLS,
-        ),
-        "sra_studies": _TableInfo(
+        )
+
+    if unified_metadata_db_file is not None:
+        table_info["sra_studies"] = _TableInfo(
             sqlite_db_file=sra_db_file,
             modifier=_sra_studies_batch_modifier(
                 sra_db_file,
@@ -121,56 +110,8 @@ def build_table_info(
             select_cols=_SRA_STUDIES_SELECT_COLS,
             insert_cols=_SRA_STUDIES_INSERT_COLS,
             conflict_cols=["accession"],
-        ),
-        "sra_submissions": _TableInfo(
-            sqlite_db_file=sra_db_file,
-            modifier=_sra_submissions_batch_modifier,
-            conflict_cols=["accession"],
-        ),
-        "sra_experiments": _TableInfo(
-            sqlite_db_file=sra_db_file,
-            modifier=_sra_experiments_batch_modifier,
-            conflict_cols=["accession"],
-        ),
-        "sra_samples": _TableInfo(
-            sqlite_db_file=sra_db_file,
-            modifier=_sra_samples_batch_modifier,
-            conflict_cols=["accession"],
-        ),
-        "sra_runs": _TableInfo(
-            sqlite_db_file=sra_db_file,
-            modifier=_no_op_batch_modifier,
-            conflict_cols=["accession"],
-        ),
-        "sra_run_download_links": _TableInfo(
-            sqlite_db_file=download_links_db_file,
-            modifier=_sra_run_download_links_modifier,
-            select_table_name="run_download_links",
-            conflict_cols=["run_accession"],
-        ),
-        "ena_experiments": _TableInfo(
-            sqlite_db_file=ena_db_file,
-            modifier=_ena_experiments_batch_modifier,
-            conflict_cols=["run_accession"],
-        ),
-        "ena_studies": _TableInfo(
-            sqlite_db_file=ena_db_file,
-            modifier=_ena_studies_batch_modifier,
-            conflict_cols=["study_accession"],
-        ),
-        "ena_samples": _TableInfo(
-            sqlite_db_file=ena_db_file,
-            modifier=_ena_samples_batch_modifier,
-            conflict_cols=["sample_accession"],
-        ),
-        "ena_studies_search": _TableInfo(
-            sqlite_db_file=ena_db_file,
-            modifier=_ena_studies_search_batch_modifier,
-            select_cols=_ENA_STUDIES_SEARCH_SELECT_COLS,
-            insert_cols=_ENA_STUDIES_SEARCH_INSERT_COLS,
-            select_table_name="ena_studies",
-        ),
-        "arrayexpress_experiments": _TableInfo(
+        )
+        table_info["arrayexpress_experiments"] = _TableInfo(
             sqlite_db_file=ae_db_file,
             modifier=_arrayexpress_experiments_batch_modifier(
                 unified_metadata_db_file,
@@ -179,45 +120,108 @@ def build_table_info(
             select_cols=_AE_EXPERIMENTS_SELECT_COLS,
             insert_cols=_AE_EXPERIMENTS_INSERT_COLS,
             conflict_cols=["accession"],
-        ),
-        "arrayexpress_samples": _TableInfo(
-            sqlite_db_file=ae_db_file,
-            modifier=_arrayexpress_samples_batch_modifier,
-            select_cols=_AE_SAMPLES_COLS,
-            insert_cols=_AE_SAMPLES_COLS,
-        ),
-        "pubmed_metadata": _TableInfo(
-            sqlite_db_file=pubmed_metadata_db_file,
-            modifier=_pubmed_metadata_batch_modifier,
-            conflict_cols=["pmid"],
-        ),
-        "unified_metadata": _TableInfo(
-            sqlite_db_file=unified_metadata_db_file,
-            modifier=_unified_metadata_batch_modifier,
-            select_cols=_UNIFIED_METADATA_SELECT_COLS,
-            insert_cols=_UNIFIED_METADATA_INSERT_COLS,
-            conflict_cols=["canonical_accession"],
-        ),
-        "unified_metadata_centers": _TableInfo(
-            sqlite_db_file=unified_metadata_db_file,
-            modifier=_no_op_batch_modifier,
-            select_cols=_UNIFIED_METADATA_CENTERS_SELECT_COLS,
-            insert_cols=_UNIFIED_METADATA_CENTERS_INSERT_COLS,
-            select_table_name="unified_centers",
-            conflict_cols=["canonical_accession", "position"],
-        ),
-    }
+        )
+
+    table_info.update(
+        {
+            "geo_samples": _TableInfo(
+                sqlite_db_file=geo_db_file,
+                modifier=_geo_sample_batch_modifier,
+                conflict_cols=["accession"],
+            ),
+            "geo_platforms": _TableInfo(
+                sqlite_db_file=geo_db_file,
+                modifier=_geo_platforms_batch_modifier,
+                conflict_cols=["accession"],
+            ),
+            "sra_submissions": _TableInfo(
+                sqlite_db_file=sra_db_file,
+                modifier=_sra_submissions_batch_modifier,
+                conflict_cols=["accession"],
+            ),
+            "sra_experiments": _TableInfo(
+                sqlite_db_file=sra_db_file,
+                modifier=_sra_experiments_batch_modifier,
+                conflict_cols=["accession"],
+            ),
+            "sra_samples": _TableInfo(
+                sqlite_db_file=sra_db_file,
+                modifier=_sra_samples_batch_modifier,
+                conflict_cols=["accession"],
+            ),
+            "sra_runs": _TableInfo(
+                sqlite_db_file=sra_db_file,
+                modifier=_no_op_batch_modifier,
+                conflict_cols=["accession"],
+            ),
+            "sra_run_download_links": _TableInfo(
+                sqlite_db_file=download_links_db_file,
+                modifier=_sra_run_download_links_modifier,
+                select_table_name="run_download_links",
+                conflict_cols=["run_accession"],
+            ),
+            "ena_experiments": _TableInfo(
+                sqlite_db_file=ena_db_file,
+                modifier=_ena_experiments_batch_modifier,
+                conflict_cols=["run_accession"],
+            ),
+            "ena_studies": _TableInfo(
+                sqlite_db_file=ena_db_file,
+                modifier=_ena_studies_batch_modifier,
+                conflict_cols=["study_accession"],
+            ),
+            "ena_samples": _TableInfo(
+                sqlite_db_file=ena_db_file,
+                modifier=_ena_samples_batch_modifier,
+                conflict_cols=["sample_accession"],
+            ),
+            "ena_studies_search": _TableInfo(
+                sqlite_db_file=ena_db_file,
+                modifier=_ena_studies_search_batch_modifier,
+                select_cols=_ENA_STUDIES_SEARCH_SELECT_COLS,
+                insert_cols=_ENA_STUDIES_SEARCH_INSERT_COLS,
+                select_table_name="ena_studies",
+            ),
+            "arrayexpress_samples": _TableInfo(
+                sqlite_db_file=ae_db_file,
+                modifier=_arrayexpress_samples_batch_modifier,
+                select_cols=_AE_SAMPLES_COLS,
+                insert_cols=_AE_SAMPLES_COLS,
+            ),
+            "pubmed_metadata": _TableInfo(
+                sqlite_db_file=pubmed_metadata_db_file,
+                modifier=_pubmed_metadata_batch_modifier,
+                conflict_cols=["pmid"],
+            ),
+            "unified_metadata": _TableInfo(
+                sqlite_db_file=unified_metadata_db_file,
+                modifier=_unified_metadata_batch_modifier,
+                select_cols=_UNIFIED_METADATA_SELECT_COLS,
+                insert_cols=_UNIFIED_METADATA_INSERT_COLS,
+                conflict_cols=["canonical_accession"],
+            ),
+            "unified_metadata_centers": _TableInfo(
+                sqlite_db_file=unified_metadata_db_file,
+                modifier=_no_op_batch_modifier,
+                select_cols=_UNIFIED_METADATA_CENTERS_SELECT_COLS,
+                insert_cols=_UNIFIED_METADATA_CENTERS_INSERT_COLS,
+                select_table_name="unified_centers",
+                conflict_cols=["canonical_accession", "position"],
+            ),
+        }
+    )
+    return table_info
 
 
 def postgres_transfer(
     pg_url: str,
-    sra_db_file: Path,
-    geo_db_file: Path,
-    ena_db_file: Path,
-    ae_db_file: Path,
-    pubmed_metadata_db_file: Path,
-    unified_metadata_db_file: Path,
-    download_links_db_file: Path,
+    sra_db_file: Path | None,
+    geo_db_file: Path | None,
+    ena_db_file: Path | None,
+    ae_db_file: Path | None,
+    pubmed_metadata_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
+    download_links_db_file: Path | None,
     read_batch_size: int,
     num_retries: int,
     num_workers: int,
@@ -245,8 +249,7 @@ def postgres_transfer(
         if info.sqlite_db_file is None or not info.sqlite_db_file.exists():
             continue
         if insert_only and not info.conflict_cols:
-            # no unique key, so ON CONFLICT cannot fire and the plain COPY
-            # appends a second copy of every staged row
+            # Without a unique key, COPY would append duplicates on every transfer.
             logger.warning(
                 "%s has no conflict key; skipped under insert-only", table_name
             )
@@ -271,55 +274,72 @@ def postgres_transfer(
             ),
         )
 
-    all_tasks.append(
-        (
-            "geo_geocode",
-            _transfer_geo_geocode,
-            (pg_url, geo_db_file, unified_metadata_db_file, read_batch_size),
-        ),
-    )
-    all_tasks.append(
-        (
-            "sra_geocode",
-            _transfer_sra_geocode,
-            (pg_url, sra_db_file, unified_metadata_db_file, read_batch_size),
-        ),
-    )
-    all_tasks.append(
-        (
-            "ena_geocode",
-            _transfer_ena_geocode,
-            (pg_url, ena_db_file, unified_metadata_db_file, read_batch_size),
-        ),
-    )
-    all_tasks.append(
-        (
-            "ae_geocode",
-            _transfer_ae_geocode,
-            (pg_url, ae_db_file, unified_metadata_db_file, read_batch_size),
-        ),
-    )
-    all_tasks.append(
-        (
-            "study_publications",
-            _transfer_study_publications,
+    def _present(*paths: Path | None) -> bool:
+        return all(p is not None and p.exists() for p in paths)
+
+    if _present(geo_db_file, unified_metadata_db_file):
+        all_tasks.append(
             (
-                pg_url,
-                unified_metadata_db_file,
-                pubmed_metadata_db_file,
-                read_batch_size,
-                prune_publications,
-                insert_only,
+                "geo_geocode",
+                _transfer_geo_geocode,
+                (pg_url, geo_db_file, unified_metadata_db_file, read_batch_size),
             ),
-        ),
-    )
-    all_tasks.append(
-        (
-            "cross_refs",
-            _transfer_cross_refs,
-            (pg_url, unified_metadata_db_file, read_batch_size),
-        ),
-    )
+        )
+    if _present(geo_db_file):
+        all_tasks.append(
+            (
+                "geo_contributors",
+                _transfer_geo_contributors,
+                (pg_url, geo_db_file, read_batch_size),
+            ),
+        )
+    if _present(sra_db_file, unified_metadata_db_file):
+        all_tasks.append(
+            (
+                "sra_geocode",
+                _transfer_sra_geocode,
+                (pg_url, sra_db_file, unified_metadata_db_file, read_batch_size),
+            ),
+        )
+    if _present(ena_db_file, unified_metadata_db_file):
+        all_tasks.append(
+            (
+                "ena_geocode",
+                _transfer_ena_geocode,
+                (pg_url, ena_db_file, unified_metadata_db_file, read_batch_size),
+            ),
+        )
+    if _present(ae_db_file, unified_metadata_db_file):
+        all_tasks.append(
+            (
+                "ae_geocode",
+                _transfer_ae_geocode,
+                (pg_url, ae_db_file, unified_metadata_db_file, read_batch_size),
+            ),
+        )
+    if _present(unified_metadata_db_file, pubmed_metadata_db_file):
+        all_tasks.append(
+            (
+                "study_publications",
+                _transfer_study_publications,
+                (
+                    pg_url,
+                    unified_metadata_db_file,
+                    pubmed_metadata_db_file,
+                    read_batch_size,
+                    prune_publications,
+                    insert_only,
+                ),
+            ),
+        )
+    if _present(unified_metadata_db_file):
+        all_tasks.append(
+            (
+                "cross_refs",
+                _transfer_cross_refs,
+                (pg_url, unified_metadata_db_file, read_batch_size),
+            ),
+        )
     all_tasks.extend(
         gsa_transfer_tasks(
             pg_url,
@@ -651,9 +671,9 @@ def _geo_sample_batch_modifier(batch: list[dict]) -> list[dict]:
 
 
 def _geo_series_batch_modifier(
-    sra_db_file: Path,
-    geo_db_file: Path,
-    unified_metadata_db_file: Path,
+    sra_db_file: Path | None,
+    geo_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
@@ -677,8 +697,7 @@ def _geo_series_batch_modifier(
                 ),
             )
 
-            # Postgres geo_series.samples_ref is text[] of plain accessions.
-            # Normalise SQLite to match, and swallow the corrupt row.
+            # Normalize samples_ref to Postgres text[] accessions; discard corrupt values.
             samples = load_samples_ref(value["samples_ref"])
             alias = next(
                 (
@@ -915,8 +934,8 @@ def _sra_run_download_links_modifier(batch: list[dict]) -> list[dict]:
 
 
 def _sra_studies_batch_modifier(
-    sra_db_file: Path,
-    unified_metadata_db_file: Path,
+    sra_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
@@ -944,8 +963,7 @@ def _sra_studies_batch_modifier(
 
             all_accessions.append(accession)
 
-        # keyed per study: a submission covers several studies and a study's
-        # samples span several submissions, so submission keys leak siblings
+        # Key by study: submissions and studies overlap, so submission keys leak siblings.
         study_strategies: dict[str, set[str]] = defaultdict(set[str])
         study_models: dict[str, set[str]] = defaultdict(set[str])
         study_platforms: dict[str, set[str]] = defaultdict(set[str])
@@ -1074,7 +1092,7 @@ def _ena_studies_search_batch_modifier(batch: list[dict]) -> list[dict]:
 
 
 def _arrayexpress_experiments_batch_modifier(
-    unified_metadata_db_file: Path,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> _Modifier:
     def modifier(batch: list[dict]) -> list[dict]:
@@ -1196,7 +1214,7 @@ def _unified_metadata_batch_modifier(batch: list[dict]) -> list[dict]:
 
 @functools.cache
 def _load_unified_centers(
-    unified_metadata_db_file: Path,
+    unified_metadata_db_file: Path | None,
 ) -> tuple[dict[tuple[str, str], dict], dict[str, dict]]:
     lookup: dict[tuple[str, str], dict] = {}
     name_lookup: dict[str, dict] = {}
@@ -1281,10 +1299,76 @@ def _load_unified_centers(
     return lookup, name_lookup
 
 
+# GEO's own submission format adds this synthetic contributor to most series
+# (no address of its own); geocoding the bare string previously matched
+# NOAA's "Geostationary Earth Orbit Observations" for ~200k series.
+_GEO_CONTRIBUTOR_PLACEHOLDER_ORGS = frozenset({"geo"})
+
+# geo_contributors has no natural single-column key -- a contributor row is
+# uniquely identified by the whole tuple. COALESCE turns NULL into '' so the
+# unique index actually catches duplicates: two NULLs are never equal to
+# Postgres, so a plain index on the raw columns lets identical NULL-bearing
+# rows through.
+_GEO_CONTRIBUTORS_KEY_EXPR = ", ".join(
+    f"COALESCE({c}, '')" if c != "accession" else c for c in _GEO_CONTRIBUTORS_COLS
+)
+
+
+def _transfer_geo_contributors(
+    pg_url: str,
+    geo_db_file: Path | None,
+    batch_size: int,
+) -> None:
+    """
+    Deduplicated transfer for geo_contributors.
+
+    The generic transfer path always appends "ON CONFLICT DO NOTHING", but
+    that is a no-op without a matching unique constraint, and this table had
+    none -- every re-transfer of an already-seen accession appended its whole
+    contributor block again. GSE341692 alone carried 11 duplicate copies
+    before this existed.
+    """
+    with (
+        sqlite_connect(geo_db_file) as src_conn,
+        psycopg.connect(pg_url) as pg_conn,
+    ):
+        with pg_conn.cursor() as cur:
+            cur.execute(
+                cast(
+                    "LiteralString",
+                    f"""CREATE UNIQUE INDEX IF NOT EXISTS
+                    idx_geo_contributors_natural_key
+                    ON geo_contributors ({_GEO_CONTRIBUTORS_KEY_EXPR})""",
+                ),
+            )
+        pg_conn.commit()
+
+        cols = _GEO_CONTRIBUTORS_COLS
+        rows = src_conn.execute(
+            f"SELECT DISTINCT {', '.join(cols)} FROM geo_contributors",  # noqa: S608
+        ).fetchall()
+
+        insert_q = cast(
+            "LiteralString",
+            f"""INSERT INTO geo_contributors ({", ".join(cols)})
+            VALUES ({", ".join(["%s"] * len(cols))})
+            ON CONFLICT ({_GEO_CONTRIBUTORS_KEY_EXPR}) DO NOTHING""",  # noqa: S608
+        )
+        with (
+            pg_conn.cursor() as cur,
+            tqdm(total=len(rows), desc="geo_contributors", unit="rows") as pbar,
+        ):
+            for start in range(0, len(rows), batch_size):
+                batch = [tuple(r) for r in rows[start : start + batch_size]]
+                cur.executemany(insert_q, batch)
+                pbar.update(len(batch))
+        pg_conn.commit()
+
+
 def _transfer_geo_geocode(
     pg_url: str,
-    geo_db_file: Path,
-    unified_metadata_db_file: Path,
+    geo_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> None:
     with (
@@ -1308,6 +1392,8 @@ def _transfer_geo_geocode(
             FROM geo_contributors
             WHERE organization IS NOT NULL AND organization != ''""",
         ):
+            if org.strip().lower() in _GEO_CONTRIBUTOR_PLACEHOLDER_ORGS:
+                continue
             org_s = org or ""
             dept_s = dept or ""
             addr_s = addr or ""
@@ -1355,8 +1441,8 @@ def _transfer_geo_geocode(
 
 def _transfer_sra_geocode(
     pg_url: str,
-    sra_db_file: Path,
-    unified_metadata_db_file: Path,
+    sra_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> None:
     with (
@@ -1442,8 +1528,8 @@ def _transfer_sra_geocode(
 
 def _transfer_ena_geocode(
     pg_url: str,
-    ena_db_file: Path,
-    unified_metadata_db_file: Path,
+    ena_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> None:
     with (
@@ -1512,8 +1598,8 @@ def _transfer_ena_geocode(
 
 def _transfer_ae_geocode(
     pg_url: str,
-    ae_db_file: Path,
-    unified_metadata_db_file: Path,
+    ae_db_file: Path | None,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> None:
     with (
@@ -1580,8 +1666,8 @@ def _transfer_ae_geocode(
 
 def _transfer_study_publications(
     pg_url: str,
-    unified_metadata_db_file: Path,
-    pubmed_metadata_db_file: Path,
+    unified_metadata_db_file: Path | None,
+    pubmed_metadata_db_file: Path | None,
     batch_size: int,
     prune: bool = False,  # noqa: FBT002
     insert_only: bool = False,  # noqa: FBT002
@@ -1665,10 +1751,8 @@ def _transfer_study_publications(
             total=len(groups),
         )
 
-        # Orphan cleanup: `groups` is every current (accession, source), and
-        # anything outside it is deleted. Off by default, because a partial
-        # DATA_DIR would delete publication rows outside the run. Enable only
-        # with a full dump.
+        # Delete publication rows outside the current (accession, source) groups only
+        # for full dumps; partial DATA_DIR runs would remove unrelated studies.
         if insert_only or not prune:
             logger.info(
                 "skipping study_publications orphan cleanup "
@@ -1697,8 +1781,7 @@ def _transfer_study_publications(
     refresh_study_pub_dates(pg_url)
 
 
-# source -> its cross_ref table; also the allow-list, so a source absent here
-# contributes no cross-refs
+# Map allowed sources to cross_ref tables; unlisted sources contribute none.
 _CROSS_REF_TABLES = {
     "ae": "cross_ref_ae",
     "ena": "cross_ref_ena",
@@ -1711,7 +1794,7 @@ _CROSS_REF_TABLES = {
 
 def _transfer_cross_refs(
     pg_url: str,
-    unified_metadata_db_file: Path,
+    unified_metadata_db_file: Path | None,
     batch_size: int,
 ) -> None:
     with (
@@ -1747,8 +1830,7 @@ def _transfer_cross_refs(
                     ),
                 )
 
-            # target_accession is the PK index's second column, so pentimento resolver's
-            # reverse lookup misses the index.
+            # target_accession is second in the PK index, leaving reverse lookups unindexed.
             for table, _ in tables:
                 cur.execute(
                     cast(
@@ -1919,10 +2001,10 @@ def _convert_to_json(value: str | None) -> Any:
 
 def _convert_to_json_lenient(value: str | None, accession: str, column: str) -> Any:
     """
-    Lenient JSON conversion for corrupt SQLite cells.
+    Decode SQLite JSON cells, returning NULL for corrupt values.
 
-    GEO snapshot GSE228457 has another series' text across JSON columns; strict
-    decoding aborts transfer. Return NULL for the bad cell and re-ingest to repair.
+    Malformed GEO snapshots (e.g. GSE228457) must not abort transfer;
+    re-ingest them to repair the data.
     """
     try:
         return _convert_to_json(value)
