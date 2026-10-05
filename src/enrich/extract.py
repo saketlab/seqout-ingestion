@@ -1273,9 +1273,12 @@ def enrich_df(
         return result
 
     def _fallback_info(state) -> dict:
+        # bulk API keys: GEO sends "Title"/"Source", SRA/ENA/DDBJ send "Sample Title" + "Title" (experiment)
         fallback_keys = [
             "Description",
+            "Title",
             "Sample Title",
+            "Source",
             "source_name",
             "source name",
         ]
