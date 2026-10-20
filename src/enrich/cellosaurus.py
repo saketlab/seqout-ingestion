@@ -71,6 +71,17 @@ CELL_LINE_PLACEHOLDERS = frozenset(
 )
 
 
+# Real Cellosaurus keys that submitters use for something else, each seen
+# donating "Uterus, Cervix" in ontology_samples_v5: "HEK" keys to CVCL_M624, a
+# HeLa derivative, but means HEK293 in practice; "C16"/"Mr1-1" are clone
+# labels, "CK2"/"HDC" genes, "Ban" a balding study, "Lu"/"Cx"/"Mac21" sample
+# codes. Left unresolved, the LLM's text stays as cell_line and nothing is
+# donated.
+AMBIGUOUS_CELL_LINE_NAMES = frozenset(
+    {"hek", "c16", "mr11", "ck2", "hdc", "ban", "lu", "cx", "mac21"}
+)
+
+
 def normalize_cell_line_name(name: str) -> str:
     """Normalize a cell line name for lookup: lowercase, punctuation stripped."""
     return re.sub(r"[\s\-_./()]+", "", str(name).lower().strip())
@@ -106,6 +117,6 @@ def lookup(cell_line_name: str) -> dict | None:
     if not cell_line_name or not isinstance(cell_line_name, str):
         return None
     key = normalize_cell_line_name(cell_line_name)
-    if key in CELL_LINE_PLACEHOLDERS:
+    if key in CELL_LINE_PLACEHOLDERS or key in AMBIGUOUS_CELL_LINE_NAMES:
         return None
     return load_lookup().get(key)

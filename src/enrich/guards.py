@@ -620,6 +620,69 @@ def guard_cell_line_species(
     return n
 
 
+# G7b. Cell-line site on another species' sample
+#
+# G2 restores the submitter's organism, but G7 retracts a cell line only for
+# its pinned allowlist, so a HeLa match on a mouse, chicken or macaque sample
+# kept the donated tissue "Uterus, Cervix" (SRP560750, SRP303733). A human
+# line's site of origin is never the tissue of a non-human sample. The cell
+# line itself stays: xenografts and co-cultures are real, and whether the
+# line is right is the evidence gate's call.
+
+XSPECIES_SITE_DETECTOR = "cross_species_site"
+XSPECIES_SITE_REASON = "cell_line_site_on_other_species_sample"
+
+
+def _taxids(value) -> set[str]:
+    return set(re.findall(r"\d+", str(value))) if not _blank(value) else set()
+
+
+def guard_cross_species_site(
+    project, frames: dict, log: _Log, lookup: dict | None = None
+) -> int:
+    onto = frames.get("ontology")
+    if onto is None or not {"cell_line", "taxid", "tissue"} <= set(onto.columns):
+        return 0
+    lookup = cellosaurus_lookup_table() if lookup is None else lookup
+    ids = _sample_ids(frames)
+    prov = frames.get("provenance")
+    n = 0
+    for i in onto.index:
+        if _prov(prov, i, "tissue") != "cellosaurus":
+            continue
+        cl = onto.at[i, "cell_line"]
+        if _blank(cl):
+            continue
+        entry = lookup.get(_normalize_cell_line_name(cl))
+        line_tax = _taxids(entry.get("taxid")) if entry else set()
+        sample_tax = _taxids(onto.at[i, "taxid"])
+        if not line_tax or not sample_tax or not line_tax.isdisjoint(sample_tax):
+            continue
+        donated = entry.get("tissue")
+        changed = False
+        for key in ("output", "cello", "ontology"):
+            df = frames.get(key)
+            if df is None or "tissue" not in df.columns or i not in df.index:
+                continue
+            if not _matches_donation(df.at[i, "tissue"], donated):
+                continue
+            changed |= _set(
+                frames,
+                key,
+                i,
+                "tissue",
+                None,
+                log,
+                ids.get(i),
+                "null",
+                XSPECIES_SITE_REASON,
+                XSPECIES_SITE_DETECTOR,
+                source_value=entry.get("cvcl_id"),
+            )
+        n += int(changed)
+    return n
+
+
 # G3. cell-line placeholders in the OUTPUT
 #
 # enrich.cellosaurus.CELL_LINE_PLACEHOLDERS stops "N/A" resolving to Cellosaurus NA
@@ -1424,6 +1487,7 @@ def apply_inline_guards(
     # after organism/declared settle taxid; a species-mismatched cell_line was
     # never valid, no evidence gate needed.
     stats["cell_line_species"] = guard_cell_line_species(project, frames, log)
+    stats["cross_species_site"] = guard_cross_species_site(project, frames, log)
     stats["bad_label"] = guard_bad_label(project, frames, log, tierc_policy)
     stats["audit_rows"] = len(log)
     return (

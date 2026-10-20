@@ -154,9 +154,27 @@ labelled AS (
                THEN '10x (unspecified)'
            END AS technology
     FROM sourced
+),
+-- A study cannot use a kit released after it was published. The enrichment
+-- prompt's "10x 3' v3" example makes the LLM write v3 for any unversioned 10x
+-- study, and whitelist hits on plate reads produce 10x calls before Chromium
+-- existed. A too-new version falls back to the unversioned bucket; a 10x label
+-- before 10x shipped is dropped.
+dated AS (
+    SELECT accession, sample_accession, file, year, evidence,
+           ncount_f_median, nfeature_f_median,
+           CASE
+             WHEN technology LIKE '10x%' AND year < 2016 THEN NULL
+             WHEN technology = '10x 5''' AND year < 2017 THEN NULL
+             WHEN technology = '10x Flex' AND year < 2022 THEN NULL
+             WHEN technology = '10x 3'' v4' AND year < 2024 THEN '10x 3'''
+             WHEN technology = '10x 3'' v3' AND year < 2018 THEN '10x 3'''
+             ELSE technology
+           END AS technology
+    FROM labelled
 )
 SELECT *
-FROM labelled
+FROM dated
 WHERE technology IS NOT NULL
   AND year BETWEEN 2009 AND EXTRACT(YEAR FROM now())::int;
 

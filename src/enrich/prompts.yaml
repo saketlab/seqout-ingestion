@@ -281,6 +281,9 @@ assay_primary: |2-
               - null if unclear/missing
 
               CRITICAL: For 10x kits, include both direction (3'/5') AND version when present.
+                        Never guess a version: if the text names none, write "10x 3'" or "10x 5'".
+                        Only call it 10x when the text says 10x/Chromium; C1, Smart-Seq and
+                        plate protocols are not 10x.
               CRITICAL: For single-cell vs single-nucleus, look for keywords: "nucleus", "nuclei",
                         "nuclear", "snRNA", "snATAC" → sn-prefix; "cell", "scRNA" → sc-prefix.
           

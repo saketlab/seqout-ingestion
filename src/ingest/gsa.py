@@ -331,7 +331,7 @@ _PUBMED_RE = re.compile(r"(?:PubMed ID|PubMed)\s*[:：]?\s*(\d{6,9})")  # noqa: 
 _SEARCH_FIELDS = {
     "title": ("Title", "标题"),
     "release_time": ("Release date", "发布日期"),
-    "organization": ("Organization", "单位"),
+    "organization": ("Organization", "所属单位", "单位"),
 }
 
 
@@ -440,7 +440,9 @@ def _scrape_study_meta(
         logger.debug("study meta scrape failed for %s", accession, exc_info=True)
         return None
 
-    if meta:
+    # An embargoed study has no release date yet; caching it would keep the
+    # date filter dropping it after it goes public.
+    if meta.get("release_time"):
         cache_path.write_text(json.dumps(meta))
     return meta
 
@@ -449,7 +451,7 @@ def _browse_is_up(accession: str, timeout: int, max_timeout: int) -> bool:
     """One probe per run: browse and search are both throttled, so don't try both."""
     try:
         with make_client(timeout) as client:
-            send_req(
+            r = send_req(
                 "GET",
                 f"{GSA_BROWSE_URL}{accession}",
                 headers=_ENGLISH_HEADERS,
@@ -460,7 +462,10 @@ def _browse_is_up(accession: str, timeout: int, max_timeout: int) -> bool:
             )
     except Exception:
         return False
-    return True
+    # Since 2026-09-17 /browse/ answers 200 with a JS cookie challenge, which
+    # parsed to {} for every study and silently dropped all new CRA. Only a
+    # page that parses counts as up.
+    return bool(parse_study_page(r.text))
 
 
 def _pubmed_json(pmids: list[str] | None) -> str | None:

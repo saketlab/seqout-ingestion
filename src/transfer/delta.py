@@ -113,10 +113,11 @@ def build_delta(
     with psycopg.connect(pg_url) as pg:
         for table in tables:
             meta = info.get(table)
-            if meta is None:
-                logger.warning("no transfer task named %s; skipped", table)
-                continue
-            sqlite_table = meta.select_table_name or table
+            # A table with its own transfer task (geo_contributors) is absent
+            # from info; skipping it left the delta without a table the GEO
+            # transfer joins against, so every incremental transfer crashed.
+            # It is copied whole below; its transfer dedups on insert.
+            sqlite_table = (meta.select_table_name if meta else None) or table
             ddl_row = src.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
                 (sqlite_table,),
@@ -134,7 +135,7 @@ def build_delta(
             if not already_created:
                 dst.execute(ddl_row[0])
 
-            if not meta.conflict_cols:
+            if meta is None or not meta.conflict_cols:
                 written = _copy_rows(src, dst, sqlite_table, None, 0)
                 logger.info("%s: no key, copied whole (%d rows)", table, written)
                 counts[table] = written
