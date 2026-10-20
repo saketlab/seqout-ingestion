@@ -25,11 +25,16 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_EBI_THROTTLE_STATUS = 403
 
 
 def _is_retryable(exc: Exception) -> bool:
     if isinstance(exc, httpx.HTTPStatusError):
-        return exc.response.status_code in _RETRYABLE_STATUS_CODES
+        code = exc.response.status_code
+        # EBI throttles with 403; elsewhere a 403 is a real refusal
+        return code in _RETRYABLE_STATUS_CODES or (
+            code == _EBI_THROTTLE_STATUS and exc.request.url.host.endswith("ebi.ac.uk")
+        )
     return isinstance(
         exc,
         (httpx.ConnectError, httpx.TimeoutException, httpx.TransportError),
@@ -303,8 +308,21 @@ def _download_multipart(
                 "%s does not match this download; restarting", parts_path.name
             )
 
+    def _write_parts() -> None:
+        parts_path.write_text(
+            json.dumps(
+                {
+                    "content_length": content_length,
+                    "num_workers": num_workers,
+                    "done": done,
+                },
+            ),
+        )
+
     already_downloaded = sum(e - s + 1 for s, e in done)
     if not done:
+        # parts file first; a full-size file without one reads as complete
+        _write_parts()
         with dest_path.open("wb") as f:
             f.truncate(content_length)
 
@@ -313,15 +331,7 @@ def _download_multipart(
     def _record(chunk_start: int, chunk_end: int) -> None:
         with parts_lock:
             done.append([chunk_start, chunk_end])
-            parts_path.write_text(
-                json.dumps(
-                    {
-                        "content_length": content_length,
-                        "num_workers": num_workers,
-                        "done": done,
-                    },
-                ),
-            )
+            _write_parts()
 
     pbar = (
         tqdm(

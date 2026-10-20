@@ -14,7 +14,7 @@ import httpx
 from pysradb.sraweb import SRAweb
 from tqdm import tqdm
 
-from helpers import exec_query_from_file, sqlite_connect
+from helpers import batch_query_in, exec_query_from_file, sqlite_connect
 from pipeline_types import Datasource
 
 logger = logging.getLogger(__name__)
@@ -170,21 +170,31 @@ def backfill_download_links(
         target = target[:limit]
 
     # Resume per leg. A partial ncbi/ena landing leaves the other leg eligible.
+    # target studies only, via idx_dl_study; a whole-table GROUP BY took hours
     leg_done_sql = {
         # ena fills fastq_ftp; missing fastq_ftp means ena has not run.
-        "ena": "SELECT DISTINCT study_accession FROM run_download_links "
-        "WHERE COALESCE(fastq_ftp, '') <> ''",
+        "ena": (
+            "SELECT DISTINCT study_accession FROM run_download_links "
+            "WHERE COALESCE(fastq_ftp, '') <> '' AND study_accession",
+            "",
+        ),
         # ncbi fills ncbi_fetched_at
-        "ncbi": "SELECT DISTINCT study_accession FROM run_download_links "
-        "WHERE ncbi_fetched_at IS NOT NULL",
+        "ncbi": (
+            "SELECT DISTINCT study_accession FROM run_download_links "
+            "WHERE ncbi_fetched_at IS NOT NULL AND study_accession",
+            "",
+        ),
         # 'both' completes when both legs landed; use their intersection.
-        "both": "SELECT study_accession FROM run_download_links "
-        "GROUP BY study_accession "
-        "HAVING count(*) FILTER (WHERE COALESCE(fastq_ftp, '') <> '') > 0 "
-        "AND count(*) FILTER (WHERE ncbi_fetched_at IS NOT NULL) > 0",
+        "both": (
+            "SELECT study_accession FROM run_download_links WHERE study_accession",
+            "GROUP BY study_accession "
+            "HAVING count(*) FILTER (WHERE COALESCE(fastq_ftp, '') <> '') > 0 "
+            "AND count(*) FILTER (WHERE ncbi_fetched_at IS NOT NULL) > 0",
+        ),
     }
+    prefix, suffix = leg_done_sql[source]
     with sqlite_connect(output_db_file, busy_timeout=120000) as conn:
-        rows = conn.execute(leg_done_sql[source]).fetchall()
+        rows = batch_query_in(conn, prefix, target, 999, suffix)
         existing = {r[0] for r in rows}
 
     if existing:
