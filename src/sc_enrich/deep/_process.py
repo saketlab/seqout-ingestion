@@ -797,12 +797,14 @@ def gene_count_for(path: Path, file_type: FileType, chunk_size: int) -> int:
 
 
 @safe_process
-def _process_txt(path: Path, chunk_size: int) -> int:
+def _process_txt(path: Path, _chunk_size: int) -> int:
+    # a line is a cell only in a barcode list; elsewhere lines are genes or probes
+    if "barcode" not in path.name.lower():
+        return 0
     with path.open("rb") as f:
-        chunk = f.read(chunk_size)
-    lines = chunk.strip().splitlines()
+        n = sum(1 for line in f if line.strip())
     _min_sc_lines = 2
-    return len(lines) if len(lines) > _min_sc_lines else 0
+    return n if n > _min_sc_lines else 0
 
 
 @safe_process

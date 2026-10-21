@@ -44,6 +44,9 @@ ASSAY_COLUMN = "preflightx_assay"
 ASSAY_CONFIDENCE_COLUMN = "preflightx_assay_confidence"
 # a read whose length merely matches a barcode geometry scores nothing here
 ASSAY_ONLIST_PCT_COLUMN = "preflightx_assay_onlist_pct"
+# every barcode round of a fallback hit needs most reads on its onlist
+_MIN_DETECT_ONLIST_PCT = 50.0
+_DETECT_CONFIDENT = frozenset({"high"})
 CALL_COLUMNS: tuple[str, ...] = (
     "preflightx_species",
     "preflightx_species_confidence",
@@ -169,6 +172,14 @@ def extract(report: dict[str, Any]) -> dict[str, str]:
     )
     called[ASSAY_CONFIDENCE_COLUMN] = str(chemistry.get("confidence") or "")
     called[ASSAY_ONLIST_PCT_COLUMN] = _max_onlist_pct(chemistry)
+    # chemistry knows only 10x/Drop-seq; check's fallback detector names the rest
+    detected = _detected_assay(report) if not chemistry.get("is_single_cell") else None
+    if detected:
+        (
+            called[ASSAY_COLUMN],
+            called[ASSAY_CONFIDENCE_COLUMN],
+            called[ASSAY_ONLIST_PCT_COLUMN],
+        ) = detected
     for column, section, key, confidence_column in CALL_SPECS:
         block = report.get(section) or {}
         called[column] = str(block.get(key) or "")
@@ -188,6 +199,39 @@ def _max_onlist_pct(chemistry: dict[str, Any]) -> str:
     pcts = [s.get("pct") for s in scores if isinstance(s, dict)]
     pcts = [p for p in pcts if isinstance(p, (int, float))]
     return str(max(pcts)) if pcts else ""
+
+
+def _detected_assay(report: dict[str, Any]) -> tuple[str, str, str] | None:
+    """
+    Top assay_detection hit as (assay, confidence, onlist pct), or None.
+
+    High-confidence hits only. Onlist assays need every barcode round matched;
+    the rest need every fixed linker found.
+    """
+    detection = report.get("assay_detection") or {}
+    confidence = str(detection.get("confidence") or "")
+    hits = detection.get("hits") or []
+    if confidence not in _DETECT_CONFIDENT or not hits or not isinstance(hits[0], dict):
+        return None
+    top = hits[0]
+    name = str(top.get("display_name") or top.get("assay_id") or "")
+    if not name:
+        return None
+    rates = [
+        pair[-1]
+        for pair in top.get("onlist_overlap") or []
+        if isinstance(pair, (list, tuple)) and isinstance(pair[-1], (int, float))
+    ]
+    if rates:
+        # every round must match; one matching list alone is chance
+        # onlist_overlap is a fraction, the column a percentage
+        worst_pct = round(min(rates) * 100, 2)
+        ok = worst_pct >= _MIN_DETECT_ONLIST_PCT
+        return (name, confidence, str(worst_pct)) if ok else None
+    found, total = top.get("anchors_found"), top.get("anchors_total")
+    all_anchors = isinstance(total, int) and total > 0 and found == total
+    # empty, not 0: no onlist was scored
+    return (name, confidence, "") if all_anchors else None
 
 
 def _text(value: Any) -> str | None:

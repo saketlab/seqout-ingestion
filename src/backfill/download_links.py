@@ -170,7 +170,7 @@ def backfill_download_links(
         target = target[:limit]
 
     # Resume per leg. A partial ncbi/ena landing leaves the other leg eligible.
-    # target studies only, via idx_dl_study; a whole-table GROUP BY took hours
+    # target studies only, via idx_dl_study; a whole-table GROUP BY scans every run
     leg_done_sql = {
         # ena fills fastq_ftp; missing fastq_ftp means ena has not run.
         "ena": (

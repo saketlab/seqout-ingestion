@@ -351,6 +351,10 @@ NON_RNA_STRATEGIES = (
 )
 _NON_RNA_SQL_LIST = ", ".join(f"'{v}'" for v in NON_RNA_STRATEGIES)
 
+# counted by header columns or lines, so a bulk table reads as cells
+TEXT_MATRIX_FORMATS = ("txt", "tsv", "csv", "space_delimited", "semicolon_delimited")
+_TEXT_FORMAT_SQL_LIST = ", ".join(f"'{v}'" for v in TEXT_MATRIX_FORMATS)
+
 SINGLE_CELL_SQL = """
 WITH counted AS (
     SELECT study_accession,
@@ -426,8 +430,12 @@ screened AS (
     GROUP BY r.study_accession
 )
 SELECT COALESCE(c.study_accession, r.study_accession) AS study_accession,
-       c.max_cells, c.max_genes, COALESCE(c.n_counted, 0) AS n_counted,
-       COALESCE(c.matrix_says_sc, FALSE) AS matrix_says_sc,
+       c.max_cells, c.max_genes,
+       -- a dense text table measures nothing: bulk genes x samples looks the same
+       CASE WHEN tt.study_accession IS NULL THEN COALESCE(c.n_counted, 0) ELSE 0 END
+           AS n_counted,
+       COALESCE(c.matrix_says_sc, FALSE) AND tt.study_accession IS NULL
+           AS matrix_says_sc,
        COALESCE(c.matrix_vetoed, FALSE) AS matrix_vetoed,
        COALESCE(c.sample_assay_sc, FALSE) AS sample_assay_sc,
        COALESCE(c.any_nucleus, FALSE) AS any_nucleus,
@@ -439,12 +447,15 @@ SELECT COALESCE(c.study_accession, r.study_accession) AS study_accession,
        COALESCE(r.n_runs_atac, 0) AS n_runs_atac
 FROM counted c
 FULL OUTER JOIN screened r ON r.study_accession = c.study_accession
+LEFT JOIN pentimento_study tt
+       ON tt.study_accession = COALESCE(c.study_accession, r.study_accession)
+      AND lower(tt.single_cell_file_format) IN ({text_formats})
 -- pentimento_run.study_accession is nullable, and rows that never resolved to a
 -- study aggregate into one NULL-keyed group. It is not a study and cannot be
 -- joined to unified_metadata; without this the staging table carries a row whose
 -- primary key is NULL, which sqlite tolerates and postgres rejects on COPY.
 WHERE COALESCE(c.study_accession, r.study_accession) IS NOT NULL
-""".format(non_rna=_NON_RNA_SQL_LIST)
+""".format(non_rna=_NON_RNA_SQL_LIST, text_formats=_TEXT_FORMAT_SQL_LIST)
 
 # The text signal, re-derived from title/description rather than read back out of
 # is_single_cell.

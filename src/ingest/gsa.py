@@ -462,9 +462,7 @@ def _browse_is_up(accession: str, timeout: int, max_timeout: int) -> bool:
             )
     except Exception:
         return False
-    # Since 2026-09-17 /browse/ answers 200 with a JS cookie challenge, which
-    # parsed to {} for every study and silently dropped all new CRA. Only a
-    # page that parses counts as up.
+    # /browse/ can answer 200 with a JS cookie challenge; only a page that parses is up
     return bool(parse_study_page(r.text))
 
 
