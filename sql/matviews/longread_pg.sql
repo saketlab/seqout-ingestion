@@ -194,7 +194,9 @@ CROSS JOIN LATERAL (
              THEN left(u.first_published, 10)::date END,
         ss.published_at, es.first_public, gs.published_at, ga.first_public, dr.first_public
     ) AS first_published
-) pub;
+) pub
+-- hide SRA embargoes (future release date) until a rebuild after release
+WHERE pub.first_published IS NULL OR pub.first_published <= current_date;
 
 CREATE MATERIALIZED VIEW longread_facet AS
 WITH tagged AS (

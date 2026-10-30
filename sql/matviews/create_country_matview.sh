@@ -45,6 +45,8 @@ SELECT u.canonical_accession                                   AS study_accessio
 FROM unified_metadata u
 LEFT JOIN study_download_summary dl ON dl.study_accession = u.canonical_accession
 WHERE u.country_code_iso2 IS NOT NULL
+  -- hide SRA embargoes (future release date) until a rebuild after release
+  AND (u.first_published IS NULL OR u.first_published <= to_char(current_date, 'YYYY-MM-DD'))
 ORDER BY u.country_code_iso2;
 
 CREATE UNIQUE INDEX idx_country_study_accession ON country_study(study_accession);

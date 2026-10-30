@@ -148,7 +148,9 @@ LEFT JOIN tissue_organism tso ON tso.study_accession = b.study_accession
 LEFT JOIN study_download_summary dl ON dl.study_accession = b.study_accession
 LEFT JOIN longread_study lrs ON lrs.study_accession = b.study_accession
 LEFT JOIN cell_nucleus_ev cn ON cn.study_accession = b.study_accession
-LEFT JOIN perturbation_ev pe ON pe.study_accession = b.study_accession;
+LEFT JOIN perturbation_ev pe ON pe.study_accession = b.study_accession
+-- hide SRA embargoes until a rebuild after release; spatial/perturbation inherit
+WHERE u.first_published IS NULL OR u.first_published <= to_char(current_date, 'YYYY-MM-DD');
 
 CREATE UNIQUE INDEX singlecell_study_study_accession_idx ON singlecell_study(study_accession);
 ANALYZE singlecell_study;

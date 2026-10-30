@@ -1,15 +1,5 @@
 """
 DDBJ Genomic Expression Archive (GEA) ingest.
-
-MAGE-TAB, so parsing is entirely ingest.magetab (shared with src/ingest/ae.py).
-
-No novelty filter, unlike DRA: nothing in GEA is mirrored into GEO or
-ArrayExpress, so every public experiment is ingested.
-
-Every GEA experiment carries Comment[BioProject], and many of those BioProjects
-also exist in SRA as raw-read studies. SRA holds only the runs there, GEA the
-curated expression layer, so the unifier lets GEA pre-claim the raw study
-(gea_preclaim in unified_catalog.py) -- the rule ArrayExpress already applies.
 """
 
 import datetime
@@ -341,11 +331,6 @@ def ingest_gea(
     data_dir = output_dir / "data"
     data_dir.mkdir(exist_ok=True, parents=True)
 
-    date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
-    db_dir = output_dir / "db" / date_str
-    db_dir.mkdir(exist_ok=True, parents=True)
-    db_file = db_file or (db_dir / f"gea_metadata_{date_str}.db")
-
     livelist_path = _download_livelist(data_dir, retries, timeout, max_timeout)
     live = parse_gea_livelist(livelist_path)
     logger.info("gea livelist: %d public experiments", len(live))
@@ -365,6 +350,12 @@ def ingest_gea(
     if not selected:
         logger.warning("no gea experiments to ingest")
         return
+
+    if db_file is None:
+        date_str = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+        db_dir = output_dir / "db" / date_str
+        db_dir.mkdir(exist_ok=True, parents=True)
+        db_file = db_dir / f"gea_metadata_{date_str}.db"
 
     files_dir = data_dir / "experiments"
     files_dir.mkdir(exist_ok=True, parents=True)
